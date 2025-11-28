@@ -1,0 +1,2 @@
+# Eco.AI
+AI promt
