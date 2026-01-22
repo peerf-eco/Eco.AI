@@ -1,0 +1,469 @@
+{
+	"folders": [
+		{
+			"path": ".",
+			"name": "AssemblyFiles"
+		},
+		{
+			"path": "../../../BuildFiles",
+			"name": "BuildFiles"
+		},
+		{
+			"path": "../../../DesignFiles"
+		},
+		{
+			"path": "../../../HeaderFiles"
+		},
+		{
+			"path": "../../../SharedFiles"
+		},
+		{
+			"path": "../../../SourceFiles"
+		},
+		{
+			"path": "../../../UnitTestFiles"
+		}
+	],
+	"settings": {
+		"C_Cpp.default.browse.path": [],
+		"C_Cpp.default.includePath": [
+			"${workspaceFolder}/**",
+			"**/../../HeaderFiles",
+			"**/../../SharedFiles",
+			"${ECO_FRAMEWORK}/Eco.Core1/SharedFiles",
+			"${ECO_FRAMEWORK}/Eco.InterfaceBus1/SharedFiles",
+			"${ECO_FRAMEWORK}/Eco.MemoryManager1/SharedFiles",
+			"${ECO_FRAMEWORK}/Eco.FileSystemManagement1/SharedFiles"
+		],
+		"C_Cpp.default.cStandard": "c89",
+		"C_Cpp.default.defines": [
+			"ECO_X86_32",
+			"ECO_LIB",
+			"ECO_WINDOWS"
+		],
+		"files.associations": {
+			"idecogpio1.h": "c"
+		},
+		"makefile.configurations": [
+			{
+				"name": "StaticDebug",
+				"makeArgs": [
+					"TARGET=1",
+					"DEBUG=1"
+				],
+				"makefilePath": "Makefile"
+			},
+			{
+				"name": "StaticRelease",
+				"makeArgs": [
+					"TARGET=1",
+					"DEBUG=0"
+				],
+				"makefilePath": "Makefile"
+			},
+			{
+				"name": "DynamicDebug",
+				"makeArgs": [
+					"TARGET=0",
+					"DEBUG=1"
+				],
+				"makefilePath": "Makefile"
+			},
+			{
+				"name": "DynamicRelease",
+				"makeArgs": [
+					"TARGET=0",
+					"DEBUG=0"
+				],
+				"makefilePath": "Makefile"
+			}
+		]
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "StaticDebug|x86",
+				"type": "cppvsdbg",
+				"request": "launch",
+				"program": "EcoHDF5UnitTest.exe",
+				"args": [],
+				"stopAtEntry": true,
+				"cwd": "${workspaceFolder:BuildFiles}/Windows/x86/StaticDebug",
+				"environment": [],
+				"preLaunchTask": "build EcoHDF5UnitTest StaticDebug|x86",
+				"externalConsole": false
+			},
+			{
+				"name": "StaticRelease|x86",
+				"type": "cppvsdbg",
+				"request": "launch",
+				"program": "EcoHDF5UnitTest.exe",
+				"args": [],
+				"stopAtEntry": true,
+				"cwd": "${workspaceFolder:BuildFiles}/Windows/x86/StaticRelease",
+				"environment": [],
+				"preLaunchTask": "build EcoHDF5UnitTest StaticRelease|x86",
+				"externalConsole": false
+			},
+			{
+				"name": "DynamicDebug|x86",
+				"type": "cppvsdbg",
+				"request": "launch",
+				"program": "EcoHDF5UnitTest.exe",
+				"args": [],
+				"stopAtEntry": true,
+				"cwd": "${workspaceFolder:BuildFiles}/Windows/x86/DynamicDebug",
+				"environment": [],
+				"preLaunchTask": "build EcoHDF5UnitTest DynamicDebug|x86",
+				"externalConsole": false
+			},
+			{
+				"name": "DynamicRelease|x86",
+				"type": "cppvsdbg",
+				"request": "launch",
+				"program": "EcoHDF5UnitTest.exe",
+				"args": [],
+				"stopAtEntry": false,
+				"cwd": "${workspaceFolder:BuildFiles}/Windows/x86/DynamicRelease",
+				"environment": [],
+				"preLaunchTask": "build EcoHDF5UnitTest DynamicRelease|x86",
+				"externalConsole": false
+			}
+		]
+	},
+	"tasks": {
+		"version": "2.0.0",
+		"tasks": [
+			{
+				"label": "build all configurations",
+				"type": "shell",
+				"command": "${workspaceFolder:AssemblyFiles}/build.bat",
+				"group": {
+					"kind": "build",
+					"isDefault": true
+				},
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": [
+				]
+			},
+			{
+				"label": "build EcoHDF5 StaticDebug|x86",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"Makefile",
+					"TARGET=1",
+					"DEBUG=1",
+					"ARCH=x86"
+				],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "silent",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5 StaticRelease|x86",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"Makefile",
+					"TARGET=1",
+					"DEBUG=0",
+					"ARCH=x86"
+				],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "silent",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5 DynamicDebug|x86",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"Makefile",
+					"TARGET=0",
+					"DEBUG=1",
+					"ARCH=x86"
+				],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "silent",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5 DynamicRelease|x86",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"Makefile",
+					"TARGET=0",
+					"DEBUG=0",
+					"ARCH=x86"
+				],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "silent",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5 StaticDebug|x64",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"Makefile",
+					"TARGET=1",
+					"DEBUG=1",
+					"ARCH=x64"
+				],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "silent",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5 StaticRelease|x64",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"Makefile",
+					"TARGET=1",
+					"DEBUG=0",
+					"ARCH=x64"
+				],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "silent",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5 DynamicDebug|x64",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"Makefile",
+					"TARGET=0",
+					"DEBUG=1",
+					"ARCH=x64"
+				],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "silent",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5 DynamicRelease|x64",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"Makefile",
+					"TARGET=0",
+					"DEBUG=0",
+					"ARCH=x64"
+				],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "silent",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5UnitTest StaticDebug|x86",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"MakefileExe",
+					"TARGET=1",
+					"DEBUG=1",
+					"ARCH=x86"
+				],
+				"group": "build",
+				"dependsOn": ["build EcoHDF5 StaticDebug|x86"],
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5UnitTest StaticRelease|x86",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"MakefileExe",
+					"TARGET=1",
+					"DEBUG=0",
+					"ARCH=x86"
+				],
+				"group": "build",
+				"dependsOn": ["build EcoHDF5 StaticRelease|x86"],
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5UnitTest DynamicDebug|x86",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"MakefileExe",
+					"TARGET=0",
+					"DEBUG=1",
+					"ARCH=x86"
+				],
+				"group": "build",
+				"dependsOn": ["build EcoHDF5 DynamicDebug|x86"],
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5UnitTest DynamicRelease|x86",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"MakefileExe",
+					"TARGET=0",
+					"DEBUG=0",
+					"ARCH=x86"
+				],
+				"group": "build",
+				"dependsOn": ["build EcoHDF5 DynamicRelease|x86"],
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5UnitTest StaticDebug|x64",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"MakefileExe",
+					"TARGET=1",
+					"DEBUG=1",
+					"ARCH=x64"
+				],
+				"group": "build",
+				"dependsOn": ["build EcoHDF5 StaticDebug|x64"],
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5UnitTest StaticRelease|x64",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"MakefileExe",
+					"TARGET=1",
+					"DEBUG=0",
+					"ARCH=x64"
+				],
+				"group": "build",
+				"dependsOn": ["build EcoHDF5 StaticRelease|x64"],
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5UnitTest DynamicDebug|x64",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"MakefileExe",
+					"TARGET=0",
+					"DEBUG=1",
+					"ARCH=x64"
+				],
+				"group": "build",
+				"dependsOn": ["build EcoHDF5 DynamicDebug|x64"],
+				"problemMatcher": [
+					"$msCompile"
+				]
+			},
+			{
+				"label": "build EcoHDF5UnitTest DynamicRelease|x64",
+				"type": "shell",
+				"command": "make",
+				"args": [
+					"-f",
+					"MakefileExe",
+					"TARGET=0",
+					"DEBUG=0",
+					"ARCH=x64"
+				],
+				"group": "build",
+				"dependsOn": ["build EcoHDF5 DynamicRelease|x64"],
+				"problemMatcher": [
+					"$msCompile"
+				]
+			}
+		]
+	}
+}
