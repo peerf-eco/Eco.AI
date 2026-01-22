@@ -1,0 +1,29 @@
+[
+  {
+    "uguid": "0000000000000000000000004D656D31",
+    "name": "Eco.MemoryManger1"
+  },
+  {
+    "uguid": "00000000000000000000000042757331",
+    "name": "Eco.InterfaceBus1"
+  },
+  {
+    "uguid": "00000000000000000000000046534D31",
+    "name": "Eco.FileSystemManagement1"
+  }
+]
+{
+  "appType": "Component",
+  "options": {
+    "postfixNamespace": true,
+    "connectionPoints": false,
+    "aggregationInner": false,
+    "aggregationOuter": false,
+    "containmentOuter": false,
+    "unitTest": true,
+    "threadSafe": true
+  },
+  "pathType": "Environment",
+  "author": "Vladimir Bashev",
+  "company": "PeerF"
+}
