@@ -1,0 +1,55 @@
+services:
+  # Backend API + Agent
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecoos-api
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./rag_storage:/app/rag_storage:ro
+      - ./chroma_db:/app/chroma_db
+      - ./output:/app/output
+      # Монтируем код для разработки (hot reload)
+      - ./agent:/app/agent
+      - ./backend:/app/backend
+    ports:
+      - "8000:8000"
+    command: ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # Frontend (Next.js)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ecoos-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    volumes:
+       # Монтируем для разработки (кроме node_modules)
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: ["npm", "run", "dev"]
+    depends_on:
+      - api
+
+  # Init RAG (Utility)
+  init-rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecoos-init-rag
+    env_file:
+      - .env
+    volumes:
+      - ./rag_storage:/app/rag_storage:ro
+      - ./chroma_db:/app/chroma_db
+    command: ["init-rag"]
+    profiles:
+      - init
