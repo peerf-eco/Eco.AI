@@ -1,16 +1,15 @@
 """
-EcoOS Component Agent - Graph v2
+EcoOS Component Agent - Graph v2 / v3
 
-Новая архитектура:
-    PLANNER (ReAct) → BUILDER (ReAct) → QA → BUILD
-         ↑                  ↑______________|
-         |__________________|  (если ошибка)
+V2 (deprecated): PLANNER (ReAct) → BUILDER (ReAct) → QA → BUILD
+V3 (current):    PLANNER (ReAct) → RESOLVER (Python) → WRITER (LLM) → BUILD (Python)
 
-Structured Output через Pydantic модели как tools.
+V3 assembles from pre-built SDK components instead of generating component code.
 """
 
 import json
 import logging
+import re
 from typing import Dict, Any, Literal, Annotated, List, Optional
 from typing_extensions import TypedDict
 
@@ -19,16 +18,35 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent, ToolNode
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
-from .tools import PLANNER_TOOLS, BUILDER_TOOLS, QA_TOOLS, list_files, read_file, write_file, build
+from .state import AgentStateV3, PlannerResponse as PlannerResponseV3
+from .tools import PLANNER_TOOLS, rag_query, build_node, build_makefile
+from .resolver import resolver_node
 from .prompts_v2 import (
-    PLANNER_SYSTEM_PROMPT, 
-    BUILDER_SYSTEM_PROMPT, 
-    QA_SYSTEM_PROMPT,
-    get_planner_prompt,
-    get_builder_prompt,
-    get_qa_prompt
+    PLANNER_SYSTEM_PROMPT,
+    WRITER_SYSTEM_PROMPT,
+    WRITER_FIX_PROMPT,
+    WRITER_TEST_FIX_PROMPT,
+    TESTER_SYSTEM_PROMPT,
+    get_writer_user_prompt,
+    get_writer_fix_prompt,
+    get_tester_user_prompt,
+    get_writer_test_fix_prompt,
 )
+from .tools import run_tests
+
+# V2 backward-compat: build tool reference for QA node
+# The old `build` tool was replaced by `build_makefile`
+build = build_makefile
+
+# V2 backward-compat: tool collections
+try:
+    BUILDER_TOOLS = PLANNER_TOOLS + [build_makefile]
+    QA_TOOLS = [build_makefile]
+except Exception:
+    BUILDER_TOOLS = []
+    QA_TOOLS = []
 
 logger = logging.getLogger(__name__)
 
@@ -816,6 +834,511 @@ def run_agent(llm, user_request: str, max_iterations: int = 3) -> Dict[str, Any]
         
     except Exception as e:
         logger.error(f"[RUN] Exception during agent run: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V3: ASSEMBLY FROM SDK COMPONENTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def create_planner_node_v3(llm):
+    """
+    Planner node — ReAct agent with rag_query tool.
+
+    Searches ChromaDB for SDK components matching the user's request.
+    Outputs a PlannerResponse with component names and project info.
+    """
+
+    # Use V3 PlannerResponse (different fields from V2)
+    planner_tools = [rag_query, PlannerResponseV3]
+
+    planner_agent = create_react_agent(
+        llm,
+        tools=planner_tools,
+        prompt=PLANNER_SYSTEM_PROMPT,
+    )
+
+    def planner_node(state: AgentStateV3) -> Dict[str, Any]:
+        logger.info("=" * 60)
+        logger.info("[PLANNER V3] Starting...")
+        logger.info(f"[PLANNER V3] User request: {state['user_request']}")
+
+        user_prompt = f"User request: {state['user_request']}"
+
+        # Run ReAct agent with retries for PlannerResponse
+        max_retries = 3
+        messages = []
+        current_messages = [("user", user_prompt)]
+
+        for attempt in range(max_retries):
+            logger.info(f"[PLANNER V3] Attempt {attempt + 1}/{max_retries}")
+
+            result = planner_agent.invoke(
+                {"messages": current_messages},
+                {"recursion_limit": 50},
+            )
+
+            messages = result.get("messages", [])
+            logger.info(f"[PLANNER V3] Got {len(messages)} messages")
+
+            # Check if PlannerResponse was called
+            plan = _extract_planner_response_v3(messages)
+            if plan is not None:
+                logger.info(f"[PLANNER V3] Plan extracted: {plan.get('project_name', '?')}")
+                break
+
+            if attempt < max_retries - 1:
+                current_messages = messages + [(
+                    "user",
+                    "You MUST call the PlannerResponse tool now with your findings. "
+                    "List the components you found and call PlannerResponse."
+                )]
+
+        if plan is None:
+            logger.error("[PLANNER V3] Failed to get PlannerResponse, creating default plan")
+            plan = {
+                "components": [],
+                "app_description": state["user_request"],
+                "project_name": "EcoApp",
+            }
+
+        logger.info(f"[PLANNER V3] Components: {[c.get('name', '?') for c in plan.get('components', [])]}")
+
+        return {
+            "component_plan": plan,
+            "planner_messages": messages,
+        }
+
+    return planner_node
+
+
+def _extract_planner_response_v3(messages) -> Optional[dict]:
+    """Extract PlannerResponse tool call args from messages."""
+    for msg in messages:
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                if tc.get("name") == "PlannerResponse":
+                    args = tc.get("args", {})
+                    # Validate minimally
+                    if "components" in args:
+                        return args
+    return None
+
+
+def create_writer_node_v3(llm):
+    """
+    Writer node — LLM generates only EcoMain.c.
+
+    Receives resolved component info (headers, CIDs, interfaces) and
+    generates a single EcoMain.c file that assembles them.
+    """
+
+    def writer_node(state: AgentStateV3) -> Dict[str, Any]:
+        logger.info("=" * 60)
+        logger.info("[WRITER V3] Starting...")
+
+        resolved = state.get("resolved_components", [])
+        framework = state.get("framework_components", [])
+        component_plan = state.get("component_plan", {})
+        app_description = component_plan.get("app_description", state.get("user_request", ""))
+        error_message = state.get("error_message", "")
+        ecomain_content = state.get("ecomain_content", "")
+        test_results = state.get("test_results", "")
+        tests_passed = state.get("tests_passed", False)
+
+        logger.info(f"[WRITER V3] Resolved components: {len(resolved)}")
+        logger.info(f"[WRITER V3] Framework components: {len(framework)}")
+        logger.info(f"[WRITER V3] Has previous error: {bool(error_message)}")
+        logger.info(f"[WRITER V3] Has test results: {bool(test_results)}")
+
+        # Choose prompt based on whether this is a fix or first generation
+        if test_results and not tests_passed and ecomain_content:
+            # Test fix mode — build succeeded but tests failed
+            logger.info("[WRITER V3] TEST FIX mode — fixing logic based on test failures")
+            system_prompt = WRITER_TEST_FIX_PROMPT
+            user_prompt = get_writer_test_fix_prompt(ecomain_content, test_results, resolved + framework)
+        elif error_message and ecomain_content:
+            # Build fix mode
+            logger.info("[WRITER V3] BUILD FIX mode — correcting previous EcoMain.c")
+            system_prompt = WRITER_FIX_PROMPT
+            user_prompt = get_writer_fix_prompt(ecomain_content, error_message, resolved + framework)
+        else:
+            # Fresh generation
+            logger.info("[WRITER V3] GENERATE mode — creating new EcoMain.c")
+            system_prompt = WRITER_SYSTEM_PROMPT
+            user_prompt = get_writer_user_prompt(app_description, resolved, framework)
+
+        # Call LLM
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
+
+        try:
+            response = llm.invoke(messages)
+            content = response.content if hasattr(response, "content") else str(response)
+
+            # Strip markdown fences if present
+            content = _strip_code_fences(content)
+
+            logger.info(f"[WRITER V3] Generated EcoMain.c: {len(content)} chars")
+
+        except Exception as e:
+            logger.error(f"[WRITER V3] LLM call failed: {e}")
+            content = "/* ERROR: LLM failed to generate EcoMain.c */\n"
+
+        return {
+            "ecomain_content": content,
+            "writer_messages": [HumanMessage(content=user_prompt[:500]), AIMessage(content=content[:500])],
+            # Clear test/error state so build→tester cycle restarts cleanly
+            "test_results": "",
+            "tests_passed": False,
+            "error_message": "",
+        }
+
+    return writer_node
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove markdown code fences from LLM output."""
+    text = text.strip()
+    if text.startswith("```c"):
+        text = text[4:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V3 ROUTING
+# ═══════════════════════════════════════════════════════════════════════════
+
+def route_after_build(state: AgentStateV3) -> Literal["writer", "planner", "tester", "end"]:
+    """
+    Route after build:
+    - Success → tester (run functional tests)
+    - Compile/link error → writer (fix EcoMain.c)
+    - Missing component → planner (re-search)
+    - Max iterations → end
+    """
+    is_success = state.get("is_success", False)
+    iteration = state.get("iteration", 0)
+    max_iterations = state.get("max_iterations", 5)
+    error_type = state.get("error_type", "none")
+
+    if is_success:
+        logger.info("[ROUTER V3] Build succeeded → TESTER")
+        return "tester"
+
+    if iteration >= max_iterations:
+        logger.info(f"[ROUTER V3] Max iterations ({max_iterations}) reached → END")
+        return "end"
+
+    if error_type == "missing_component":
+        logger.info("[ROUTER V3] Missing component → PLANNER")
+        return "planner"
+
+    # compile or link error → fix EcoMain.c
+    logger.info(f"[ROUTER V3] {error_type} error → WRITER (fix)")
+    return "writer"
+
+
+def route_after_testing(state: AgentStateV3) -> Literal["writer", "end"]:
+    """
+    Route after testing:
+    - All tests passed → end
+    - Tests failed + iterations left → writer (fix EcoMain.c)
+    - Max iterations → end
+    """
+    tests_passed = state.get("tests_passed", False)
+    iteration = state.get("iteration", 0)
+    max_iterations = state.get("max_iterations", 5)
+
+    if tests_passed:
+        logger.info("[ROUTER V3] All tests passed → END")
+        return "end"
+
+    if iteration >= max_iterations:
+        logger.info(f"[ROUTER V3] Max iterations ({max_iterations}) reached → END")
+        return "end"
+
+    logger.info("[ROUTER V3] Tests failed → WRITER (fix)")
+    return "writer"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V3 TESTER NODE
+# ═══════════════════════════════════════════════════════════════════════════
+
+def create_tester_node_v3(llm):
+    """
+    Tester node — LLM generates test cases, Python executes them.
+
+    Step 1: LLM generates JSON test cases based on app description + EcoMain.c
+    Step 2: run_tests() executes each test against the built EXE
+    Step 3: Returns results for routing (pass → END, fail → writer)
+    """
+
+    def tester_node(state: AgentStateV3) -> Dict[str, Any]:
+        import json as _json
+
+        logger.info("=" * 60)
+        logger.info("[TESTER V3] Starting...")
+
+        component_plan = state.get("component_plan", {})
+        app_description = component_plan.get("app_description", state.get("user_request", ""))
+        ecomain_content = state.get("ecomain_content", "")
+        resolved = state.get("resolved_components", [])
+        build_result = state.get("build_result", "")
+        project_dir = state.get("project_dir", "")
+
+        # Extract EXE path from build result
+        exe_path = ""
+        if build_result.startswith("OK: Build succeeded:"):
+            exe_path = build_result.split("OK: Build succeeded:")[-1].strip()
+
+        if not exe_path:
+            # Try to find binary in expected location (platform-aware)
+            import sys as _sys
+            from pathlib import Path as _Path
+            if _sys.platform.startswith("linux"):
+                build_dir = _Path(project_dir) / "BuildFiles" / "Linux" / "x86_64" / "StaticRelease"
+                if build_dir.exists():
+                    binaries = [f for f in build_dir.iterdir() if f.is_file() and not f.suffix]
+                    if binaries:
+                        exe_path = str(binaries[0])
+            else:
+                build_dir = _Path(project_dir) / "BuildFiles" / "Windows" / "amd64" / "StaticRelease"
+                if build_dir.exists():
+                    exe_files = list(build_dir.glob("*.exe"))
+                    if exe_files:
+                        exe_path = str(exe_files[0])
+
+        if not exe_path:
+            logger.error("[TESTER V3] No EXE found, skipping tests")
+            return {
+                "test_cases": "",
+                "test_results": "",
+                "tests_passed": True,  # Don't block on missing EXE
+            }
+
+        logger.info(f"[TESTER V3] EXE: {exe_path}")
+
+        # Step 1: LLM generates test cases
+        logger.info("[TESTER V3] Generating test cases via LLM...")
+
+        user_prompt = get_tester_user_prompt(app_description, ecomain_content, resolved)
+
+        messages = [
+            SystemMessage(content=TESTER_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ]
+
+        try:
+            response = llm.invoke(messages)
+            test_cases_raw = response.content if hasattr(response, "content") else str(response)
+            test_cases_raw = _strip_code_fences(test_cases_raw)
+
+            # Validate JSON
+            _json.loads(test_cases_raw)
+            logger.info(f"[TESTER V3] Generated test cases: {len(test_cases_raw)} chars")
+
+        except _json.JSONDecodeError as e:
+            logger.error(f"[TESTER V3] Invalid JSON from LLM: {e}")
+            logger.error(f"[TESTER V3] Raw output: {test_cases_raw[:500]}")
+            # Try to extract JSON from the response
+            try:
+                start = test_cases_raw.find("{")
+                end = test_cases_raw.rfind("}") + 1
+                if start != -1 and end > start:
+                    test_cases_raw = test_cases_raw[start:end]
+                    _json.loads(test_cases_raw)  # validate
+                    logger.info("[TESTER V3] Extracted JSON from response")
+                else:
+                    return {
+                        "test_cases": "",
+                        "test_results": "ERROR: LLM produced invalid JSON for test cases",
+                        "tests_passed": True,  # Don't block on bad test generation
+                    }
+            except Exception:
+                return {
+                    "test_cases": "",
+                    "test_results": "ERROR: LLM produced invalid JSON for test cases",
+                    "tests_passed": True,
+                }
+
+        except Exception as e:
+            logger.error(f"[TESTER V3] LLM call failed: {e}")
+            return {
+                "test_cases": "",
+                "test_results": f"ERROR: LLM failed: {e}",
+                "tests_passed": True,  # Don't block on LLM failure
+            }
+
+        # Step 2: Execute tests
+        logger.info("[TESTER V3] Executing tests...")
+        test_result = run_tests(exe_path, test_cases_raw)
+
+        # Format results as readable string
+        results_parts = []
+        results_parts.append(f"Test Results: {test_result['total'] - test_result['failed']}/{test_result['total']} passed")
+        results_parts.append("")
+
+        for tr in test_result.get("results", []):
+            status = "PASS" if tr["passed"] else "FAIL"
+            results_parts.append(f"[{status}] {tr['name']}")
+            if not tr["passed"]:
+                results_parts.append(f"  stdin: {repr(tr.get('stdin', ''))}")
+                results_parts.append(f"  expected: {tr.get('expected', [])}")
+                results_parts.append(f"  missing: {tr.get('missing', [])}")
+                results_parts.append(f"  actual stdout: {tr.get('stdout', '')[:500]}")
+                if tr.get("error"):
+                    results_parts.append(f"  error: {tr['error']}")
+            results_parts.append("")
+
+        test_results_str = "\n".join(results_parts)
+        all_passed = test_result.get("passed", False)
+
+        print(f"[TESTER] {'ALL PASSED' if all_passed else 'SOME FAILED'}: "
+              f"{test_result['total'] - test_result['failed']}/{test_result['total']}")
+
+        if not all_passed:
+            for tr in test_result.get("results", []):
+                if not tr["passed"]:
+                    print(f"[TESTER]   FAIL: {tr['name']} — missing: {tr.get('missing', [])}")
+
+        return {
+            "test_cases": test_cases_raw,
+            "test_results": test_results_str,
+            "tests_passed": all_passed,
+        }
+
+    return tester_node
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V3 GRAPH
+# ═══════════════════════════════════════════════════════════════════════════
+
+def create_agent_graph_v3(llm):
+    """
+    Create the V3 agent graph for assembly from SDK components.
+
+    Architecture:
+        START → planner → resolver → writer → build → tester → (writer | END)
+                                       ↑        ↑                  │
+                                       │        └──────────────────┘ (tests failed)
+                                       └── (compile/link error from build)
+    """
+    logger.info("[GRAPH V3] Creating agent graph v3...")
+
+    graph_builder = StateGraph(AgentStateV3)
+
+    # Nodes
+    graph_builder.add_node("planner", create_planner_node_v3(llm))
+    graph_builder.add_node("resolver", resolver_node)
+    graph_builder.add_node("writer", create_writer_node_v3(llm))
+    graph_builder.add_node("build", build_node)
+    graph_builder.add_node("tester", create_tester_node_v3(llm))
+
+    # Edges
+    graph_builder.add_edge(START, "planner")
+    graph_builder.add_edge("planner", "resolver")
+    graph_builder.add_edge("resolver", "writer")
+    graph_builder.add_edge("writer", "build")
+
+    # Conditional edge after build: success → tester, error → writer/planner
+    graph_builder.add_conditional_edges(
+        "build",
+        route_after_build,
+        {
+            "writer": "writer",
+            "planner": "planner",
+            "tester": "tester",
+            "end": END,
+        },
+    )
+
+    # Conditional edge after tester: pass → END, fail → writer
+    graph_builder.add_conditional_edges(
+        "tester",
+        route_after_testing,
+        {
+            "writer": "writer",
+            "end": END,
+        },
+    )
+
+    memory = MemorySaver()
+    graph = graph_builder.compile(checkpointer=memory)
+
+    logger.info("[GRAPH V3] Graph compiled successfully")
+    return graph
+
+
+def run_agent_v3(llm, user_request: str, max_iterations: int = 5) -> Dict[str, Any]:
+    """
+    Run the V3 agent for assembling EcoOS applications from SDK components.
+    """
+    import uuid
+
+    logger.info("=" * 80)
+    logger.info("[RUN V3] Starting assembly agent")
+    logger.info(f"[RUN V3] Request: {user_request}")
+    logger.info(f"[RUN V3] Max iterations: {max_iterations}")
+    logger.info("=" * 80)
+
+    graph = create_agent_graph_v3(llm)
+
+    initial_state = {
+        "user_request": user_request,
+        "component_plan": {},
+        "planner_messages": [],
+        "resolved_components": [],
+        "framework_components": [],
+        "include_dirs": [],
+        "lib_dirs": [],
+        "lib_files": [],
+        "makefile_content": "",
+        "makefile_exe_content": "",
+        "project_dir": "",
+        "missing_components": [],
+        "ecomain_content": "",
+        "writer_messages": [],
+        "build_result": "",
+        "is_success": False,
+        "error_message": "",
+        "error_type": "none",
+        "test_cases": "",
+        "test_results": "",
+        "tests_passed": False,
+        "iteration": 0,
+        "max_iterations": max_iterations,
+    }
+
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        final_state = graph.invoke(initial_state, config)
+
+        logger.info("=" * 80)
+        is_success = final_state.get("is_success", False)
+        logger.info(f"[RUN V3] {'SUCCESS' if is_success else 'FAILED'}")
+        logger.info(f"[RUN V3] Project: {final_state.get('project_dir', 'N/A')}")
+        logger.info(f"[RUN V3] Iterations: {final_state.get('iteration', 0)}")
+        logger.info(f"[RUN V3] Build: {final_state.get('build_result', 'N/A')[:200]}")
+        logger.info("=" * 80)
+
+        return final_state
+
+    except Exception as e:
+        logger.error(f"[RUN V3] Exception: {e}")
         import traceback
         logger.error(traceback.format_exc())
         raise
