@@ -1,14 +1,16 @@
 """
-EcoOS Agent Tools
+EcoOS Agent Tools — V3
 
-Тулы для Planner и Builder агентов:
-- list_files: навигация по файловой системе
-- read_file: чтение содержимого файлов
-- write_file: запись файлов (только для Builder)
-- build: компиляция проекта (только для QA)
+Tools for the assembly-from-SDK-components workflow:
+- rag_query: Planner tool to search ChromaDB for SDK components
+- eco_cli_search: Search EcoOS marketplace for components
+- eco_cli_pull: Download component from marketplace
+- build_makefile: Build project via cl.exe + Makefile (no MSBuild!)
 """
 
 import os
+import re
+import sys
 import subprocess
 import logging
 from pathlib import Path
@@ -18,465 +20,586 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
-# Базовые пути
+# Base paths
 BASE_DIR = Path(__file__).parent.parent
 SOURCE_DIR = BASE_DIR / "source"
-LESSONS_DIR = SOURCE_DIR / "Lessons"
 OUTPUT_DIR = BASE_DIR / "output"
+ECO_CLI = BASE_DIR / "eco.sli" / "eco-cli.exe"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TOOL: list_files
-# ═══════════════════════════════════════════════════════════════════════════
-
-@tool
-def list_files(path: str) -> str:
-    """
-    Список файлов и папок в директории.
-    
-    Args:
-        path: Путь относительно source/ (например "Lessons/Lesson02")
-              Или "." для корня source/
-    
-    Returns:
-        Список файлов и папок, по одному на строку.
-        Папки помечены [DIR], файлы - [FILE].
-    
-    Example:
-        list_files("Lessons/Lesson02/Eco.CalculatorA")
-        → [DIR] SharedFiles
-          [DIR] HeaderFiles
-          [DIR] SourceFiles
-          [DIR] AssemblyFiles
-    """
-    logger.info(f"[TOOL list_files] path={path}")
-    
-    # Нормализуем путь
-    if path == "." or path == "":
-        target_path = SOURCE_DIR
-    else:
-        target_path = SOURCE_DIR / path
-    
-    # Проверяем существование
-    if not target_path.exists():
-        error_msg = f"Директория не найдена: {path}"
-        logger.warning(f"[TOOL list_files] {error_msg}")
-        return f"ERROR: {error_msg}"
-    
-    if not target_path.is_dir():
-        error_msg = f"Это не директория: {path}"
-        logger.warning(f"[TOOL list_files] {error_msg}")
-        return f"ERROR: {error_msg}"
-    
-    # Собираем список
-    items = []
-    try:
-        for item in sorted(target_path.iterdir()):
-            if item.name.startswith('.'):
-                continue  # Пропускаем скрытые файлы
-            
-            if item.is_dir():
-                items.append(f"[DIR] {item.name}")
-            else:
-                items.append(f"[FILE] {item.name}")
-        
-        result = "\n".join(items) if items else "(пустая директория)"
-        logger.info(f"[TOOL list_files] Found {len(items)} items")
-        return result
-        
-    except PermissionError as e:
-        error_msg = f"Нет доступа к директории: {path}"
-        logger.error(f"[TOOL list_files] {error_msg}: {e}")
-        return f"ERROR: {error_msg}"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# TOOL: read_file
+# TOOL: rag_query — Planner searches ChromaDB for SDK components
 # ═══════════════════════════════════════════════════════════════════════════
 
 @tool
-def read_file(path: str) -> str:
+def rag_query(query: str) -> str:
     """
-    Прочитать содержимое файла.
-    
-    Args:
-        path: Путь к файлу относительно source/ или output/
-              Примеры:
-              - "Lessons/Lesson02/Eco.CalculatorA/SharedFiles/IEcoCalculatorX.h" (source)
-              - "Eco.Calculator/HeaderFiles/CEcoCalculator.h" (output)
-    
-    Returns:
-        Содержимое файла или сообщение об ошибке.
-    
-    Example:
-        read_file("Lessons/Lesson02/Eco.CalculatorA/SharedFiles/IEcoCalculatorX.h")
-        → /* IEcoCalculatorX.h */ ...
+    Search ChromaDB for EcoOS SDK components matching the query.
+
+    Use this to find which SDK components are available for the user's request.
+    Example queries:
+    - "math operations pow sqrt sin cos"
+    - "string manipulation copy compare"
+    - "file I/O read write"
+    - "logging"
+    - "network socket TCP"
+
+    Returns: component names, interfaces, methods, CIDs found in the SDK.
     """
-    logger.info(f"[TOOL read_file] path={path}")
-    
-    # Сначала ищем в source/
-    target_path = SOURCE_DIR / path
-    
-    # Если не нашли в source/, ищем в output/
-    if not target_path.exists():
-        output_path = OUTPUT_DIR / path
-        if output_path.exists():
-            logger.info(f"[TOOL read_file] Found in output/: {path}")
-            target_path = output_path
-    
-    # Проверяем существование
-    if not target_path.exists():
-        error_msg = f"Файл не найден: {path} (искали в source/ и output/)"
-        logger.warning(f"[TOOL read_file] {error_msg}")
-        return f"ERROR: {error_msg}"
-    
-    if not target_path.is_file():
-        error_msg = f"Это не файл: {path}"
-        logger.warning(f"[TOOL read_file] {error_msg}")
-        return f"ERROR: {error_msg}"
-    
-    # Читаем файл
+    logger.info(f"[TOOL rag_query] query={query}")
+
+    from .nodes.retrieve import get_vectorstore
+
+    vectorstore = get_vectorstore()
+    if not vectorstore:
+        return "ERROR: ChromaDB not initialized. Run 'python scripts/init_rag.py' first."
+
     try:
-        # Пробуем разные кодировки
-        for encoding in ['utf-8', 'utf-8-sig', 'cp1251', 'latin-1']:
-            try:
-                content = target_path.read_text(encoding=encoding)
-                logger.info(f"[TOOL read_file] Read {len(content)} chars with {encoding}")
-                return content
-            except UnicodeDecodeError:
-                continue
-        
-        # Если ничего не подошло, читаем как бинарный и декодируем с ошибками
-        content = target_path.read_bytes().decode('utf-8', errors='replace')
-        logger.info(f"[TOOL read_file] Read {len(content)} chars with fallback")
-        return content
-        
-    except PermissionError as e:
-        error_msg = f"Нет доступа к файлу: {path}"
-        logger.error(f"[TOOL read_file] {error_msg}: {e}")
-        return f"ERROR: {error_msg}"
+        results = vectorstore.similarity_search(query, k=8)
+    except Exception as e:
+        logger.error(f"[TOOL rag_query] Search failed: {e}")
+        return f"ERROR: Search failed: {e}"
 
+    if not results:
+        return "No results found. Try different search terms."
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TOOL: write_file
-# ═══════════════════════════════════════════════════════════════════════════
+    # Format results for the Planner
+    output_parts = []
+    seen_components = set()
 
-@tool
-def write_file(path: str, content: str) -> str:
-    """
-    Записать содержимое в файл.
-    
-    Файлы создаются в директории output/ (не в source/).
-    Директории создаются автоматически.
-    
-    Args:
-        path: Путь к файлу относительно output/
-              (например "Eco.Calculator/SharedFiles/IEcoCalculatorX.h")
-        content: Содержимое файла
-    
-    Returns:
-        "OK: Файл записан: {path}" или сообщение об ошибке.
-    
-    Example:
-        write_file("Eco.Calculator/SharedFiles/IEcoCalculatorX.h", "/* content */")
-        → OK: Файл записан: Eco.Calculator/SharedFiles/IEcoCalculatorX.h
-    """
-    logger.info(f"[TOOL write_file] path={path}, content_len={len(content)}")
-    
-    target_path = OUTPUT_DIR / path
-    
-    # Создаём директории
-    try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-    except PermissionError as e:
-        error_msg = f"Не удалось создать директорию для: {path}"
-        logger.error(f"[TOOL write_file] {error_msg}: {e}")
-        return f"ERROR: {error_msg}"
-    
-    # Записываем файл
-    try:
-        target_path.write_text(content, encoding='utf-8')
-        logger.info(f"[TOOL write_file] Written {len(content)} chars to {target_path}")
-        return f"OK: Файл записан: {path}"
-        
-    except PermissionError as e:
-        error_msg = f"Нет доступа для записи: {path}"
-        logger.error(f"[TOOL write_file] {error_msg}: {e}")
-        return f"ERROR: {error_msg}"
+    for doc in results:
+        component = doc.metadata.get("component", "unknown")
+        file_name = doc.metadata.get("file_name", "unknown")
+        content = doc.page_content[:1500]  # Truncate large chunks
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# TOOL: build
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _find_msbuild() -> Optional[str]:
-    """Найти MSBuild.exe на системе."""
-    # Стандартные пути VS 2022/2019
-    possible_paths = [
-        r"C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
-        r"C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
-        r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
-        r"C:\Program Files\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe",
-        r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe",
-    ]
-    
-    for path in possible_paths:
-        if Path(path).exists():
-            logger.info(f"[BUILD] Found MSBuild: {path}")
-            return path
-    
-    # Попробуем через vswhere
-    vswhere = r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-    if Path(vswhere).exists():
-        try:
-            result = subprocess.run(
-                [vswhere, "-latest", "-requires", "Microsoft.Component.MSBuild", 
-                 "-find", "MSBuild\\**\\Bin\\MSBuild.exe"],
-                capture_output=True, text=True, timeout=10
+        if component not in seen_components:
+            seen_components.add(component)
+            output_parts.append(
+                f"=== Component: {component} | File: {file_name} ===\n{content}"
             )
-            if result.returncode == 0 and result.stdout.strip():
-                msbuild = result.stdout.strip().split('\n')[0]
-                logger.info(f"[BUILD] Found MSBuild via vswhere: {msbuild}")
-                return msbuild
-        except Exception as e:
-            logger.warning(f"[BUILD] vswhere failed: {e}")
-    
-    return None
+        else:
+            output_parts.append(
+                f"--- {file_name} ---\n{content}"
+            )
+
+    result_text = "\n\n".join(output_parts)
+    logger.info(f"[TOOL rag_query] Found {len(results)} results from {len(seen_components)} components")
+    return result_text
 
 
-def _generate_vcxproj(project_path: Path, project_name: str, source_files: List[Path]) -> Path:
-    """Генерирует .vcxproj файл для EXE приложения."""
-    
-    # Генерируем GUID для проекта
-    import hashlib
-    guid_hash = hashlib.md5(project_name.encode()).hexdigest().upper()
-    project_guid = f"{guid_hash[:8]}-{guid_hash[8:12]}-{guid_hash[12:16]}-{guid_hash[16:20]}-{guid_hash[20:32]}"
-    
-    # Target name = имя проекта без Eco.
-    target_name = project_name.replace("Eco.", "")
-    
-    # Source files для vcxproj
-    source_items = "\n    ".join([f'<ClCompile Include="..\\..\\..\\SourceFiles\\{sf.name}" />' for sf in source_files])
-    
-    # Header files
-    header_path = project_path / "HeaderFiles"
-    header_files = list(header_path.glob("*.h")) if header_path.exists() else []
-    header_items = "\n    ".join([f'<ClInclude Include="..\\..\\..\\HeaderFiles\\{hf.name}" />' for hf in header_files])
-    
-    # Shared files  
-    shared_path = project_path / "SharedFiles"
-    shared_files = list(shared_path.glob("*.h")) if shared_path.exists() else []
-    shared_items = "\n    ".join([f'<ClInclude Include="..\\..\\..\\SharedFiles\\{sf.name}" />' for sf in shared_files])
-    
-    # EXE Application vcxproj
-    vcxproj_content = f'''<?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Release|x64">
-      <Configuration>Release</Configuration>
-      <Platform>x64</Platform>
-    </ProjectConfiguration>
-  </ItemGroup>
-  <PropertyGroup Label="Globals">
-    <ProjectGuid>{{{project_guid}}}</ProjectGuid>
-    <Keyword>Win32Proj</Keyword>
-    <RootNamespace>{project_name.replace('.', '')}</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-  </PropertyGroup>
-  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.Default.props" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
-    <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
-  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />
-  <ImportGroup Label="ExtensionSettings">
-  </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <Import Project="$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-  </ImportGroup>
-  <PropertyGroup Label="UserMacros" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <OutDir>$(SolutionDir)..\\BuildFiles\\Windows\\x64\\$(Configuration)\\</OutDir>
-    <IntDir>$(Configuration)\\</IntDir>
-    <TargetName>{target_name}</TargetName>
-  </PropertyGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <PrecompiledHeader></PrecompiledHeader>
-      <Optimization>MaxSpeed</Optimization>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\\..\\..\\HeaderFiles;..\\..\\..\\SharedFiles;$(ECO_FRAMEWORK)\\Eco.Core1_DK_v.1.0.1.2\\Eco.Core1\\SharedFiles;$(ECO_FRAMEWORK)\\Eco.MemoryManager1\\SharedFiles;$(ECO_FRAMEWORK)\\Eco.InterfaceBus1_DK_v.1.0.1.2\\Eco.InterfaceBus1\\SharedFiles;$(ECO_FRAMEWORK)\\Eco.System1_DK_v.1.0.1.2\\Eco.System1\\SharedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <CompileAs>CompileAsC</CompileAs>
-      <PreprocessorDefinitions>ECO_WINDOWS;ECO_X86_64;_WINDOWS;ECO_LIB;UGUID_UTILITY;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <CallingConvention>StdCall</CallingConvention>
-    </ClCompile>
-    <Link>
-      <SubSystem>Console</SubSystem>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <OutputFile>$(OutDir)$(TargetName).exe</OutputFile>
-      <AdditionalLibraryDirectories>$(ECO_FRAMEWORK)\\Eco.System1_DK_v.1.0.1.2\\Eco.System1\\BuildFiles\\Windows\\amd64\\DynamicRelease;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>00000000000000000000000053595333.lib;%(AdditionalDependencies)</AdditionalDependencies>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemGroup>
-    {source_items}
-  </ItemGroup>
-  <ItemGroup>
-    {header_items}
-    {shared_items}
-  </ItemGroup>
-  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-  </ImportGroup>
-</Project>'''
-    
-    # Создаём директорию для VS проекта
-    vs_dir = project_path / "AssemblyFiles" / "Windows" / "VisualStudio"
-    vs_dir.mkdir(parents=True, exist_ok=True)
-    
-    vcxproj_path = vs_dir / f"{project_name}.vcxproj"
-    vcxproj_path.write_text(vcxproj_content, encoding='utf-8')
-    
-    logger.info(f"[BUILD] Generated vcxproj for EXE: {vcxproj_path}")
-    return vcxproj_path
-
+# ═══════════════════════════════════════════════════════════════════════════
+# TOOL: eco_cli_search — Search marketplace
+# ═══════════════════════════════════════════════════════════════════════════
 
 @tool
-def build(project_name: str) -> str:
+def eco_cli_search(name: str) -> str:
     """
-    Скомпилировать проект через MSBuild в EXE.
-    
-    Генерирует .vcxproj и собирает EXE приложение.
-    
+    Search EcoOS marketplace for a component by name.
+
+    Use when a component is not found in the local SDK.
+
     Args:
-        project_name: Имя проекта в output/ (например "Eco.Calculator")
-    
-    Returns:
-        "OK: Сборка успешна: {exe_path}" или "ERROR: {compiler_output}"
+        name: Component name to search (e.g. "Eco.Math")
+
+    Returns: Marketplace search results with component names and CIDs.
     """
-    logger.info(f"[TOOL build] project_name={project_name}")
-    
-    project_path = OUTPUT_DIR / project_name
-    
-    # Проверяем существование проекта
-    if not project_path.exists():
-        error_msg = f"Проект не найден: {project_name}"
-        logger.warning(f"[TOOL build] {error_msg}")
-        return f"ERROR: {error_msg}"
-    
-    # Находим MSBuild
-    msbuild = _find_msbuild()
-    if not msbuild:
-        error_msg = "MSBuild не найден. Установите Visual Studio."
-        logger.error(f"[TOOL build] {error_msg}")
-        return f"ERROR: {error_msg}"
-    
-    # Собираем список .c файлов
-    source_files = list((project_path / "SourceFiles").glob("*.c")) if (project_path / "SourceFiles").exists() else []
-    
-    if not source_files:
-        error_msg = f"Нет исходных файлов в {project_name}/SourceFiles/"
-        logger.warning(f"[TOOL build] {error_msg}")
-        return f"ERROR: {error_msg}"
-    
-    logger.info(f"[TOOL build] Found {len(source_files)} source files:")
-    for sf in source_files:
-        logger.info(f"[TOOL build]   - {sf.name}")
-    
-    # Генерируем .vcxproj для EXE
-    vcxproj_path = _generate_vcxproj(project_path, project_name, source_files)
-    
-    # Устанавливаем ECO_FRAMEWORK env variable
-    eco_framework = str(SOURCE_DIR)
-    logger.info(f"[TOOL build] ECO_FRAMEWORK={eco_framework}")
-    
-    # Формируем команду MSBuild для EXE (Configuration=Release)
-    cmd = [
-        msbuild,
-        str(vcxproj_path),
-        "/p:Configuration=Release",
-        "/p:Platform=x64",
-        "/t:Build",
-        "/v:minimal"
-    ]
-    
-    logger.info(f"[TOOL build] Running MSBuild for EXE...")
-    
+    logger.info(f"[TOOL eco_cli_search] name={name}")
+
+    if not ECO_CLI.exists():
+        return "ERROR: eco-cli.exe not found at eco.sli/eco-cli.exe"
+
     try:
-        # Копируем env и добавляем ECO_FRAMEWORK
-        env = os.environ.copy()
-        env["ECO_FRAMEWORK"] = eco_framework
-        
+        result = subprocess.run(
+            [str(ECO_CLI), "find", "-u", name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(BASE_DIR),
+        )
+        output = result.stdout or result.stderr or "No output"
+        logger.info(f"[TOOL eco_cli_search] returncode={result.returncode}")
+        return output[:3000]
+    except subprocess.TimeoutExpired:
+        return "ERROR: eco-cli search timed out (30s)"
+    except Exception as e:
+        return f"ERROR: eco-cli failed: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TOOL: eco_cli_pull — Download component from marketplace
+# ═══════════════════════════════════════════════════════════════════════════
+
+@tool
+def eco_cli_pull(cid: str, version: str = "latest") -> str:
+    """
+    Download a component from EcoOS marketplace.
+
+    Args:
+        cid: Component ID (GUID)
+        version: Version to download (default: "latest")
+
+    Returns: Download result or error message.
+    """
+    logger.info(f"[TOOL eco_cli_pull] cid={cid}, version={version}")
+
+    if not ECO_CLI.exists():
+        return "ERROR: eco-cli.exe not found at eco.sli/eco-cli.exe"
+
+    try:
+        cmd = [str(ECO_CLI), "pull", "-c", cid, "-v", version, "-d"]
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=120,
-            cwd=str(vcxproj_path.parent),
-            env=env
+            cwd=str(BASE_DIR),
         )
-        
+        output = result.stdout or result.stderr or "No output"
+        logger.info(f"[TOOL eco_cli_pull] returncode={result.returncode}")
+        return output[:3000]
+    except subprocess.TimeoutExpired:
+        return "ERROR: eco-cli pull timed out (120s)"
+    except Exception as e:
+        return f"ERROR: eco-cli pull failed: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TOOL: build_makefile — Build via cl.exe + Makefile
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _find_vcvarsall() -> Optional[str]:
+    """Find vcvarsall.bat via MSVS_BT_ROOT or standard VS paths."""
+    # Try MSVS_BT_ROOT env var first
+    msvs_root = os.environ.get("MSVS_BT_ROOT")
+    if msvs_root:
+        vcvars = Path(msvs_root) / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat"
+        if vcvars.exists():
+            return str(vcvars)
+
+    # Standard Visual Studio paths
+    for year in ["2022", "2019"]:
+        for edition in ["Community", "Professional", "Enterprise", "BuildTools"]:
+            vcvars = Path(f"C:/Program Files/Microsoft Visual Studio/{year}/{edition}/VC/Auxiliary/Build/vcvarsall.bat")
+            if vcvars.exists():
+                return str(vcvars)
+            # x86 path
+            vcvars = Path(f"C:/Program Files (x86)/Microsoft Visual Studio/{year}/{edition}/VC/Auxiliary/Build/vcvarsall.bat")
+            if vcvars.exists():
+                return str(vcvars)
+
+    return None
+
+
+def _find_make() -> str:
+    """Find make executable."""
+    if sys.platform.startswith("linux"):
+        return "make"  # Always available via build-essential in Docker
+
+    # Windows: try GNU make first (from Git for Windows, MSYS2, etc.)
+    for make_name in ["make", "mingw32-make"]:
+        try:
+            result = subprocess.run(
+                ["where", make_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return make_name
+        except Exception:
+            pass
+    return "make"  # Default, hope it's in PATH
+
+
+@tool
+def build_makefile(project_dir: str) -> str:
+    """
+    Build EcoOS project using Makefile.
+
+    On Windows: vcvarsall.bat x64 + make -f MakefileExe (cl.exe)
+    On Linux:   make -f MakefileExe (gcc)
+
+    Args:
+        project_dir: Path to project directory (e.g. "output/EcoCalculator")
+
+    Returns: "OK: Build succeeded: <exe_path>" or "ERROR: <compiler_output>"
+    """
+    logger.info(f"[TOOL build_makefile] project_dir={project_dir}")
+
+    project_path = Path(project_dir)
+    if not project_path.is_absolute():
+        project_path = BASE_DIR / project_dir
+
+    is_linux = sys.platform.startswith("linux")
+    make_cmd = _find_make()
+
+    if is_linux:
+        return _build_linux(project_path, make_cmd)
+    else:
+        return _build_windows(project_path, make_cmd)
+
+
+def _build_linux(project_path: Path, make_cmd: str) -> str:
+    """Build on Linux using gcc via MakefileExe."""
+    makefile_dir = project_path / "gcc_linux"
+
+    if not makefile_dir.exists():
+        return f"ERROR: gcc_linux directory not found in {project_path}"
+
+    makefile_exe = makefile_dir / "MakefileExe"
+    if not makefile_exe.exists():
+        return f"ERROR: MakefileExe not found in {makefile_dir}"
+
+    cmd = f"{make_cmd} -f MakefileExe"
+    logger.info(f"[TOOL build_makefile] Linux build: {cmd} in {makefile_dir}")
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(makefile_dir),
+            shell=True,
+        )
+
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        combined = f"{stdout}\n{stderr}".strip()
+
         if result.returncode == 0:
-            # Ищем созданный EXE
-            build_dir = project_path / "BuildFiles" / "Windows" / "x64" / "Release"
+            # Find the built binary (no .exe extension on Linux)
+            build_dir = project_path / "BuildFiles" / "Linux" / "x86_64" / "StaticRelease"
+            if build_dir.exists():
+                binaries = [f for f in build_dir.iterdir() if f.is_file() and not f.suffix]
+                if binaries:
+                    exe_path = binaries[0]
+                    logger.info(f"[TOOL build_makefile] SUCCESS: {exe_path}")
+                    return f"OK: Build succeeded: {exe_path}"
+            return f"OK: Build succeeded (check BuildFiles/ for output).\n{combined[-500:]}"
+        else:
+            logger.error(f"[TOOL build_makefile] FAILED:\n{combined[:2000]}")
+            return f"ERROR: Build failed (exit code {result.returncode}):\n{combined[:3000]}"
+
+    except subprocess.TimeoutExpired:
+        return "ERROR: Build timed out (120s)"
+    except Exception as e:
+        return f"ERROR: Build failed: {e}"
+
+
+def _build_windows(project_path: Path, make_cmd: str) -> str:
+    """Build on Windows using cl.exe via vcvarsall + MakefileExe."""
+    makefile_dir = project_path / "MSVC_v140"
+
+    if not makefile_dir.exists():
+        return f"ERROR: MSVC_v140 directory not found in {project_path}"
+
+    makefile_exe = makefile_dir / "MakefileExe"
+    if not makefile_exe.exists():
+        return f"ERROR: MakefileExe not found in {makefile_dir}"
+
+    # Find vcvarsall.bat
+    vcvarsall = _find_vcvarsall()
+    if not vcvarsall:
+        return "ERROR: vcvarsall.bat not found. Install Visual Studio Build Tools."
+
+    # Build command: vcvarsall.bat + make
+    # CRITICAL: Set MSYS_NO_PATHCONV to prevent Git Bash's sh.exe from
+    # mangling /I, /D, /Fo and other cl.exe flags that start with /
+    cmd = (
+        f'set MSYS_NO_PATHCONV=1 && '
+        f'set MSYS2_ARG_CONV_EXCL=* && '
+        f'call "{vcvarsall}" x64 && '
+        f'cd /d "{makefile_dir}" && '
+        f'{make_cmd} -f MakefileExe TARGET=1 ARCH=x86_64 DEBUG=0'
+    )
+
+    logger.info(f"[TOOL build_makefile] Running: {cmd}")
+
+    try:
+        env = os.environ.copy()
+        env["MSYS_NO_PATHCONV"] = "1"
+        env["MSYS2_ARG_CONV_EXCL"] = "*"
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(makefile_dir),
+            env=env,
+            shell=True,
+        )
+
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        combined = f"{stdout}\n{stderr}".strip()
+
+        if result.returncode == 0:
+            build_dir = project_path / "BuildFiles" / "Windows" / "amd64" / "StaticRelease"
             exe_files = list(build_dir.glob("*.exe")) if build_dir.exists() else []
-            
             if exe_files:
                 exe_path = exe_files[0]
-                logger.info(f"[TOOL build] SUCCESS: {exe_path}")
-                return f"OK: Сборка успешна: {exe_path}"
+                logger.info(f"[TOOL build_makefile] SUCCESS: {exe_path}")
+                return f"OK: Build succeeded: {exe_path}"
             else:
-                # Попробуем найти в AssemblyFiles
-                alt_build_dir = project_path / "AssemblyFiles" / "Windows" / "BuildFiles" / "Windows" / "x64" / "Release"
-                exe_files = list(alt_build_dir.glob("*.exe")) if alt_build_dir.exists() else []
-                if exe_files:
-                    exe_path = exe_files[0]
-                    logger.info(f"[TOOL build] SUCCESS: {exe_path}")
-                    return f"OK: Сборка успешна: {exe_path}"
-                logger.info(f"[TOOL build] SUCCESS but EXE not found in expected location")
-                return f"OK: Сборка успешна (проверьте BuildFiles/)"
+                return f"OK: Build succeeded (check BuildFiles/ for output).\n{combined[-500:]}"
         else:
-            error_output = result.stderr or result.stdout or "Unknown error"
-            logger.error(f"[TOOL build] FAILED: {error_output[:1000]}")
-            return f"ERROR: Ошибка компиляции:\n{error_output[:2000]}"
-            
+            logger.error(f"[TOOL build_makefile] FAILED:\n{combined[:2000]}")
+            return f"ERROR: Build failed (exit code {result.returncode}):\n{combined[:3000]}"
+
     except subprocess.TimeoutExpired:
-        error_msg = "Таймаут компиляции (120 сек)"
-        logger.error(f"[TOOL build] {error_msg}")
-        return f"ERROR: {error_msg}"
-        
+        return "ERROR: Build timed out (120s)"
     except Exception as e:
-        error_msg = f"Ошибка запуска MSBuild: {e}"
-        logger.error(f"[TOOL build] {error_msg}")
-        return f"ERROR: {error_msg}"
+        return f"ERROR: Build failed: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BUILD NODE (non-tool version for graph node use)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def classify_build_error(output: str) -> str:
+    """
+    Classify build error type for routing.
+
+    Returns: "compile", "link", "missing_component", or "none"
+    """
+    if not output:
+        return "none"
+
+    output_lower = output.lower()
+
+    # Environment error — no compiler available
+    if any(x in output_lower for x in ["vcvarsall", "install visual studio"]):
+        return "compile"
+
+    # Missing component — unresolved external symbol for factory function (MSVC or gcc)
+    if "getiecocomponentfactoryptr_" in output_lower and (
+        "unresolved" in output_lower or "lnk2019" in output_lower or "undefined reference" in output_lower
+    ):
+        return "missing_component"
+
+    # MSVC link errors
+    if any(x in output_lower for x in ["lnk2019", "lnk2001", "lnk1120", "lnk1104", "unresolved external"]):
+        return "link"
+
+    # GCC link errors
+    if "undefined reference" in output_lower:
+        return "link"
+    if "cannot find -l" in output_lower:
+        return "link"
+
+    # MSVC compile errors
+    if any(x in output_lower for x in ["error c", "fatal error", "syntax error", "undeclared identifier"]):
+        return "compile"
+
+    # GCC compile errors
+    if re.search(r"error:", output_lower) and not "undefined reference" in output_lower:
+        return "compile"
+    if "fatal error:" in output_lower:
+        return "compile"
+
+    return "none"
+
+
+def build_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build node — runs make on the generated project.
+
+    Pure Python, no LLM. Classifies errors for routing.
+    """
+    print("[BUILD] Starting build...")
+
+    project_dir = state.get("project_dir", "")
+    iteration = state.get("iteration", 0)
+
+    if not project_dir:
+        return {
+            "build_result": "ERROR: No project_dir in state",
+            "is_success": False,
+            "error_message": "No project directory specified",
+            "error_type": "compile",
+            "iteration": iteration + 1,
+        }
+
+    # Write EcoMain.c to project
+    ecomain_content = state.get("ecomain_content", "")
+    if ecomain_content:
+        ecomain_path = Path(project_dir) / "SourceFiles" / "EcoMain.c"
+        ecomain_path.parent.mkdir(parents=True, exist_ok=True)
+        ecomain_path.write_text(ecomain_content, encoding="utf-8")
+        print(f"[BUILD] Written EcoMain.c: {ecomain_path}")
+
+    # Run build
+    result = build_makefile.invoke({"project_dir": project_dir})
+
+    is_success = result.startswith("OK:")
+    error_type = "none" if is_success else classify_build_error(result)
+    error_message = "" if is_success else result
+
+    print(f"[BUILD] Result: {'SUCCESS' if is_success else 'FAILED'}")
+    print(f"[BUILD] Error type: {error_type}")
+
+    return {
+        "build_result": result,
+        "is_success": is_success,
+        "error_message": error_message,
+        "error_type": error_type,
+        "iteration": iteration + 1,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST EXECUTOR — runs EXE with stdin and checks stdout
+# ═══════════════════════════════════════════════════════════════════════════
+
+import json
+
+def run_tests(exe_path: str, test_cases_json: str) -> Dict[str, Any]:
+    """
+    Execute test cases against a built EXE.
+
+    Args:
+        exe_path: Path to the built .exe file
+        test_cases_json: JSON string with {strategy, tests} structure
+
+    Returns:
+        Dict with {passed: bool, total: int, failed: int, results: [...]}
+    """
+    logger.info(f"[TEST RUNNER] exe_path={exe_path}")
+
+    exe = Path(exe_path)
+    if not exe.exists():
+        return {
+            "passed": False,
+            "total": 0,
+            "failed": 0,
+            "results": [],
+            "error": f"EXE not found: {exe_path}",
+        }
+
+    try:
+        test_cases = json.loads(test_cases_json)
+    except json.JSONDecodeError as e:
+        return {
+            "passed": False,
+            "total": 0,
+            "failed": 0,
+            "results": [],
+            "error": f"Invalid test JSON: {e}",
+        }
+
+    tests = test_cases.get("tests", [])
+    strategy = test_cases.get("strategy", "stdin_stdout")
+
+    if not tests:
+        return {
+            "passed": True,
+            "total": 0,
+            "failed": 0,
+            "results": [],
+            "error": "No tests defined",
+        }
+
+    results = []
+    failed_count = 0
+
+    for i, test in enumerate(tests):
+        name = test.get("name", f"test_{i}")
+        stdin_data = test.get("stdin", "")
+        expect_contains = test.get("expect_contains", [])
+
+        logger.info(f"[TEST RUNNER] Running test {i+1}/{len(tests)}: {name}")
+
+        try:
+            proc = subprocess.run(
+                [str(exe)],
+                input=stdin_data,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=str(exe.parent),
+            )
+
+            stdout = proc.stdout or ""
+            stderr = proc.stderr or ""
+            combined_output = f"{stdout}\n{stderr}".strip()
+
+            # Check expect_contains (case-insensitive)
+            missing = []
+            for expected in expect_contains:
+                if expected.lower() not in combined_output.lower():
+                    missing.append(expected)
+
+            test_passed = len(missing) == 0
+
+            if not test_passed:
+                failed_count += 1
+
+            test_result = {
+                "name": name,
+                "passed": test_passed,
+                "stdin": stdin_data[:200],
+                "stdout": combined_output[:1000],
+                "exit_code": proc.returncode,
+                "expected": expect_contains,
+                "missing": missing,
+            }
+
+            results.append(test_result)
+            logger.info(f"[TEST RUNNER]   {'PASS' if test_passed else 'FAIL'}: {name}")
+            if missing:
+                logger.info(f"[TEST RUNNER]   Missing: {missing}")
+
+        except subprocess.TimeoutExpired:
+            failed_count += 1
+            results.append({
+                "name": name,
+                "passed": False,
+                "stdin": stdin_data[:200],
+                "stdout": "",
+                "exit_code": -1,
+                "expected": expect_contains,
+                "missing": expect_contains,
+                "error": "Timeout (10s)",
+            })
+            logger.warning(f"[TEST RUNNER]   TIMEOUT: {name}")
+
+        except Exception as e:
+            failed_count += 1
+            results.append({
+                "name": name,
+                "passed": False,
+                "stdin": stdin_data[:200],
+                "stdout": "",
+                "exit_code": -1,
+                "expected": expect_contains,
+                "missing": expect_contains,
+                "error": str(e),
+            })
+            logger.error(f"[TEST RUNNER]   ERROR: {name}: {e}")
+
+    all_passed = failed_count == 0
+
+    logger.info(f"[TEST RUNNER] Done: {len(tests) - failed_count}/{len(tests)} passed")
+
+    return {
+        "passed": all_passed,
+        "total": len(tests),
+        "failed": failed_count,
+        "results": results,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # TOOL COLLECTIONS
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Тулы для Planner (только чтение)
-PLANNER_TOOLS = [list_files, read_file]
+# Tools for Planner (ReAct agent with RAG search)
+PLANNER_TOOLS = [rag_query]
 
-# Тулы для Builder (чтение + запись + сборка)
-# Builder сам вызывает build, анализирует ошибки и исправляет код
-BUILDER_TOOLS = [list_files, read_file, write_file, build]
+# Tools for future use (marketplace integration)
+MARKETPLACE_TOOLS = [eco_cli_search, eco_cli_pull]
 
-# Тулы для QA (legacy, может быть убрано)
-QA_TOOLS = [build]
-
-
-def get_tools_description(tools: List) -> str:
-    """Получить описание тулов для промпта."""
-    descriptions = []
-    for tool in tools:
-        descriptions.append(f"- {tool.name}: {tool.description.split(chr(10))[0]}")
-    return "\n".join(descriptions)
+# Build tool (for QA / manual use)
+BUILD_TOOLS = [build_makefile]
