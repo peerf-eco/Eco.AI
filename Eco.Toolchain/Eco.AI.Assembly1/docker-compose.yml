@@ -13,11 +13,13 @@ services:
       - ./rag_storage:/app/rag_storage:ro
       - ./chroma_db:/app/chroma_db
       - ./output:/app/output
+      - ./source:/app/source:ro
+      - ./MSVC_v140:/app/MSVC_v140:ro
       # Монтируем код для разработки (hot reload)
       - ./agent:/app/agent
       - ./backend:/app/backend
     ports:
-      - "8000:8000"
+      - "8100:8000"
     command: ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   # Frontend (Next.js)
@@ -27,9 +29,9 @@ services:
       dockerfile: Dockerfile
     container_name: ecoos-frontend
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8100
     ports:
-      - "3000:3000"
+      - "3100:3000"
     volumes:
        # Монтируем для разработки (кроме node_modules)
       - ./frontend:/app
