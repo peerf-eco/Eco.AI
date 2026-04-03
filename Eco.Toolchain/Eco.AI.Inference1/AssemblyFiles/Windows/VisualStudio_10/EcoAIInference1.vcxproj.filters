@@ -38,12 +38,39 @@
     <ClInclude Include="..\..\..\HeaderFiles\CEcoAIInference1Factory.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\..\SharedFiles\IEcoAIModel1.h">
+      <Filter>Shared Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\SharedFiles\IEcoAIOperation1.h">
+      <Filter>Shared Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\SharedFiles\IEcoAITensor1.h">
+      <Filter>Shared Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\HeaderFiles\CEcoAIInference1Model.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\HeaderFiles\CEcoAIInference1Operation.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\HeaderFiles\CEcoAIInference1Tensor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\SourceFiles\CEcoAIInference1.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\SourceFiles\CEcoAIInference1Factory.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\SourceFiles\CEcoAIInference1Model.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\SourceFiles\CEcoAIInference1Operation.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\SourceFiles\CEcoAIInference1Tensor.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
