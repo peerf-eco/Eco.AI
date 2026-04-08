@@ -16,11 +16,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
 # Import agent
-from agent.graph_v2 import create_agent_graph_v3
+from agent.chat_agent import create_chat_agent, ChatContext
 from agent.main import get_llm
 
 load_dotenv()
@@ -45,9 +45,9 @@ app.add_middleware(
 os.makedirs("output", exist_ok=True)
 app.mount("/files", StaticFiles(directory="output"), name="files")
 
-# Initialize graph (V3)
+# Initialize chat agent (V4: Architect + Coders)
 llm = get_llm()
-graph = create_agent_graph_v3(llm)
+chat_agent = create_chat_agent(llm)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -59,6 +59,9 @@ class PipelineSession:
     Holds a running pipeline's event stream.
     Pipeline emits events → stored in buffer + pushed to all subscriber queues.
     WebSocket clients subscribe/unsubscribe without affecting pipeline execution.
+
+    V4: interrupt/resume is handled inside chat_agent (GraphInterrupt catch).
+    Server only needs to forward prd_approve/reject as new user messages.
     """
 
     def __init__(self):
@@ -71,6 +74,17 @@ class PipelineSession:
 
     async def emit(self, event: dict):
         """Emit event to buffer + all active subscribers."""
+        etype = event.get("type", "?")
+        extra = ""
+        if etype == "progress":
+            extra = f" stage={event.get('stage')} status={event.get('status', '')}"
+        elif etype == "token":
+            extra = f" len={len(event.get('content', ''))}"
+        elif etype == "component_progress":
+            extra = f" component={event.get('component')} stage={event.get('stage')}"
+        elif etype == "status":
+            extra = f" content={event.get('content', '')[:80]}"
+        print(f"[EMIT] type={etype}{extra}  subscribers={len(self.subscribers)}")
         self.events.append(event)
         for qid in list(self.subscribers):
             try:
@@ -100,114 +114,50 @@ HEARTBEAT_INTERVAL = 15  # seconds
 
 
 async def run_pipeline(session: PipelineSession, user_message: str, thread_id: str):
-    """Run LangGraph pipeline in background, emitting events to session."""
+    """Run ChatAgent, streaming chat tokens and assembly progress to session.
+
+    V4: GraphInterrupt is caught inside chat_agent's assemble_ecoos_app tool.
+    PRD review data arrives as a custom stream event ("prd_review").
+    Resume happens when user sends prd_approve → new run_pipeline with resume message.
+    """
     try:
         config = {"configurable": {"thread_id": thread_id}}
 
-        inputs = {
-            "user_request": user_message,
-            "component_plan": {},
-            "planner_messages": [],
-            "resolved_components": [],
-            "framework_components": [],
-            "include_dirs": [],
-            "lib_dirs": [],
-            "lib_files": [],
-            "makefile_content": "",
-            "makefile_exe_content": "",
-            "project_dir": "",
-            "missing_components": [],
-            "ecomain_content": "",
-            "writer_messages": [],
-            "build_result": "",
-            "is_success": False,
-            "error_message": "",
-            "error_type": "none",
-            "test_cases": "",
-            "test_results": "",
-            "tests_passed": False,
-            "iteration": 0,
-            "max_iterations": int(os.getenv("AGENT_MAX_ITERATIONS", "5")),
-        }
+        inputs = {"messages": [{"role": "user", "content": user_message}]}
+        await session.emit({"type": "status", "content": "Обработка запроса..."})
 
-        await session.emit({"type": "status", "content": "Starting assembly pipeline..."})
+        async for chunk in chat_agent.astream(
+            inputs,
+            config=config,
+            stream_mode=["messages", "custom"],
+        ):
+            mode, data = chunk
 
-        v3_nodes = ["planner", "resolver", "writer", "build", "tester"]
+            if mode == "messages":
+                msg_chunk, metadata = data
+                node = metadata.get("langgraph_node", "?")
+                # Stream only agent responses (not tool messages)
+                if hasattr(msg_chunk, "content") and msg_chunk.content:
+                    if node == "agent":
+                        await session.emit({
+                            "type": "token",
+                            "content": msg_chunk.content,
+                        })
+                    else:
+                        print(f"[STREAM] skip message from node={node} len={len(msg_chunk.content)}")
 
-        async for event in graph.astream_events(inputs, config=config, version="v1"):
-            kind = event["event"]
+            elif mode == "custom":
+                # data = whatever tool's stream_writer() sent
+                # Types: progress, result, prd_review, component_progress, status
+                print(f"[STREAM] custom event: {json.dumps(data, ensure_ascii=False, default=str)[:200]}")
+                await session.emit(data)
 
-            if kind == "on_chain_start":
-                node_name = event["name"]
-                if node_name in v3_nodes:
-                    await session.emit({
-                        "type": "progress",
-                        "stage": node_name,
-                        "status": "running"
-                    })
-
-            elif kind == "on_chain_end":
-                node_name = event["name"]
-                if node_name in v3_nodes:
-                    await session.emit({
-                        "type": "progress",
-                        "stage": node_name,
-                        "status": "completed"
-                    })
-
-            elif kind == "on_chat_model_stream":
-                content = event["data"]["chunk"].content
-                if content:
-                    await session.emit({
-                        "type": "token",
-                        "content": content
-                    })
-
-        # Final state
-        final_state = await graph.aget_state(config)
-        state_values = final_state.values
-
-        result_data = {
-            "is_success": state_values.get("is_success", False),
-            "tests_passed": state_values.get("tests_passed", False),
-            "project_dir": state_values.get("project_dir", ""),
-            "build_result": state_values.get("build_result", ""),
-            "test_results": state_values.get("test_results", ""),
-            "iterations": state_values.get("iteration", 0),
-            "resolved_components": [
-                {"name": c.get("name", ""), "cid": c.get("cid", "")}
-                for c in state_values.get("resolved_components", [])
-            ],
-            "missing_components": state_values.get("missing_components", []),
-        }
-
-        # Send EcoMain.c as a file if present
-        ecomain = state_values.get("ecomain_content", "")
-        if ecomain:
-            project_dir = state_values.get("project_dir", "")
-            if project_dir:
-                # Extract project name from path (works with both absolute /app/output/X and relative output/X)
-                rel_path = Path(project_dir).name
-                await session.emit({
-                    "type": "files",
-                    "files": [{
-                        "path": f"{rel_path}/SourceFiles/EcoMain.c",
-                        "type": "source",
-                        "url": f"/files/{rel_path}/SourceFiles/EcoMain.c"
-                    }]
-                })
-
-        await session.emit({"type": "result", "data": result_data})
-
-        await session.emit({
-            "type": "done",
-            "content": "Assembly complete" if result_data["is_success"] else "Assembly failed"
-        })
+        await session.emit({"type": "done", "content": "Готово"})
 
     except Exception as e:
         logger.error(f"Pipeline error: {e}", exc_info=True)
         await session.emit({"type": "error", "content": str(e)})
-        await session.emit({"type": "done", "content": f"Pipeline failed: {e}"})
+        await session.emit({"type": "done", "content": f"Ошибка: {e}"})
     finally:
         session.is_done = True
 
@@ -222,7 +172,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "version": "v3"}
+    return {"status": "ok", "version": "v4"}
 
 
 @app.get("/api/rag-status")
@@ -349,7 +299,12 @@ async def init_rag_generator() -> AsyncGenerator[str, None]:
 
         if Path(CHROMA_DB).exists():
             import shutil
-            shutil.rmtree(CHROMA_DB)
+            # Clear contents instead of rmtree — rmtree fails on Docker volume mounts
+            for item in Path(CHROMA_DB).iterdir():
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
 
         rag_init_status["progress"] = 80
         yield f"data: {json.dumps({'progress': 80, 'message': 'Generating embeddings (this may take a while)...'})}\n\n"
@@ -422,7 +377,9 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
                 buffered, queue, sub_id = session.subscribe()
 
                 # Replay buffered events
+                print(f"[WS] Replaying {len(buffered)} buffered events for #{thread_id}")
                 for event in buffered:
+                    print(f"[WS→CLIENT replay] type={event.get('type', '?')}")
                     await websocket.send_json(event)
 
                 # Start heartbeat
@@ -445,8 +402,27 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
                 # No active pipeline — wait for client message
                 data = await websocket.receive_text()
                 request = json.loads(data)
-                user_message = request.get("message")
+                print(f"[WS←CLIENT] thread={thread_id} type={request.get('type', 'message')} msg={str(request.get('message', ''))[:80]}")
 
+                # V4: handle PRD approval/rejection from frontend
+                # Convert to a user message that tells the chat agent to call resume_assembly
+                if request.get("type") == "prd_approve":
+                    prd = request.get("prd", {})
+                    arch_thread = request.get("architect_thread_id", "")
+                    prd_json = json.dumps(prd, ensure_ascii=False) if prd else ""
+                    user_message = (
+                        f"User approved the PRD. Call resume_assembly with "
+                        f"architect_thread_id=\"{arch_thread}\", approved=true"
+                        + (f", modified_prd_json='{prd_json}'" if prd_json else "")
+                    )
+                elif request.get("type") == "prd_reject":
+                    arch_thread = request.get("architect_thread_id", "")
+                    user_message = (
+                        f"User rejected the PRD. Call resume_assembly with "
+                        f"architect_thread_id=\"{arch_thread}\", approved=false"
+                    )
+                else:
+                    user_message = request.get("message")
                 if not user_message:
                     continue
 
@@ -468,8 +444,10 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
                 # Stream events until done
                 while True:
                     event = await queue.get()
+                    etype = event.get("type", "?")
+                    print(f"[WS→CLIENT] type={etype} thread={thread_id}")
                     await websocket.send_json(event)
-                    if event.get("type") == "done":
+                    if etype == "done":
                         break
 
                 session.unsubscribe(sub_id)

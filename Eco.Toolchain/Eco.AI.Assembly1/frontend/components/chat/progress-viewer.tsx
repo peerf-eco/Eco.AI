@@ -2,12 +2,13 @@ import React from "react";
 import { CheckCircle2, Circle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type Stage = 
-  | "analyze_request"
-  | "select_components"
-  | "retrieve_context"
-  | "generate_code"
-  | "review_code"
+export type Stage =
+  | "planner"
+  | "resolver"
+  | "writer"
+  | "verifier"
+  | "build"
+  | "tester"
   | "complete";
 
 interface ProgressViewerProps {
@@ -16,11 +17,12 @@ interface ProgressViewerProps {
 }
 
 const STAGES: { id: Stage; label: string }[] = [
-  { id: "analyze_request", label: "Analysis" },
-  { id: "select_components", label: "Selection" },
-  { id: "retrieve_context", label: "Retrieval (RAG)" },
-  { id: "generate_code", label: "Generation" },
-  { id: "review_code", label: "Review" },
+  { id: "planner", label: "Planner" },
+  { id: "resolver", label: "Resolver" },
+  { id: "writer", label: "Writer" },
+  { id: "verifier", label: "Verifier" },
+  { id: "build", label: "Build" },
+  { id: "tester", label: "Tester" },
 ];
 
 export function ProgressViewer({ currentStage, isProcessing }: ProgressViewerProps) {
