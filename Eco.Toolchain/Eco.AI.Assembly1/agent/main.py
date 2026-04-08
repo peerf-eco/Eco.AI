@@ -13,7 +13,6 @@ EcoOS Component Agent - Entry Point
 import os
 import sys
 import argparse
-from pathlib import Path
 from dotenv import load_dotenv
 
 # Загрузка переменных окружения из .env
@@ -62,7 +61,12 @@ def main():
     parser.add_argument(
         "--interactive", "-i",
         action="store_true",
-        help="Интерактивный режим"
+        help="Интерактивный режим (прямой V3 pipeline)"
+    )
+    parser.add_argument(
+        "--chat",
+        action="store_true",
+        help="Chat mode — общение с агентом, сборка по запросу"
     )
     parser.add_argument(
         "--model",
@@ -80,12 +84,6 @@ def main():
         default=int(os.getenv("AGENT_MAX_ITERATIONS", "10")),
         help=f"Максимум итераций перегенерации (default: {os.getenv('AGENT_MAX_ITERATIONS', '10')})"
     )
-    parser.add_argument(
-        "--simple",
-        action="store_true",
-        help="Использовать упрощённый граф (без цикла проверки)"
-    )
-    
     args = parser.parse_args()
     
     # Переопределяем модель если указана в аргументах
@@ -96,30 +94,28 @@ def main():
     # ИНИЦИАЛИЗАЦИЯ
     # ═══════════════════════════════════════════════════════════════════════
     
-    from .graph import create_agent_graph, create_simple_graph
-    
+    from .graph_v2 import create_agent_graph_v3
+
     print("=" * 60)
-    print("  EcoOS Component Agent")
-    print("  Генерация компонентов из кирпичиков EcoOS SDK")
+    print("  EcoOS Component Agent V3")
+    print("  Сборка приложений из SDK-компонентов EcoOS")
     print("=" * 60)
     print()
-    
+
     llm = get_llm()
-    
-    if args.simple:
-        graph = create_simple_graph(llm)
-        print("[INFO] Using simple graph (no review loop)")
-    else:
-        graph = create_agent_graph(llm)
-        print("[INFO] Using full graph with review loop")
-    
+    graph = create_agent_graph_v3(llm)
+    print("[INFO] Using V3 assembly graph (planner -> resolver -> writer -> build -> tester)")
     print()
     
     # ═══════════════════════════════════════════════════════════════════════
     # ЗАПУСК
     # ═══════════════════════════════════════════════════════════════════════
     
-    if args.interactive:
+    if args.chat:
+        from .chat_agent import create_chat_agent
+        chat = create_chat_agent(llm)
+        run_chat_mode(chat, llm, args)
+    elif args.interactive:
         run_interactive(graph, args)
     elif args.query:
         run_single_query(graph, args.query, args)
@@ -129,32 +125,22 @@ def main():
 
 
 def run_single_query(graph, query: str, args):
-    """Выполнить один запрос"""
-    
+    """Выполнить один запрос через V3 pipeline"""
+    import uuid
+
+    from .state_helpers import make_initial_v3_state
+
     print(f"[QUERY] {query}")
     print()
-    
-    # Начальное состояние
-    initial_state = {
-        "messages": [{"role": "user", "content": query}],
-        "max_iterations": args.max_iterations,
-        "iteration_count": 0,
-        "selected_components": [],
-        "retrieved_headers": {},
-        "retrieved_examples": {},
-        "code_patterns": {},
-        "generated_files": [],
-        "validation_errors": [],
-        "is_valid": False,
-    }
-    
-    # Конфигурация для checkpointer
-    config = {"configurable": {"thread_id": "main"}}
-    
-    # Запуск графа
+
+    initial_state = make_initial_v3_state(query, args.max_iterations)
+
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
     print("[RUNNING] Processing request...")
     print()
-    
+
     try:
         result = graph.invoke(initial_state, config=config)
     except Exception as e:
@@ -162,57 +148,54 @@ def run_single_query(graph, query: str, args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # ВЫВОД РЕЗУЛЬТАТОВ
-    # ═══════════════════════════════════════════════════════════════════════
-    
+
     print_results(result, args)
 
 
 def print_results(result: dict, args):
-    """Выводит результаты работы агента"""
-    
+    """Выводит результаты V3 агента"""
+
     print()
     print("=" * 60)
     print("  RESULTS")
     print("=" * 60)
-    
-    print(f"\n[Intent] {result.get('user_intent', 'N/A')}")
-    print(f"[Features] {result.get('required_features', [])}")
-    print(f"[Platform] {result.get('target_platform', 'N/A')}")
-    
-    components = result.get('selected_components', [])
-    print(f"\n[Components] {len(components)} selected:")
+
+    is_success = result.get("is_success", False)
+    print(f"\n[Status] {'SUCCESS' if is_success else 'FAILED'}")
+
+    # Component plan
+    plan = result.get("component_plan", {})
+    components = plan.get("components", [])
+    print(f"[App] {plan.get('app_description', 'N/A')}")
+    print(f"[Project] {plan.get('project_name', 'N/A')}")
+    print(f"[Components] {len(components)} found:")
     for comp in components:
-        cid = comp.get('cid', 'N/A')
-        print(f"  - {comp['name']} ({cid[:8] if len(cid) > 8 else cid}...)")
-    
-    files = result.get('generated_files', [])
-    print(f"\n[Generated Files] {len(files)} files:")
-    
-    # Создаём директорию для вывода
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    for file in files:
-        file_path = output_dir / file['path']
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(file['content'])
-        
-        print(f"  [OK] {file['path']} ({file['file_type']})")
-    
-    # Ошибки валидации
-    errors = result.get('validation_errors', [])
-    if errors:
-        print(f"\n[Validation] {len(errors)} issues:")
-        for err in errors:
-            severity = "[WARN]" if err['severity'] == 'warning' else "[ERROR]"
-            print(f"  {severity} {err['file']}: {err['message']}")
-    
-    print(f"\n[Output] Files saved to: {output_dir.absolute()}")
+        print(f"  - {comp.get('name', '?')} ({comp.get('reason', '')})")
+
+    # Build result
+    build_result = result.get("build_result", "")
+    if build_result:
+        print(f"\n[Build] {build_result[:200]}")
+
+    # Test results
+    tests_passed = result.get("tests_passed", False)
+    test_results = result.get("test_results", "")
+    if test_results:
+        print(f"\n[Tests] {'PASSED' if tests_passed else 'FAILED'}")
+        print(test_results[:500])
+
+    # Project directory
+    project_dir = result.get("project_dir", "")
+    if project_dir:
+        print(f"\n[Output] {project_dir}")
+
+    print(f"[Iterations] {result.get('iteration', 0)}")
+
+    if not is_success:
+        error = result.get("error_message", "")
+        if error:
+            print(f"\n[Error] {error[:500]}")
+
     print()
 
 
@@ -236,6 +219,61 @@ def run_interactive(graph, args):
             
             run_single_query(graph, query, args)
             
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
+        except EOFError:
+            print("\nGoodbye!")
+            break
+
+
+def run_chat_mode(chat_agent, llm, args):
+    """Chat mode — conversation with agent, assembly only on request."""
+    from .chat_agent import ChatContext
+
+    print("[MODE] Chat mode — общайтесь с агентом или попросите собрать приложение")
+    print("Type 'quit' to exit")
+    print()
+
+    thread_id = "cli-chat"
+    config = {"configurable": {"thread_id": thread_id}}
+    context = ChatContext(llm=llm, max_iterations=args.max_iterations)
+
+    while True:
+        try:
+            query = input(">>> ").strip()
+            if not query:
+                continue
+            if query.lower() in ("quit", "exit", "q"):
+                print("Goodbye!")
+                break
+
+            inputs = {"messages": [{"role": "user", "content": query}]}
+
+            for chunk in chat_agent.stream(
+                inputs,
+                config=config,
+                context=context,
+                stream_mode=["messages", "custom"],
+            ):
+                mode, data = chunk
+                if mode == "messages":
+                    msg_chunk, metadata = data
+                    if hasattr(msg_chunk, "content") and msg_chunk.content:
+                        if metadata.get("langgraph_node") == "agent":
+                            print(msg_chunk.content, end="", flush=True)
+                elif mode == "custom":
+                    event_type = data.get("type", "")
+                    if event_type == "progress":
+                        print(f"\n  [{data['stage']}] {data.get('status', '')}")
+                    elif event_type == "result":
+                        res = data["data"]
+                        status = "SUCCESS" if res["is_success"] else "FAILED"
+                        tests = "PASSED" if res.get("tests_passed") else "FAILED"
+                        print(f"\n  [Build: {status}] [Tests: {tests}] [{res.get('iterations', 0)} iter.]")
+
+            print()  # newline after response
+
         except KeyboardInterrupt:
             print("\nGoodbye!")
             break

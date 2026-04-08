@@ -14,7 +14,6 @@ services:
       - ./chroma_db:/app/chroma_db
       - ./output:/app/output
       - ./source:/app/source:ro
-      - ./MSVC_v140:/app/MSVC_v140:ro
       # Монтируем код для разработки (hot reload)
       - ./agent:/app/agent
       - ./backend:/app/backend

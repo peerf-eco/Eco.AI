@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, Bot, User, FileCode, Settings, X,
   CheckCircle2, XCircle, FlaskConical, Cpu, Sparkles,
+  Package, Wrench, Download, Code2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +14,8 @@ import { Card } from "@/components/ui/card";
 import { ProgressViewer, Stage } from "./progress-viewer";
 import { RagInitializer } from "./rag-initializer";
 import { cn } from "@/lib/utils";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WS_URL = API_URL.replace(/^http/, "ws");
@@ -41,9 +44,22 @@ interface ResultData {
   missing_components: string[];
 }
 
+interface PRDComponent {
+  name: string;
+  source: "sdk" | "marketplace" | "develop";
+  reason: string;
+  spec?: string;
+}
+
+interface PRDData {
+  project_name: string;
+  description: string;
+  components: PRDComponent[];
+}
+
 const msgVariants = {
-  hidden: { opacity: 0, y: 12, scale: 0.97 },
-  visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.3, ease: "easeOut" } },
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.15 } },
 };
 
 export function ChatInterface() {
@@ -52,8 +68,13 @@ export function ChatInterface() {
   const [isConnected, setIsConnected] = useState(false);
   const [currentStage, setCurrentStage] = useState<Stage>("planner");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isAssembling, setIsAssembling] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [prdData, setPrdData] = useState<PRDData | null>(null);
+  const [showPrdReview, setShowPrdReview] = useState(false);
+  const [componentProgress, setComponentProgress] = useState<Record<string, string>>({});
+  const architectThreadId = useRef<string>("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -142,10 +163,8 @@ export function ChatInterface() {
         break;
 
       case "progress":
-        if (data.status === "running") {
-          setCurrentStage(data.stage);
-          setIsProcessing(true);
-        }
+        setCurrentStage(data.stage);
+        setIsAssembling(true);
         break;
 
       case "status":
@@ -180,8 +199,30 @@ export function ChatInterface() {
 
       case "done":
         setIsProcessing(false);
+        setIsAssembling(false);
         setCurrentStage("complete");
         setStatusMessage("");
+        break;
+
+      case "prd_review":
+        setPrdData(data.data);
+        setShowPrdReview(true);
+        architectThreadId.current = data.thread_id || "";
+        setIsProcessing(false);
+        break;
+
+      case "prd":
+        // Streaming PRD data (preview before interrupt)
+        break;
+
+      case "component_progress":
+        setComponentProgress((prev) => ({
+          ...prev,
+          [data.component]: data.stage,
+        }));
+        if (data.stage === "starting") {
+          setStatusMessage(`Building component: ${data.component}...`);
+        }
         break;
 
       case "error":
@@ -207,8 +248,29 @@ export function ChatInterface() {
     wsRef.current?.send(JSON.stringify({ message: input }));
     setInput("");
     setIsProcessing(true);
-    setCurrentStage("planner");
-    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+  };
+
+  const handlePrdApprove = (prd: PRDData) => {
+    wsRef.current?.send(JSON.stringify({
+      type: "prd_approve",
+      prd,
+      architect_thread_id: architectThreadId.current,
+    }));
+    setShowPrdReview(false);
+    setPrdData(null);
+    setIsProcessing(true);
+    setStatusMessage("PRD approved, building components...");
+  };
+
+  const handlePrdReject = () => {
+    wsRef.current?.send(JSON.stringify({
+      type: "prd_reject",
+      architect_thread_id: architectThreadId.current,
+    }));
+    setShowPrdReview(false);
+    setPrdData(null);
+    setIsProcessing(true);
+    setStatusMessage("Revising plan...");
   };
 
   return (
@@ -260,7 +322,7 @@ export function ChatInterface() {
             <div>
               <h1 className="text-base font-semibold tracking-tight">EcoOS Component Agent</h1>
               <p className="text-xs text-muted-foreground">
-                V3 Assembly Pipeline
+                V4 Architect Pipeline
               </p>
             </div>
           </div>
@@ -297,11 +359,10 @@ export function ChatInterface() {
                 </div>
                 <h2 className="text-xl font-semibold mb-2">EcoOS Component Agent</h2>
                 <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
-                  Describe the EcoOS application you want to create. The agent will search SDK components,
-                  resolve dependencies, generate code, build, and run tests.
+                  Спросите про EcoOS или попросите собрать приложение из SDK-компонентов.
                 </p>
-                <div className="flex gap-2 mt-6">
-                  {["Calculator app", "Linked list", "Matrix operations"].map((ex) => (
+                <div className="flex flex-wrap gap-2 mt-6">
+                  {["Что ты умеешь?", "Какие компоненты есть?", "Собери калькулятор с pow и sqrt"].map((ex) => (
                     <button
                       key={ex}
                       onClick={() => setInput(ex)}
@@ -322,7 +383,6 @@ export function ChatInterface() {
                   variants={msgVariants}
                   initial="hidden"
                   animate="visible"
-                  layout
                   className={cn(
                     "flex gap-3",
                     msg.role === "user" ? "flex-row-reverse" : "flex-row"
@@ -347,7 +407,19 @@ export function ChatInterface() {
                           ? "bg-gradient-to-r from-blue-600/80 to-violet-600/80 text-white shadow-lg shadow-blue-500/10"
                           : "glass"
                       )}>
-                        <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
+                        {msg.role === "user" ? (
+                          <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
+                        ) : (
+                          <div className="prose prose-sm prose-invert max-w-none leading-relaxed
+                            prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5
+                            prose-li:my-0.5 prose-pre:my-2 prose-hr:my-3
+                            prose-strong:text-white prose-code:text-blue-300
+                            prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                            prose-pre:bg-black/40 prose-pre:border prose-pre:border-white/[0.06] prose-pre:rounded-lg
+                            prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -374,6 +446,39 @@ export function ChatInterface() {
               ))}
             </AnimatePresence>
 
+            {/* PRD Review Card */}
+            <AnimatePresence>
+              {showPrdReview && prdData && (
+                <PRDReviewCard
+                  prd={prdData}
+                  onApprove={handlePrdApprove}
+                  onReject={handlePrdReject}
+                />
+              )}
+            </AnimatePresence>
+
+            {/* Component Progress */}
+            {Object.keys(componentProgress).length > 0 && isProcessing && (
+              <div className="rounded-xl glass p-4 space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-2">
+                  <Wrench size={14} className="text-violet-400" />
+                  <span>Component Development</span>
+                </div>
+                {Object.entries(componentProgress).map(([name, stage]) => (
+                  <div key={name} className="flex items-center gap-2 text-xs">
+                    <div className={cn(
+                      "h-2 w-2 rounded-full",
+                      stage === "done" ? "bg-emerald-400" :
+                      stage === "error" ? "bg-red-400" :
+                      "bg-blue-400 animate-pulse"
+                    )} />
+                    <span className="text-muted-foreground">{name}</span>
+                    <span className="ml-auto text-muted-foreground/60">{stage}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Processing indicator */}
             <AnimatePresence>
               {isProcessing && (
@@ -385,9 +490,11 @@ export function ChatInterface() {
                 >
                   <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
                     <Bot size={16} className="text-blue-400" />
-                    <span>{statusMessage || "Processing..."}</span>
+                    <span>{statusMessage || (isAssembling ? "Сборка..." : "Думаю...")}</span>
                   </div>
-                  <ProgressViewer currentStage={currentStage} isProcessing={isProcessing} />
+                  {isAssembling && (
+                    <ProgressViewer currentStage={currentStage} isProcessing={isProcessing} />
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -401,7 +508,7 @@ export function ChatInterface() {
           <div className="mx-auto max-w-3xl">
             <div className="flex gap-2 rounded-xl glass p-2 transition-all focus-within:glow-blue focus-within:border-blue-500/30">
               <Input
-                placeholder="Describe the EcoOS application you want to create..."
+                placeholder="Спросите про EcoOS или опишите приложение для сборки..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
@@ -421,6 +528,92 @@ export function ChatInterface() {
         </div>
       </div>
     </div>
+  );
+}
+
+function PRDReviewCard({
+  prd,
+  onApprove,
+  onReject,
+}: {
+  prd: PRDData;
+  onApprove: (prd: PRDData) => void;
+  onReject: () => void;
+}) {
+  const sourceIcon = (source: string) => {
+    switch (source) {
+      case "sdk": return <Package size={12} className="text-emerald-400" />;
+      case "marketplace": return <Download size={12} className="text-blue-400" />;
+      case "develop": return <Code2 size={12} className="text-violet-400" />;
+      default: return null;
+    }
+  };
+
+  const sourceLabel = (source: string) => {
+    switch (source) {
+      case "sdk": return "SDK";
+      case "marketplace": return "Marketplace";
+      case "develop": return "New";
+      default: return source;
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      className="rounded-xl overflow-hidden border border-violet-500/20 glow-blue"
+    >
+      <div className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-violet-500/10 text-violet-300">
+        <Package className="h-4 w-4" />
+        Component Plan: {prd.project_name}
+      </div>
+
+      <div className="p-4 space-y-3">
+        {prd.description && (
+          <p className="text-xs text-muted-foreground">{prd.description}</p>
+        )}
+
+        <div className="space-y-1.5">
+          {prd.components?.map((c) => (
+            <div key={c.name} className="flex items-center gap-2 rounded-lg glass px-3 py-2 text-xs">
+              {sourceIcon(c.source)}
+              <span className="font-medium text-foreground">{c.name}</span>
+              <span className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                c.source === "sdk" ? "bg-emerald-500/20 text-emerald-400" :
+                c.source === "marketplace" ? "bg-blue-500/20 text-blue-400" :
+                "bg-violet-500/20 text-violet-400"
+              )}>
+                {sourceLabel(c.source)}
+              </span>
+              <span className="ml-auto text-muted-foreground/60 truncate max-w-[40%]">{c.reason}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex gap-2 pt-2">
+          <Button
+            onClick={() => onApprove(prd)}
+            className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white shadow-lg shadow-emerald-500/20"
+            size="sm"
+          >
+            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+            Approve
+          </Button>
+          <Button
+            onClick={onReject}
+            variant="ghost"
+            className="flex-1 hover:bg-red-500/10 hover:text-red-400"
+            size="sm"
+          >
+            <XCircle className="h-3.5 w-3.5 mr-1.5" />
+            Reject
+          </Button>
+        </div>
+      </div>
+    </motion.div>
   );
 }
 

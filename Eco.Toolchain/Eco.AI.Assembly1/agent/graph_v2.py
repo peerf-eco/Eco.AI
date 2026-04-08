@@ -28,13 +28,16 @@ from .prompts_v2 import (
     WRITER_SYSTEM_PROMPT,
     WRITER_FIX_PROMPT,
     WRITER_TEST_FIX_PROMPT,
+    WRITER_VERIFY_FIX_PROMPT,
     TESTER_SYSTEM_PROMPT,
     get_writer_user_prompt,
     get_writer_fix_prompt,
     get_tester_user_prompt,
     get_writer_test_fix_prompt,
+    get_writer_verify_fix_prompt,
 )
 from .tools import run_tests
+from .verifier import verify_ecomain
 
 # V2 backward-compat: build tool reference for QA node
 # The old `build` tool was replaced by `build_makefile`
@@ -944,6 +947,7 @@ def create_writer_node_v3(llm):
         framework = state.get("framework_components", [])
         component_plan = state.get("component_plan", {})
         app_description = component_plan.get("app_description", state.get("user_request", ""))
+        verification_errors = state.get("verification_errors", "")
         error_message = state.get("error_message", "")
         ecomain_content = state.get("ecomain_content", "")
         test_results = state.get("test_results", "")
@@ -951,11 +955,17 @@ def create_writer_node_v3(llm):
 
         logger.info(f"[WRITER V3] Resolved components: {len(resolved)}")
         logger.info(f"[WRITER V3] Framework components: {len(framework)}")
+        logger.info(f"[WRITER V3] Has verification errors: {bool(verification_errors)}")
         logger.info(f"[WRITER V3] Has previous error: {bool(error_message)}")
         logger.info(f"[WRITER V3] Has test results: {bool(test_results)}")
 
         # Choose prompt based on whether this is a fix or first generation
-        if test_results and not tests_passed and ecomain_content:
+        if verification_errors and ecomain_content:
+            # Verification fix mode — pre-build checks found issues
+            logger.info("[WRITER V3] VERIFY FIX mode — correcting issues found before build")
+            system_prompt = WRITER_VERIFY_FIX_PROMPT
+            user_prompt = get_writer_verify_fix_prompt(ecomain_content, verification_errors, resolved + framework)
+        elif test_results and not tests_passed and ecomain_content:
             # Test fix mode — build succeeded but tests failed
             logger.info("[WRITER V3] TEST FIX mode — fixing logic based on test failures")
             system_prompt = WRITER_TEST_FIX_PROMPT
@@ -993,18 +1003,36 @@ def create_writer_node_v3(llm):
         return {
             "ecomain_content": content,
             "writer_messages": [HumanMessage(content=user_prompt[:500]), AIMessage(content=content[:500])],
-            # Clear test/error state so build→tester cycle restarts cleanly
+            # Clear test/error/verification state so build→tester cycle restarts cleanly
             "test_results": "",
             "tests_passed": False,
             "error_message": "",
+            "verification_errors": "",
         }
 
     return writer_node
 
 
 def _strip_code_fences(text: str) -> str:
-    """Remove markdown code fences from LLM output."""
+    """Extract C code from LLM output, stripping markdown fences and preamble text."""
     text = text.strip()
+
+    # If LLM output contains a code block, extract it (handles leading explanation text)
+    fence_match = re.search(r'```(?:c|cpp)?\s*\n(.*?)```', text, re.DOTALL)
+    if fence_match:
+        return fence_match.group(1).strip()
+
+    # If no code block but starts with #include or /*, it's raw C code
+    if text.startswith(("#include", "/*", "//", "typedef")):
+        return text
+
+    # If text has preamble before C code, find the first #include
+    include_match = re.search(r'^(#include\b.*)', text, re.MULTILINE | re.DOTALL)
+    if include_match:
+        logger.warning("[WRITER] Stripped preamble text before #include")
+        return include_match.group(1).strip()
+
+    # Strip simple fences as fallback
     if text.startswith("```c"):
         text = text[4:]
     elif text.startswith("```"):
@@ -1046,6 +1074,51 @@ def route_after_build(state: AgentStateV3) -> Literal["writer", "planner", "test
     # compile or link error → fix EcoMain.c
     logger.info(f"[ROUTER V3] {error_type} error → WRITER (fix)")
     return "writer"
+
+
+def verifier_node(state: AgentStateV3) -> Dict[str, Any]:
+    """
+    Pre-build verification. Pure Python, no LLM.
+    Checks EcoMain.c against resolved headers.
+    """
+    logger.info("[VERIFIER] Checking EcoMain.c...")
+
+    ecomain = state.get("ecomain_content", "")
+    resolved = state.get("resolved_components", [])
+    framework = state.get("framework_components", [])
+
+    if not ecomain:
+        return {"verification_errors": "No EcoMain.c content to verify"}
+
+    errors = verify_ecomain(ecomain, resolved, framework)
+
+    if errors:
+        error_lines = ["Pre-build verification found issues:"]
+        for e in errors:
+            error_lines.append(f"  [{e['severity'].upper()}] {e['message']}")
+        logger.info(f"[VERIFIER] Found {len(errors)} issues")
+        return {"verification_errors": "\n".join(error_lines)}
+
+    logger.info("[VERIFIER] All checks passed")
+    return {"verification_errors": ""}
+
+
+def route_after_verification(state: AgentStateV3) -> Literal["writer", "build"]:
+    """
+    Route after verification:
+    - Errors + attempts left → writer (fix)
+    - No errors → build
+    """
+    errors = state.get("verification_errors", "")
+    iteration = state.get("iteration", 0)
+    max_iter = state.get("max_iterations", 5)
+
+    if errors and iteration < max_iter:
+        logger.info(f"[ROUTE] Verification failed → writer (iter {iteration})")
+        return "writer"
+
+    logger.info("[ROUTE] Verification passed → build")
+    return "build"
 
 
 def route_after_testing(state: AgentStateV3) -> Literal["writer", "end"]:
@@ -1230,9 +1303,10 @@ def create_agent_graph_v3(llm):
     Create the V3 agent graph for assembly from SDK components.
 
     Architecture:
-        START → planner → resolver → writer → build → tester → (writer | END)
-                                       ↑        ↑                  │
-                                       │        └──────────────────┘ (tests failed)
+        START → planner → resolver → writer → verifier → build → tester → (writer | END)
+                                       ↑          │        ↑                  │
+                                       │          │        └──────────────────┘ (tests failed)
+                                       │          └── (verification error → writer fix)
                                        └── (compile/link error from build)
     """
     logger.info("[GRAPH V3] Creating agent graph v3...")
@@ -1243,6 +1317,7 @@ def create_agent_graph_v3(llm):
     graph_builder.add_node("planner", create_planner_node_v3(llm))
     graph_builder.add_node("resolver", resolver_node)
     graph_builder.add_node("writer", create_writer_node_v3(llm))
+    graph_builder.add_node("verifier", verifier_node)
     graph_builder.add_node("build", build_node)
     graph_builder.add_node("tester", create_tester_node_v3(llm))
 
@@ -1250,7 +1325,17 @@ def create_agent_graph_v3(llm):
     graph_builder.add_edge(START, "planner")
     graph_builder.add_edge("planner", "resolver")
     graph_builder.add_edge("resolver", "writer")
-    graph_builder.add_edge("writer", "build")
+    graph_builder.add_edge("writer", "verifier")
+
+    # Conditional edge after verifier: errors → writer fix, ok → build
+    graph_builder.add_conditional_edges(
+        "verifier",
+        route_after_verification,
+        {
+            "writer": "writer",
+            "build": "build",
+        },
+    )
 
     # Conditional edge after build: success → tester, error → writer/planner
     graph_builder.add_conditional_edges(
@@ -1310,6 +1395,7 @@ def run_agent_v3(llm, user_request: str, max_iterations: int = 5) -> Dict[str, A
         "missing_components": [],
         "ecomain_content": "",
         "writer_messages": [],
+        "verification_errors": "",
         "build_result": "",
         "is_success": False,
         "error_message": "",

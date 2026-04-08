@@ -93,7 +93,7 @@ def run_test(test_name: str, user_request: str, logger: logging.Logger) -> dict:
     try:
         # Импортируем здесь чтобы логирование уже было настроено
         from langchain_openai import ChatOpenAI
-        from agent.graph_v2 import run_agent
+        from agent.graph_v2 import run_agent_v3
         
         # Создаём LLM
         api_key = os.getenv("OPENAI_API_KEY")
@@ -114,7 +114,7 @@ def run_test(test_name: str, user_request: str, logger: logging.Logger) -> dict:
         )
         
         # Запускаем агент
-        final_state = run_agent(llm, user_request, max_iterations=3)
+        final_state = run_agent_v3(llm, user_request, max_iterations=3)
         
         # Заполняем результат
         result["success"] = final_state.get("is_success", False)

@@ -22,9 +22,10 @@ logger = logging.getLogger(__name__)
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
+REPO_ROOT = BASE_DIR.parent.parent  # H:\ai-hse-diploma-agent
 SOURCE_DIR = BASE_DIR / "source"
 OUTPUT_DIR = BASE_DIR / "output"
-ECO_CLI = BASE_DIR / "eco.sli" / "eco-cli.exe"
+ECO_CLI = REPO_ROOT / "eco.sli" / "eco-cli.exe"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -92,29 +93,35 @@ def rag_query(query: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 
 @tool
-def eco_cli_search(name: str) -> str:
+def eco_cli_search(cid: str) -> str:
     """
-    Search EcoOS marketplace for a component by name.
+    Search EcoOS marketplace for a component by CID (32-char hex UGUID).
 
-    Use when a component is not found in the local SDK.
+    Use when a component is not found in the local SDK and you know its CID.
 
     Args:
-        name: Component name to search (e.g. "Eco.Math")
+        cid: Component UGUID (32 uppercase hex chars), e.g. "61C988E21B7041378C5BDAFBB68A3FA0"
 
-    Returns: Marketplace search results with component names and CIDs.
+    Returns: Marketplace component info (name, versions, files, dependencies).
     """
-    logger.info(f"[TOOL eco_cli_search] name={name}")
+    logger.info(f"[TOOL eco_cli_search] cid={cid}")
 
     if not ECO_CLI.exists():
-        return "ERROR: eco-cli.exe not found at eco.sli/eco-cli.exe"
+        return "ERROR: eco-cli.exe not found"
+
+    env = os.environ.copy()
+    token = os.getenv("ECO_API_TOKEN", "")
+    if token:
+        env["ECO_API_TOKEN"] = token
 
     try:
         result = subprocess.run(
-            [str(ECO_CLI), "find", "-u", name],
+            [str(ECO_CLI), "find", "-c", cid],
             capture_output=True,
             text=True,
             timeout=30,
-            cwd=str(BASE_DIR),
+            cwd=str(REPO_ROOT),
+            env=env,
         )
         output = result.stdout or result.stderr or "No output"
         logger.info(f"[TOOL eco_cli_search] returncode={result.returncode}")
@@ -143,7 +150,12 @@ def eco_cli_pull(cid: str, version: str = "latest") -> str:
     logger.info(f"[TOOL eco_cli_pull] cid={cid}, version={version}")
 
     if not ECO_CLI.exists():
-        return "ERROR: eco-cli.exe not found at eco.sli/eco-cli.exe"
+        return "ERROR: eco-cli.exe not found"
+
+    env = os.environ.copy()
+    token = os.getenv("ECO_API_TOKEN", "")
+    if token:
+        env["ECO_API_TOKEN"] = token
 
     try:
         cmd = [str(ECO_CLI), "pull", "-c", cid, "-v", version, "-d"]
@@ -152,7 +164,8 @@ def eco_cli_pull(cid: str, version: str = "latest") -> str:
             capture_output=True,
             text=True,
             timeout=120,
-            cwd=str(BASE_DIR),
+            cwd=str(REPO_ROOT),
+            env=env,
         )
         output = result.stdout or result.stderr or "No output"
         logger.info(f"[TOOL eco_cli_pull] returncode={result.returncode}")
@@ -592,11 +605,112 @@ def run_tests(exe_path: str, test_cases_json: str) -> Dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# TOOL: list_all_components — Scan local source/ directory
+# ═══════════════════════════════════════════════════════════════════════════
+
+@tool
+def list_all_components() -> str:
+    """List all SDK components available locally in the source/ directory.
+
+    Returns component names and whether they have Windows/Linux libraries.
+    Use this to understand what's already available before searching RAG.
+    """
+    components = []
+    if not SOURCE_DIR.exists():
+        return "ERROR: source/ directory not found"
+
+    for dk_dir in sorted(SOURCE_DIR.iterdir()):
+        if not dk_dir.is_dir():
+            continue
+        name = dk_dir.name
+        # Extract component name from DK pattern: Eco.Name_DK_v.X.X.X.X
+        if "_DK_" in name:
+            comp_name = name.split("_DK_")[0]
+        elif name.startswith("Eco."):
+            comp_name = name
+        else:
+            continue
+
+        # Check for libraries
+        has_win = any((dk_dir).rglob("*.lib"))
+        has_linux = any((dk_dir).rglob("*.a"))
+        platform = []
+        if has_win: platform.append("Windows")
+        if has_linux: platform.append("Linux")
+
+        components.append(f"  {comp_name} [{', '.join(platform) or 'headers-only'}]")
+
+    if not components:
+        return "No components found in source/"
+
+    return f"Available SDK components ({len(components)}):\n" + "\n".join(components)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TOOL: download_component — Download by name from marketplace
+# ═══════════════════════════════════════════════════════════════════════════
+
+@tool
+def download_component(component_name: str) -> str:
+    """Download an EcoOS component from the marketplace by name.
+
+    First searches the marketplace for the component, then downloads it.
+    Use this when a component is not available locally but may exist
+    in the EcoOS marketplace.
+
+    Args:
+        component_name: Component name, e.g. "Eco.Socket.P02"
+    """
+    logger.info(f"[TOOL download_component] name={component_name}")
+
+    if not ECO_CLI.exists():
+        return f"ERROR: eco-cli not found at {ECO_CLI}"
+
+    env = os.environ.copy()
+    token = os.getenv("ECO_API_TOKEN", "")
+    if token:
+        env["ECO_API_TOKEN"] = token
+
+    # Step 1: Search by name to find CID
+    try:
+        search_result = subprocess.run(
+            [str(ECO_CLI), "find", "-n", component_name],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(REPO_ROOT), env=env,
+        )
+        search_output = search_result.stdout or search_result.stderr or ""
+
+        if search_result.returncode != 0 or "not found" in search_output.lower():
+            return f"NOT_FOUND: Component '{component_name}' not found in marketplace"
+
+        # Step 2: Pull the component
+        pull_result = subprocess.run(
+            [str(ECO_CLI), "pull", "-n", component_name, "-d"],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(REPO_ROOT), env=env,
+        )
+        pull_output = pull_result.stdout or pull_result.stderr or ""
+
+        if pull_result.returncode == 0:
+            return f"OK: Downloaded {component_name}\n{pull_output[:500]}"
+        else:
+            return f"ERROR: Failed to download {component_name}\n{pull_output[:500]}"
+
+    except subprocess.TimeoutExpired:
+        return f"ERROR: Timeout downloading {component_name}"
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # TOOL COLLECTIONS
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Tools for Planner (ReAct agent with RAG search)
 PLANNER_TOOLS = [rag_query]
+
+# Tools for Architect (V4)
+ARCHITECT_TOOLS = [list_all_components, rag_query, download_component]
 
 # Tools for future use (marketplace integration)
 MARKETPLACE_TOOLS = [eco_cli_search, eco_cli_pull]

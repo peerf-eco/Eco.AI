@@ -130,6 +130,7 @@ class AgentStateV3(TypedDict):
     # ═══════════════════════════════════════════════════════════════
     ecomain_content: str           # The generated EcoMain.c source
     writer_messages: Annotated[list, add_messages]
+    verification_errors: str       # Empty = OK, non-empty = issues found
 
     # ═══════════════════════════════════════════════════════════════
     # BUILD OUTPUT (pure Python, runs make)

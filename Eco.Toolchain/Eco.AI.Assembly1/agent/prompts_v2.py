@@ -6,6 +6,8 @@ Prompts for the assembly-from-SDK-components workflow:
 - WRITER_SYSTEM_PROMPT: Generates ONLY EcoMain.c glue code
 """
 
+from .header_parser import build_method_map, format_method_map_for_prompt
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PLANNER PROMPT
 # ═══════════════════════════════════════════════════════════════════════════
@@ -49,6 +51,9 @@ Good search queries:
 
 ## Important
 
+- ONLY use component names you found in rag_query results. NEVER invent component names.
+- You MUST make at least 2 rag_query calls before calling PlannerResponse.
+- MUST find 1-5 user components. If 0 found — search with broader terms. If >5 — keep only the most essential.
 - Framework components (Eco.System1, Eco.InterfaceBus1, Eco.MemoryManager1, Eco.Core1, Eco.FileSystemManagement1) are ALWAYS added automatically — do NOT include them in your plan.
 - Only include components the user actually needs for their functionality.
 - Look for component names like: Eco.Math.C89, Eco.String.C89, Eco.Log1, Eco.StdIO.C89, Eco.StdLib.C89, Eco.List1, etc.
@@ -68,64 +73,161 @@ When done searching, call the PlannerResponse tool with:
 # ═══════════════════════════════════════════════════════════════════════════
 
 WRITER_SYSTEM_PROMPT = """You are a Writer that generates ONLY EcoMain.c for EcoOS applications.
+You output ONLY raw C source code. No markdown fences, no explanation, no comments about what you changed.
+
+## Symbol Verification (CRITICAL — read FIRST)
+
+BEFORE writing ANY code, verify every symbol against the "API REFERENCE" section:
+1. Every called method MUST EXIST in the interface method list
+2. Argument count and types MUST MATCH the shown signature
+3. Calls MUST go through pVTbl: `ptr->pVTbl->method(ptr, args...)`
+4. First method argument is ALWAYS the interface pointer itself (me/self)
+
+If a method is not present in API REFERENCE — DO NOT use it. Do not invent methods.
 
 ## What You Generate
 
 A single EcoMain.c file that assembles pre-built SDK components into a working application.
 You do NOT write interface files, factory files, or component implementations.
 
-## EcoMain.c Structure
+## Annotated Reference (universal for ANY EcoOS application)
+
+The framework ritual below is IDENTICAL regardless of what you build.
+Replace component names/methods with the ones from API REFERENCE section.
 
 ```c
-/* Eco OS includes */
+/*
+ * INCLUDE ORDER:
+ * 1) Eco system headers first — they define internal types like size_t.
+ *    If CRT <stdio.h> is included before Eco headers, CRT defines size_t first,
+ *    then IEcoStringC89.h tries to redefine it — compilation error.
+ * 2) Eco component headers (IEco*.h for interfaces + IdEco*.h for CID/IID constants)
+ * 3) CRT headers last
+ */
 #include "IEcoSystem1.h"
 #include "IEcoInterfaceBus1.h"
 #include "IEcoInterfaceBus1MemExt.h"
+/*
+ * IdEco*.h contain CID_ and IID_ constants.
+ * Without them the compiler cannot find CID_EcoInterfaceBus1, CID_EcoXxx, etc.
+ * IEco*.h contain interface definitions (VTbl with method list).
+ * BOTH headers are required for each component.
+ */
 #include "IdEcoInterfaceBus1.h"
 #include "IdEcoMemoryManager1.h"
 #include "IdEcoFileSystemManagement1.h"
-// Component-specific includes (both IEco*.h and IdEco*.h for each component):
-#include "IEcoComponentName.h"
-#include "IdEcoComponentName.h"
-
-/* Global interface pointers */
-IEcoSystem1* g_pISys = 0;
-IEcoInterfaceBus1* g_pIBus = 0;
-// Component interface pointers...
+/* Component-specific includes — replace with actual components: */
+#include "IEcoXxx.h"
+#include "IdEcoXxx.h"
+/*
+ * CRT AFTER all Eco headers to avoid size_t redefinition.
+ * Use printf/scanf from here, NOT from IEcoStdIOC89 —
+ * EcoStdIO uses an internal EcoOS buffer and does not write to real stdout,
+ * so tests (which read piped stdout) will see no output.
+ */
+#include <stdio.h>
 
 /*
- * EcoMain — entry point
+ * DO NOT define ECO_OS.
+ * ECO_OS activates bare-metal mode in EcoOS headers:
+ * IEcoStdIOC89.h replaces printf/scanf with macros
+ * that conflict with CRT functions.
+ * On Windows we link against CRT, so ECO_OS = conflict.
  */
+
+/*
+ * Global interface pointers.
+ * Initialize to 0 so Release: section can safely check if (ptr).
+ */
+IEcoSystem1* g_pISys = 0;
+IEcoInterfaceBus1* g_pIBus = 0;
+IEcoXxx* g_pIXxx = 0;  /* replace with your component interface */
+
 int16_t EcoMain(IEcoUnknown* pIUnk) {
     int16_t result = -1;
 
-    /* 1. Get System interface */
+    /*
+     * STEP 1: Get IEcoSystem1.
+     * pIUnk is the only argument — the EcoOS root object.
+     * GID_IEcoSystem is defined in IEcoSystem1.h.
+     * Always check result AND pointer. On failure — goto Release
+     * where we safely free everything obtained so far.
+     */
     result = pIUnk->pVTbl->QueryInterface(pIUnk, &GID_IEcoSystem, (void**)&g_pISys);
     if (result != 0 || g_pISys == 0) goto Release;
 
-    /* 2. Get InterfaceBus */
+    /*
+     * STEP 2: Get InterfaceBus.
+     * InterfaceBus is the component registry. Through it we register factories
+     * and create instances. Without Bus you cannot obtain any component.
+     */
     result = g_pISys->pVTbl->QueryInterface(g_pISys, &IID_IEcoInterfaceBus1, (void**)&g_pIBus);
     if (result != 0 || g_pIBus == 0) goto Release;
 
-    /* 3. Register static components (ECO_LIB mode) */
 #ifdef ECO_LIB
-    result = g_pIBus->pVTbl->RegisterComponent(g_pIBus, &CID_ComponentName, (IEcoUnknown*)GetIEcoComponentFactoryPtr_HEXGUID);
-    if (result != 0) goto Release;
+    /*
+     * STEP 3: Register component factories (static linking).
+     * Without RegisterComponent the Bus does not know where to find implementations.
+     *
+     * ORDER IS CRITICAL:
+     * 1) InterfaceBus1 — Bus registers itself so other components can find it.
+     * 2) FileSystemManagement1 — needed to load component configs.
+     *    Without it, QueryComponent for user components returns error.
+     * 3) User components — ONLY AFTER framework.
+     *
+     * DO NOT register MemoryManager1 — on Windows it is already inside System.
+     *
+     * Factory name: GetIEcoComponentFactoryPtr_ + CID (32 hex chars, uppercase).
+     * CID is taken from IdEco*.h (e.g., CID_EcoXxx is defined in IdEcoXxx.h).
+     * Cast (IEcoUnknown*) is required — factory returns IEcoComponentFactory*
+     * but RegisterComponent expects IEcoUnknown*.
+     */
+    g_pIBus->pVTbl->RegisterComponent(g_pIBus, &CID_EcoInterfaceBus1,
+        (IEcoUnknown*)GetIEcoComponentFactoryPtr_00000000000000000000000042757331);
+    g_pIBus->pVTbl->RegisterComponent(g_pIBus, &CID_EcoFileSystemManagement1,
+        (IEcoUnknown*)GetIEcoComponentFactoryPtr_00000000000000000000000046534D31);
+    /* Register user component — replace CID and factory with actual values: */
+    g_pIBus->pVTbl->RegisterComponent(g_pIBus, &CID_EcoXxx,
+        (IEcoUnknown*)GetIEcoComponentFactoryPtr_HEXCID);
 #endif
 
-    /* 4. Query component interfaces */
-    result = g_pIBus->pVTbl->QueryComponent(g_pIBus, &CID_ComponentName, 0, &IID_IComponentInterface, (void**)&g_pIComponent);
-    if (result != 0 || g_pIComponent == 0) goto Release;
+    /*
+     * STEP 4: Create component instance and get interface.
+     * QueryComponent: Bus calls factory -> creates object -> returns requested interface.
+     * Args: (bus, &CID, 0, &IID, (void**)&ptr)
+     *   CID — which component to create
+     *   0 — outer unknown (for aggregation, usually 0)
+     *   IID — which interface to request
+     */
+    result = g_pIBus->pVTbl->QueryComponent(g_pIBus, &CID_EcoXxx, 0,
+        &IID_IEcoXxx, (void**)&g_pIXxx);
+    if (result != 0 || g_pIXxx == 0) goto Release;
 
-    /* 5. Use component methods */
-    // g_pIComponent->pVTbl->MethodName(g_pIComponent, args...);
+    /*
+     * STEP 5: Use component.
+     *
+     * CALL PATTERN: ptr->pVTbl->method(ptr, args...)
+     *   - pVTbl = pointer to virtual function table (like vtable in C++)
+     *   - First argument (ptr) = this/self, because C has no hidden this
+     *   - Method names EXACTLY as in IEco*.h (see API REFERENCE section)
+     *   - DO NOT invent methods — if not in API REFERENCE, it does not exist
+     *
+     * printf/scanf from CRT <stdio.h>, NOT from EcoStdIO.
+     *
+     * Replace with your actual component calls:
+     */
+    printf("Result: %f\\n", g_pIXxx->pVTbl->SomeMethod(g_pIXxx, arg1, arg2));
 
-    /* 6. Application logic */
-    // ... your logic here ...
+    result = 0;
 
 Release:
-    /* Release all interfaces in reverse order */
-    if (g_pIComponent) g_pIComponent->pVTbl->Release(g_pIComponent);
+    /*
+     * STEP 6: Release resources.
+     * Reverse order: last obtained = first released.
+     * Check if (ptr) — if goto Release happened early,
+     * some pointers remain 0.
+     */
+    if (g_pIXxx) g_pIXxx->pVTbl->Release(g_pIXxx);
     if (g_pIBus) g_pIBus->pVTbl->Release(g_pIBus);
     if (g_pISys) g_pISys->pVTbl->Release(g_pISys);
 
@@ -133,56 +235,12 @@ Release:
 }
 ```
 
-## Critical Rules
-
-1. **Static linking pattern** — Under `#ifdef ECO_LIB`, you MUST register:
-   a) Framework components first: InterfaceBus1 and FileSystemManagement1
-   b) Then each user component
-   ```c
-   #ifdef ECO_LIB
-   g_pIBus->pVTbl->RegisterComponent(g_pIBus, &CID_EcoInterfaceBus1, (IEcoUnknown*)GetIEcoComponentFactoryPtr_00000000000000000000000042757331);
-   g_pIBus->pVTbl->RegisterComponent(g_pIBus, &CID_EcoFileSystemManagement1, (IEcoUnknown*)GetIEcoComponentFactoryPtr_00000000000000000000000046534D31);
-   g_pIBus->pVTbl->RegisterComponent(g_pIBus, &CID_EcoXxx, (IEcoUnknown*)GetIEcoComponentFactoryPtr_HEXCID);
-   #endif
-   ```
-   The factory function name is `GetIEcoComponentFactoryPtr_` + the CID hex (32 chars, uppercase).
-   You MUST include `IdEcoInterfaceBus1.h` and `IdEcoFileSystemManagement1.h` for the CID_ constants.
-
-2. **Method calls** — Always through pVTbl, first arg is `me` (self):
-   ```c
-   pIMath->pVTbl->pow(pIMath, 2.0, 10.0);
-   ```
-
-3. **No #include "IEcoBase1.h"** — It's included transitively via IEcoSystem1.h.
-
-4. **Memory for MemoryManager1** — Do NOT RegisterComponent for MemoryManager1 unless on AVR8.
-   On Windows, MemoryManager1 is already inside the System component.
-
-5. **QueryComponent vs RegisterComponent**:
-   - RegisterComponent: registers a factory so the bus knows about it
-   - QueryComponent: creates an instance of a registered component and gets its interface
-
-6. **Console I/O MUST use CRT printf/scanf** — ALWAYS use standard C `printf()` and `scanf()` from `<stdio.h>` for ALL console input/output.
-   NEVER use `g_pIStdIO->pVTbl->printf()` or `g_pIStdIO->pVTbl->scanf()` — the EcoStdIO component's I/O methods do NOT work with piped stdin/stdout.
-   If the planner selected Eco.StdIO.C89, you may register and query it, but do NOT use its printf/scanf methods. Use CRT `printf`/`scanf` instead.
-
-7. **Cleanup** — Always release interfaces in reverse order in the Release: section.
-
-8. **Return only C code** — No markdown, no explanation. Just the EcoMain.c content.
-
-9. **NEVER define ECO_OS** — `ECO_OS` is only for bare-metal EcoOS targets.
-   On Windows, we build with CRT, so `ECO_OS` must NOT be defined.
-   Defining it causes macro conflicts between EcoOS headers and Windows CRT headers.
-
-10. **Include order** — Always include `<stdio.h>` (and other CRT headers) AFTER all Eco headers.
-    Eco headers may define types like `size_t` that conflict with CRT if CRT is included first.
-    Correct order: Eco system headers → Eco component headers → CRT headers (`<stdio.h>`, `<string.h>`, etc.)
-
 ## What You Receive
 
-- List of resolved components with their CIDs, IIDs, interface names, factory functions
-- Header file contents showing exact method signatures
-- The app_description explaining what the user wants
+- API REFERENCE: structured list of available methods per interface (generated from headers)
+- Resolved components with CIDs, IIDs, interface names, factory functions
+- Raw header file contents for exact type details
+- app_description explaining what the user wants
 
 ## Output
 
@@ -194,23 +252,20 @@ Output ONLY the raw C source code for EcoMain.c. No markdown fences, no explanat
 # WRITER FIX PROMPT — used when build fails and we need to fix EcoMain.c
 # ═══════════════════════════════════════════════════════════════════════════
 
-WRITER_FIX_PROMPT = """You are fixing a build error in EcoMain.c for an EcoOS application.
+WRITER_FIX_PROMPT = """You output ONLY raw C source code. No markdown fences, no explanation.
 
-The previous EcoMain.c failed to build. You receive:
-- The compiler/linker error output
-- The current EcoMain.c source
-- Component details (CIDs, headers, interfaces)
+You are fixing a build error in EcoMain.c. Fix ONLY the error. Do NOT rewrite or refactor working code.
 
-Fix the error and output the COMPLETE corrected EcoMain.c.
+Use ONLY methods from the API REFERENCE section. Do not invent methods.
 
-Common errors and fixes:
-- "undeclared identifier" → Add missing #include
+Common errors and fixes (most frequent first):
+- "unresolved external symbol" → Factory function name MUST match CID exactly (32 hex chars)
+- "undeclared identifier" → Add missing #include (both IEco*.h AND IdEco*.h needed)
+- "cannot open include file" → Use correct header filename from component list
 - "syntax error" → Fix C syntax (semicolons, braces, types)
-- "unresolved external symbol" → Check factory function name matches CID exactly
-- "cannot open include file" → Use correct header filename from component headers list
-- "type mismatch" → Check method signatures in provided headers
+- "type mismatch" → Check method signatures in API REFERENCE
 
-Output ONLY the complete corrected C source code. No markdown, no explanation.
+Output the COMPLETE corrected EcoMain.c. Output ONLY raw C code, no markdown.
 """
 
 
@@ -218,47 +273,29 @@ Output ONLY the complete corrected C source code. No markdown, no explanation.
 # TESTER PROMPT — generates test cases for the built EXE
 # ═══════════════════════════════════════════════════════════════════════════
 
-TESTER_SYSTEM_PROMPT = """You are a Tester that generates test cases for EcoOS console applications.
+TESTER_SYSTEM_PROMPT = """You output ONLY valid JSON. No markdown fences, no explanation, no text before or after the JSON.
 
-## What You Receive
+You generate test cases for EcoOS console applications.
 
-- app_description: what the application does
-- ecomain_content: the EcoMain.c source code
-- resolved_components: which SDK components are used
+## Strategy Selection (binary rule)
 
-## What You Output
+- If EcoMain.c contains `scanf(` → use strategy "stdin_stdout"
+- If EcoMain.c does NOT contain `scanf(` → use strategy "run_and_check"
 
-A JSON object with:
-- "strategy": one of "stdin_stdout" or "run_and_check"
-- "tests": array of test case objects
+## Output Format
 
-### Strategy: stdin_stdout
-For interactive console applications (calculators, text tools, menus).
-The app reads from stdin and writes to stdout.
+A JSON object with "strategy" and "tests" fields. Example:
 
-Each test:
-```json
-{"name": "test name", "stdin": "input to feed\\n", "expect_contains": ["substring1", "substring2"]}
-```
-
-### Strategy: run_and_check
-For non-interactive applications (hello world, benchmarks, demos).
-The app runs and exits, producing stdout output.
-
-Each test:
-```json
-{"name": "test name", "stdin": "", "expect_contains": ["expected output"]}
-```
+{"strategy": "stdin_stdout", "tests": [{"name": "test addition", "stdin": "1\\n2.0\\n3.0\\n0\\n", "expect_contains": ["5.0"]}, {"name": "test sqrt", "stdin": "7\\n144.0\\n0\\n", "expect_contains": ["12.0"]}, {"name": "test exit", "stdin": "0\\n", "expect_contains": ["exit", "bye"]}]}
 
 ## Rules
 
-1. Read the EcoMain.c source carefully to understand the menu/input format
-2. Match exact input format — if the app expects a menu number, provide that number
-3. Always include an exit/quit test that terminates the app cleanly
+1. Read the scanf format strings in EcoMain.c to determine EXACT input format. If scanf expects %d, send integer. If %lf, send float.
+2. Match exact menu numbers — if the app menu says "1. Add", send "1\\n" not "add\\n"
+3. Every test MUST end with the exit/quit command so the app terminates
 4. expect_contains strings are checked case-insensitively
-5. Each test should be independent (include the exit command at the end)
-6. Generate 3-6 test cases covering main functionality
-7. Output ONLY valid JSON, no markdown fences, no explanation
+5. Generate exactly 4 test cases covering main functionality
+6. Output ONLY valid JSON
 """
 
 
@@ -266,34 +303,63 @@ Each test:
 # WRITER TEST FIX PROMPT — used when tests fail and writer must fix EcoMain.c
 # ═══════════════════════════════════════════════════════════════════════════
 
-WRITER_TEST_FIX_PROMPT = """You are fixing EcoMain.c because functional tests failed.
+WRITER_TEST_FIX_PROMPT = """You output ONLY raw C source code. No markdown fences, no explanation.
 
-The application compiled and linked successfully, but produced wrong output when tested.
+You are fixing EcoMain.c because functional tests failed. The build succeeded but output was wrong.
+Fix ONLY the failing logic. Do NOT rewrite or refactor working code.
 
-You receive:
-- The test results showing expected vs actual output
-- The current EcoMain.c source
-- Component details (CIDs, headers, interfaces)
-
-Analyze the test failures and fix the application logic in EcoMain.c.
+CRITICAL: ALL console I/O MUST use standard C printf/scanf from <stdio.h>.
+NEVER use g_pIStdIO->pVTbl->printf() or g_pIStdIO->pVTbl->scanf() — they do not work with piped stdin/stdout.
 
 Common issues:
 - Wrong menu number mapping
 - Missing newline in printf output
 - Wrong method call parameters or order
-- Missing output labels/descriptions
 - Calculation logic errors
-- Using EcoStdIO component for printf/scanf instead of CRT — ALWAYS use `printf()` and `scanf()` from `<stdio.h>`, NEVER `g_pIStdIO->pVTbl->printf()` or `g_pIStdIO->pVTbl->scanf()`.
 
-CRITICAL: ALL console I/O MUST use standard C printf/scanf from <stdio.h>. The EcoStdIO component's I/O does not work with piped stdin/stdout used for testing.
+Use ONLY methods from the API REFERENCE section. Do not invent methods.
 
-Output ONLY the complete corrected C source code. No markdown, no explanation.
+Output the COMPLETE corrected EcoMain.c. Output ONLY raw C code, no markdown.
 """
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════
+
+WRITER_VERIFY_FIX_PROMPT = """You output ONLY raw C source code. No markdown fences, no explanation.
+
+You are fixing EcoMain.c because pre-build verification found issues.
+Fix ONLY the reported issues. Do NOT rewrite or refactor working code.
+
+Rules:
+1. Use ONLY methods from the API REFERENCE section — do not invent methods
+2. If verifier says "Method X not found, Available: Y, Z" → replace X with the correct method from the list
+3. Calls MUST go through pVTbl: `ptr->pVTbl->method(ptr, args...)`
+4. First method argument is ALWAYS the interface pointer
+5. Framework components (InterfaceBus1, FileSystemManagement1) MUST be registered BEFORE user components
+
+Output the COMPLETE corrected EcoMain.c. Output ONLY raw C code, no markdown.
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _append_api_reference(parts: list, components: list) -> None:
+    """Append structured API reference for the provided components."""
+    method_map = build_method_map(components)
+    method_ref = format_method_map_for_prompt(method_map)
+
+    parts.append("## API REFERENCE — use ONLY these methods")
+    if method_ref.strip():
+        parts.append(method_ref.rstrip())
+    else:
+        parts.append("(No parsed interface methods available)")
+    parts.append("")
+
 
 def get_writer_user_prompt(
     app_description: str,
@@ -304,6 +370,7 @@ def get_writer_user_prompt(
 
     parts = []
     parts.append(f"## Application\n{app_description}\n")
+    _append_api_reference(parts, resolved_components + framework_components)
 
     # Framework components (for reference)
     parts.append("## Framework Components (always present, auto-registered)")
@@ -360,6 +427,7 @@ def get_writer_fix_prompt(
     parts = []
     parts.append("## Build Error")
     parts.append(f"```\n{error_message[:3000]}\n```")
+    _append_api_reference(parts, resolved_components)
 
     parts.append("\n## Current EcoMain.c")
     parts.append(f"```c\n{ecomain_content}\n```")
@@ -417,6 +485,7 @@ def get_writer_test_fix_prompt(
     parts = []
     parts.append("## Test Results (FAILED)")
     parts.append(f"```\n{test_results[:3000]}\n```")
+    _append_api_reference(parts, resolved_components)
 
     parts.append("\n## Current EcoMain.c")
     parts.append(f"```c\n{ecomain_content}\n```")
@@ -437,5 +506,40 @@ def get_writer_test_fix_prompt(
 
     parts.append("\nFix the application logic so all tests pass.")
     parts.append("Output ONLY the COMPLETE corrected EcoMain.c code, no markdown.")
+
+    return "\n".join(parts)
+
+
+def get_writer_verify_fix_prompt(
+    ecomain_content: str,
+    verification_errors: str,
+    resolved_components: list,
+) -> str:
+    """Build the user prompt for fixing EcoMain.c based on verifier findings."""
+
+    parts = []
+    parts.append("## Verification Errors")
+    parts.append(f"```\n{verification_errors[:3000]}\n```")
+    _append_api_reference(parts, resolved_components)
+
+    parts.append("\n## Current EcoMain.c")
+    parts.append(f"```c\n{ecomain_content}\n```")
+
+    parts.append("\n## Available Components")
+    for comp in resolved_components:
+        name = comp.get("name", "")
+        cid = comp.get("cid", "")
+        factory = comp.get("factory_func", "")
+        iface = comp.get("interface_name", "")
+        parts.append(f"- {name}: CID={cid}, factory={factory}, interface={iface}")
+
+        header_contents = comp.get("header_contents", {})
+        for hname, hcontent in header_contents.items():
+            if hname.startswith("IEco") or hname.startswith("IdEco"):
+                parts.append(f"\n### {hname}")
+                parts.append(f"```c\n{hcontent}\n```")
+
+    parts.append("\nFix all verification issues and output the COMPLETE corrected EcoMain.c code.")
+    parts.append("Output ONLY raw C code, no markdown.")
 
     return "\n".join(parts)
