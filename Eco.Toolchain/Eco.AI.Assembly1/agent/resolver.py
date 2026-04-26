@@ -777,7 +777,7 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
         - missing_components
         - build_platform
     """
-    print("[RESOLVER] Starting component resolution...")
+    logger.info("[RESOLVER] Starting component resolution...")
 
     component_plan = state.get("component_plan", {})
     planned_components = component_plan.get("components", [])
@@ -785,9 +785,9 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
     arch = "amd64"  # Default to x64
     platform = detect_platform()
 
-    print(f"[RESOLVER] Project: {project_name}")
-    print(f"[RESOLVER] Platform: {platform}")
-    print(f"[RESOLVER] Planned components: {len(planned_components)}")
+    logger.info(f"[RESOLVER] Project: {project_name}")
+    logger.info(f"[RESOLVER] Platform: {platform}")
+    logger.info(f"[RESOLVER] Planned components: {len(planned_components)}")
 
     # 1. Resolve framework components (always required)
     framework_resolved = []
@@ -795,9 +795,9 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
         result = resolve_single_component(fw_name, SOURCE_DIR, arch, is_framework=True, platform=platform)
         if result:
             framework_resolved.append(result)
-            print(f"[RESOLVER] Framework OK: {fw_name} (CID: {result['cid'][:8]}...)")
+            logger.info(f"[RESOLVER] Framework OK: {fw_name} (CID: {result['cid'][:8]}...)")
         else:
-            print(f"[RESOLVER] WARNING: Framework component not found: {fw_name}")
+            logger.warning(f"[RESOLVER] Framework component not found: {fw_name}")
 
     # 2. Resolve user-requested components
     resolved = []
@@ -814,10 +814,10 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
         result = resolve_single_component(comp_name, SOURCE_DIR, arch, platform=platform)
         if result:
             resolved.append(result)
-            print(f"[RESOLVER] Component OK: {comp_name} (CID: {result['cid'][:8]}...)")
+            logger.info(f"[RESOLVER] Component OK: {comp_name} (CID: {result['cid'][:8]}...)")
         else:
             missing.append(comp_name)
-            print(f"[RESOLVER] MISSING: {comp_name}")
+            logger.warning(f"[RESOLVER] MISSING: {comp_name}")
 
     # 3. Create project structure with DependenciesFiles
     project_dir = create_project_structure(project_name, resolved, framework_resolved, arch, platform)
@@ -829,7 +829,7 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         makefile_exe_path = project_dir / "gcc_linux" / "MakefileExe"
         makefile_exe_path.write_text(makefile_exe_content, encoding="utf-8")
-        print(f"[RESOLVER] Written Linux MakefileExe: {makefile_exe_path}")
+        logger.info(f"[RESOLVER] Written Linux MakefileExe: {makefile_exe_path}")
     else:
         makefile_content = generate_makefile(resolved, framework_resolved, project_name)
         makefile_exe_content = generate_makefile_exe(resolved, framework_resolved, project_name, arch)
@@ -840,8 +840,8 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
         makefile_exe_path = project_dir / "MSVC_v140" / "MakefileExe"
         makefile_exe_path.write_text(makefile_exe_content, encoding="utf-8")
 
-        print(f"[RESOLVER] Written Makefile: {makefile_path}")
-        print(f"[RESOLVER] Written MakefileExe: {makefile_exe_path}")
+        logger.info(f"[RESOLVER] Written Makefile: {makefile_path}")
+        logger.info(f"[RESOLVER] Written MakefileExe: {makefile_exe_path}")
 
     # 5. Compute include/lib paths for reference
     all_components = framework_resolved + resolved
@@ -856,9 +856,9 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
             lib_dirs.append(str(Path(comp["lib_path"]).parent))
             lib_files.append(comp["lib_filename"])
 
-    print(f"[RESOLVER] Resolved: {len(resolved)} components, {len(framework_resolved)} framework")
-    print(f"[RESOLVER] Missing: {len(missing)} components: {missing}")
-    print(f"[RESOLVER] Project dir: {project_dir}")
+    logger.info(f"[RESOLVER] Resolved: {len(resolved)} components, {len(framework_resolved)} framework")
+    logger.info(f"[RESOLVER] Missing: {len(missing)} components: {missing}")
+    logger.info(f"[RESOLVER] Project dir: {project_dir}")
 
     return {
         "resolved_components": resolved,

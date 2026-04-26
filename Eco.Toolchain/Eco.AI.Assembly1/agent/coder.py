@@ -171,16 +171,36 @@ def create_coder_agent(llm, work_dir: str):
     return agent
 
 
+_SHELL_METACHARS = (";", "|", "&", "$", "`", "\n", "\r", ">", "<")
+
+
+def _reject_unsafe(*values: str) -> str | None:
+    """Refuse paths/names containing shell metacharacters.
+
+    LLM-controlled values (component names, work_dir) flow into compile commands.
+    Without this guard a crafted name like 'foo;rm -rf /' would inject.
+    """
+    for v in values:
+        s = str(v)
+        for meta in _SHELL_METACHARS:
+            if meta in s:
+                return f"ERROR: Unsafe shell metacharacter {meta!r} in argument: {s!r}"
+    return None
+
+
 def _compile_windows(c_files, include_dirs, work_path):
     """Compile .c files into .lib on Windows using MSVC."""
     build_dir = work_path / "BuildFiles" / "Windows" / "amd64" / "StaticRelease"
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    inc_flags = " ".join(f'/I "{d}"' for d in include_dirs)
-    c_file_list = " ".join(f'"{f}"' for f in c_files)
     obj_dir = work_path / "SourceFiles"
+    lib_name = work_path.name.replace(".", "") + ".lib"
+    lib_path = build_dir / lib_name
 
-    # Find vcvarsall
+    unsafe = _reject_unsafe(work_path, build_dir, obj_dir, lib_name, *include_dirs, *c_files)
+    if unsafe:
+        return unsafe
+
     vcvarsall = None
     for year in ["2022", "2019"]:
         for ed in ["Community", "Professional", "Enterprise", "BuildTools"]:
@@ -194,32 +214,35 @@ def _compile_windows(c_files, include_dirs, work_path):
     if not vcvarsall:
         return "ERROR: vcvarsall.bat not found"
 
-    # Compile + archive
-    compile_cmd = (
+    inc_flags = " ".join(f'/I "{d}"' for d in include_dirs)
+    c_file_list = " ".join(f'"{f}"' for f in c_files)
+
+    bat_content = (
+        "@echo off\r\n"
+        f'call "{vcvarsall}" x64 >nul 2>&1\r\n'
+        f'cd /d "{obj_dir}"\r\n'
         f'cl {inc_flags} /O2 /W3 /DECO_LIB /DECO_WIN64 /DECO_X86_64 '
         f'/DUGUID_UTILITY /DECO_SIZE_T_DEFINED /DECO_WINDOWS '
-        f'/D_CRT_SECURE_NO_WARNINGS /c {c_file_list}'
+        f'/D_CRT_SECURE_NO_WARNINGS /c {c_file_list}\r\n'
+        f'if errorlevel 1 exit /b 1\r\n'
+        f'lib /OUT:"{lib_path}" "{obj_dir}\\*.obj"\r\n'
     )
-    lib_name = work_path.name.replace(".", "") + ".lib"
-    lib_cmd = f'lib /OUT:"{build_dir / lib_name}" "{obj_dir}\\*.obj"'
-
-    full_cmd = (
-        f'call "{vcvarsall}" x64 >nul 2>&1 && '
-        f'cd /d "{obj_dir}" && {compile_cmd} && {lib_cmd}'
-    )
+    bat_path = work_path / "_compile.bat"
+    bat_path.write_text(bat_content, encoding="utf-8")
 
     env = os.environ.copy()
     env["MSYS_NO_PATHCONV"] = "1"
     env["MSYS2_ARG_CONV_EXCL"] = "*"
 
     result = subprocess.run(
-        full_cmd, capture_output=True, text=True,
-        timeout=60, shell=True, env=env,
+        ["cmd.exe", "/c", str(bat_path)],
+        capture_output=True, text=True,
+        timeout=60, shell=False, env=env,
     )
 
     output = f"{result.stdout}\n{result.stderr}".strip()
     if result.returncode == 0:
-        return f"OK: Library built: {build_dir / lib_name}\n{output[-500:]}"
+        return f"OK: Library built: {lib_path}\n{output[-500:]}"
     return f"ERROR: Compile failed (exit {result.returncode}):\n{output[:2000]}"
 
 
@@ -228,25 +251,43 @@ def _compile_linux(c_files, include_dirs, work_path):
     build_dir = work_path / "BuildFiles" / "Linux" / "x86_64" / "StaticRelease"
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    inc_flags = " ".join(f'-I "{d}"' for d in include_dirs)
-    c_file_list = " ".join(str(f) for f in c_files)
-
+    src_dir = work_path / "SourceFiles"
     lib_name = "lib" + work_path.name.replace(".", "") + ".a"
+    lib_path = build_dir / lib_name
 
-    compile_cmd = (
-        f'gcc {inc_flags} -Wall -O2 -DLINUX -DECO_LINUX -DECO_X86_64 '
-        f'-DUGUID_UTILITY -DECO_LIB -c {c_file_list}'
+    unsafe = _reject_unsafe(work_path, build_dir, src_dir, lib_name, *include_dirs, *c_files)
+    if unsafe:
+        return unsafe
+
+    gcc_argv = ["gcc"]
+    for d in include_dirs:
+        gcc_argv += ["-I", str(d)]
+    gcc_argv += [
+        "-Wall", "-O2",
+        "-DLINUX", "-DECO_LINUX", "-DECO_X86_64",
+        "-DUGUID_UTILITY", "-DECO_LIB",
+        "-c",
+    ]
+    gcc_argv += [str(f) for f in c_files]
+
+    compile_result = subprocess.run(
+        gcc_argv, capture_output=True, text=True,
+        timeout=60, shell=False, cwd=str(src_dir),
     )
-    ar_cmd = f'ar rcs "{build_dir / lib_name}" *.o'
+    if compile_result.returncode != 0:
+        out = f"{compile_result.stdout}\n{compile_result.stderr}".strip()
+        return f"ERROR: gcc failed (exit {compile_result.returncode}):\n{out[:2000]}"
 
-    full_cmd = f'cd "{work_path / "SourceFiles"}" && {compile_cmd} && {ar_cmd}'
+    obj_files = sorted(p.name for p in src_dir.glob("*.o"))
+    if not obj_files:
+        return "ERROR: gcc produced no .o files"
 
-    result = subprocess.run(
-        full_cmd, capture_output=True, text=True,
-        timeout=60, shell=True,
+    ar_argv = ["ar", "rcs", str(lib_path)] + obj_files
+    ar_result = subprocess.run(
+        ar_argv, capture_output=True, text=True,
+        timeout=60, shell=False, cwd=str(src_dir),
     )
-
-    output = f"{result.stdout}\n{result.stderr}".strip()
-    if result.returncode == 0:
-        return f"OK: Library built: {build_dir / lib_name}\n{output[-500:]}"
-    return f"ERROR: Compile failed (exit {result.returncode}):\n{output[:2000]}"
+    out = f"{ar_result.stdout}\n{ar_result.stderr}".strip()
+    if ar_result.returncode == 0:
+        return f"OK: Library built: {lib_path}\n{out[-500:]}"
+    return f"ERROR: ar failed (exit {ar_result.returncode}):\n{out[:2000]}"

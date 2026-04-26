@@ -417,7 +417,7 @@ export function ChatInterface() {
                             prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
                             prose-pre:bg-black/40 prose-pre:border prose-pre:border-white/[0.06] prose-pre:rounded-lg
                             prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{msg.content}</ReactMarkdown>
                           </div>
                         )}
                       </div>

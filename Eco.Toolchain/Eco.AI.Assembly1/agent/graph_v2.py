@@ -653,10 +653,14 @@ def create_qa_node(llm):
         
         # Запускаем сборку
         logger.info(f"[QA] Starting build for: {project_name}")
-        build_result = build.invoke({"project_name": project_name})
-        
+        try:
+            build_result = build.invoke({"project_name": project_name})
+        except Exception as e:
+            logger.exception("[QA] build.invoke() raised — treating as build failure")
+            build_result = f"ERROR: build node crashed: {type(e).__name__}: {e}"
+
         logger.info(f"[QA] Build result: {build_result[:300]}...")
-        
+
         is_success = build_result.startswith("OK:")
         
         # Результат

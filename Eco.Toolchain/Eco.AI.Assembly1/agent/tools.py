@@ -444,7 +444,10 @@ def build_node(state: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[BUILD] Written EcoMain.c: {ecomain_path}")
 
     # Run build
-    result = build_makefile.invoke({"project_dir": project_dir})
+    try:
+        result = build_makefile.invoke({"project_dir": project_dir})
+    except Exception as e:
+        result = f"ERROR: build_makefile crashed: {type(e).__name__}: {e}"
 
     is_success = result.startswith("OK:")
     error_type = "none" if is_success else classify_build_error(result)
