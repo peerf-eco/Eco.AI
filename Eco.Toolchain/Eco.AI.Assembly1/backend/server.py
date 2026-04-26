@@ -71,9 +71,14 @@ class PipelineSession:
         self._next_id = 0
         self.is_done = False
         self.task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
 
     async def emit(self, event: dict):
-        """Emit event to buffer + all active subscribers."""
+        """Emit event to buffer + all active subscribers.
+
+        Lock guarantees buffer order matches subscriber-queue order even when
+        multiple coroutines emit concurrently for the same thread_id.
+        """
         etype = event.get("type", "?")
         extra = ""
         if etype == "progress":
@@ -84,27 +89,31 @@ class PipelineSession:
             extra = f" component={event.get('component')} stage={event.get('stage')}"
         elif etype == "status":
             extra = f" content={event.get('content', '')[:80]}"
-        print(f"[EMIT] type={etype}{extra}  subscribers={len(self.subscribers)}")
-        self.events.append(event)
-        for qid in list(self.subscribers):
+        async with self._lock:
+            logger.debug(f"[EMIT] type={etype}{extra}  subscribers={len(self.subscribers)}")
+            self.events.append(event)
+            targets = [(qid, self._queues[qid]) for qid in self.subscribers if qid in self._queues]
+        for _qid, q in targets:
             try:
-                await self._queues[qid].put(event)
+                await q.put(event)
             except Exception:
                 pass
 
-    def subscribe(self) -> tuple[list[dict], asyncio.Queue, int]:
+    async def subscribe(self) -> tuple[list[dict], asyncio.Queue, int]:
         """Subscribe: returns (buffered_events, queue_for_new, subscription_id)."""
-        qid = self._next_id
-        self._next_id += 1
-        q: asyncio.Queue = asyncio.Queue()
-        self._queues[qid] = q
-        self.subscribers.add(qid)
-        return list(self.events), q, qid
+        async with self._lock:
+            qid = self._next_id
+            self._next_id += 1
+            q: asyncio.Queue = asyncio.Queue()
+            self._queues[qid] = q
+            self.subscribers.add(qid)
+            return list(self.events), q, qid
 
-    def unsubscribe(self, qid: int):
+    async def unsubscribe(self, qid: int):
         """Remove subscriber."""
-        self.subscribers.discard(qid)
-        self._queues.pop(qid, None)
+        async with self._lock:
+            self.subscribers.discard(qid)
+            self._queues.pop(qid, None)
 
 
 # Active pipeline sessions by thread_id
@@ -144,12 +153,12 @@ async def run_pipeline(session: PipelineSession, user_message: str, thread_id: s
                             "content": msg_chunk.content,
                         })
                     else:
-                        print(f"[STREAM] skip message from node={node} len={len(msg_chunk.content)}")
+                        logger.debug(f"[STREAM] skip message from node={node} len={len(msg_chunk.content)}")
 
             elif mode == "custom":
                 # data = whatever tool's stream_writer() sent
                 # Types: progress, result, prd_review, component_progress, status
-                print(f"[STREAM] custom event: {json.dumps(data, ensure_ascii=False, default=str)[:200]}")
+                logger.debug(f"[STREAM] custom event: {json.dumps(data, ensure_ascii=False, default=str)[:200]}")
                 await session.emit(data)
 
         await session.emit({"type": "done", "content": "Готово"})
@@ -352,7 +361,7 @@ async def init_rag():
 @app.websocket("/ws/chat/{thread_id}")
 async def websocket_endpoint(websocket: WebSocket, thread_id: str):
     await websocket.accept()
-    print(f"Client #{thread_id} connected")
+    logger.info(f"Client #{thread_id} connected")
 
     sub_id: int | None = None
     session: PipelineSession | None = None
@@ -374,12 +383,12 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
 
             if session and not session.is_done:
                 # Pipeline already running — resume streaming
-                buffered, queue, sub_id = session.subscribe()
+                buffered, queue, sub_id = await session.subscribe()
 
                 # Replay buffered events
-                print(f"[WS] Replaying {len(buffered)} buffered events for #{thread_id}")
+                logger.info(f"[WS] Replaying {len(buffered)} buffered events for #{thread_id}")
                 for event in buffered:
-                    print(f"[WS→CLIENT replay] type={event.get('type', '?')}")
+                    logger.debug(f"[WS→CLIENT replay] type={event.get('type', '?')}")
                     await websocket.send_json(event)
 
                 # Start heartbeat
@@ -392,7 +401,7 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
                     if event.get("type") == "done":
                         break
 
-                session.unsubscribe(sub_id)
+                await session.unsubscribe(sub_id)
                 sub_id = None
                 if hb_task:
                     hb_task.cancel()
@@ -402,7 +411,7 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
                 # No active pipeline — wait for client message
                 data = await websocket.receive_text()
                 request = json.loads(data)
-                print(f"[WS←CLIENT] thread={thread_id} type={request.get('type', 'message')} msg={str(request.get('message', ''))[:80]}")
+                logger.info(f"[WS←CLIENT] thread={thread_id} type={request.get('type', 'message')} msg={str(request.get('message', ''))[:80]}")
 
                 # V4: handle PRD approval/rejection from frontend
                 # Convert to a user message that tells the chat agent to call resume_assembly
@@ -431,7 +440,7 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
                 active_sessions[thread_id] = session
 
                 # Subscribe BEFORE starting pipeline (don't miss early events)
-                buffered, queue, sub_id = session.subscribe()
+                buffered, queue, sub_id = await session.subscribe()
 
                 # Start pipeline in background
                 session.task = asyncio.create_task(
@@ -445,23 +454,21 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
                 while True:
                     event = await queue.get()
                     etype = event.get("type", "?")
-                    print(f"[WS→CLIENT] type={etype} thread={thread_id}")
+                    logger.debug(f"[WS→CLIENT] type={etype} thread={thread_id}")
                     await websocket.send_json(event)
                     if etype == "done":
                         break
 
-                session.unsubscribe(sub_id)
+                await session.unsubscribe(sub_id)
                 sub_id = None
                 if hb_task:
                     hb_task.cancel()
                     hb_task = None
 
     except WebSocketDisconnect:
-        print(f"Client #{thread_id} disconnected")
+        logger.info(f"Client #{thread_id} disconnected")
     except Exception as e:
-        print(f"WebSocket error for #{thread_id}: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"WebSocket error for #{thread_id}: {e}")
         try:
             await websocket.send_json({"type": "error", "content": str(e)})
         except Exception:
@@ -469,10 +476,13 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
     finally:
         # Cleanup subscription but NOT the pipeline
         if session and sub_id is not None:
-            session.unsubscribe(sub_id)
+            try:
+                await session.unsubscribe(sub_id)
+            except Exception:
+                pass
         if hb_task:
             hb_task.cancel()
-        print(f"Client #{thread_id} cleanup done (pipeline continues if running)")
+        logger.info(f"Client #{thread_id} cleanup done (pipeline continues if running)")
 
 
 if __name__ == "__main__":
