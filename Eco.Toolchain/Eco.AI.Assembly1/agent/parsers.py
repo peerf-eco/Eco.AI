@@ -59,14 +59,14 @@ def parse_plan(plan_md: str) -> dict[str, Any]:
     }
 
 
-_STAGE_RE = re.compile(r"^##\s*Stage:\s*(?P<stage>\w+)\s*$", re.MULTILINE)
-_STATUS_RE = re.compile(r"^##\s*Status:\s*(?P<status>\w+)\s*$", re.MULTILINE)
+_STAGE_RE = re.compile(r"^##\s*Stage:\s*(?P<stage>\w+)\b.*$", re.MULTILINE)
+_STATUS_RE = re.compile(r"^##\s*Status:\s*(?P<status>\w+)\b.*$", re.MULTILINE)
 _ERROR_LINE_RE = re.compile(
-    r"^-\s*(?P<file>[^:]+):(?P<line>\d+):\s*(?P<message>.+?)$",
+    r"^-\s*(?P<file>.+):(?P<line>\d+):\s*(?P<message>.+?)$",
     re.MULTILINE,
 )
 _TEST_FAIL_RE = re.compile(
-    r"^-\s*(?P<test>\w+):\s*(?P<message>.+?)$",
+    r"^-\s*(?P<test>[^:]+(?:::[^:]+)*):\s*(?P<message>.+?)$",
     re.MULTILINE,
 )
 
@@ -101,7 +101,7 @@ def parse_feedback(feedback_md: str) -> dict[str, Any]:
 
 def _section(md: str, heading: str) -> str:
     """Return everything between '## <heading>' and the next '## ' heading (or EOF)."""
-    pattern = re.compile(rf"^##\s*{re.escape(heading)}\s*$", re.MULTILINE)
+    pattern = re.compile(rf"^##\s*{re.escape(heading)}\s*:?\s*$", re.MULTILINE)
     m = pattern.search(md)
     if not m:
         return ""

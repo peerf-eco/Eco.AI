@@ -192,3 +192,60 @@ def test_parse_feedback_empty_input():
     assert result["errors"] == []
     assert result["test_failures"] == []
     assert result["stage"] == ""
+
+
+def test_parse_feedback_windows_drive_letter_path():
+    """MSVC on Windows produces paths like C:/foo/bar.c:42: error."""
+    md = """\
+## Stage: build
+## Status: FAIL
+
+## Errors
+- C:/Users/dev/proj/EcoMain.c:42: error C2065: undeclared identifier
+- D:/Build/sub/file.cpp:15: warning W4996
+"""
+    result = parse_feedback(md)
+    assert len(result["errors"]) == 2
+    assert result["errors"][0]["file"] == "C:/Users/dev/proj/EcoMain.c"
+    assert result["errors"][0]["line"] == 42
+    assert "C2065" in result["errors"][0]["message"]
+    assert result["errors"][1]["file"] == "D:/Build/sub/file.cpp"
+    assert result["errors"][1]["line"] == 15
+
+
+def test_parse_feedback_test_name_with_special_chars():
+    """Test names like 'MathTests::Addition' or 'test_calc-add' must parse correctly."""
+    md = """\
+## Stage: test
+## Status: FAIL
+
+## Test failures
+- MathTests::Addition: expected 5, got 4
+- test_calc-add: timeout after 1s
+- test_calc[5-4]: parametrize failure
+"""
+    result = parse_feedback(md)
+    names = [t["test"] for t in result["test_failures"]]
+    assert names == ["MathTests::Addition", "test_calc-add", "test_calc[5-4]"]
+
+
+def test_parse_feedback_tolerates_trailing_colon_on_heading():
+    """LLMs often emit '## Errors:' with trailing colon."""
+    md = """\
+## Stage: build
+## Status: FAIL
+
+## Errors:
+- src/foo.c:1: bad
+"""
+    result = parse_feedback(md)
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["file"] == "src/foo.c"
+
+
+def test_parse_feedback_tolerates_trailing_punctuation_on_status():
+    """## Status: FAIL. or 'FAIL,' must still extract status."""
+    md_period = "## Stage: build\n## Status: FAIL.\n"
+    md_comma = "## Stage: test\n## Status: FAIL,\n"
+    assert parse_feedback(md_period)["status"] == "FAIL"
+    assert parse_feedback(md_comma)["status"] == "FAIL"
