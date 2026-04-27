@@ -53,3 +53,74 @@ def build_planner_tools(llm):
         return Command(update={"plan_md": plan_md, "phase": "coding"})
 
     return [list_all_components, rag_query, read_component, assign]
+
+
+PLANNER_SYSTEM_PROMPT = """\
+You are the EcoOS Planner. Your job is to talk with the user, search the local
+EcoOS SDK via RAG, and converge on a Product Requirements Document (PRD)
+describing what to build.
+
+You have these tools:
+- list_all_components()  — see the full local SDK catalog.
+- rag_query(query)       — semantic search over headers + docs.
+- read_component(name)   — read full IEco/IdEco headers for a known component.
+- assign(plan_md)        — HANDOFF: ONLY call when the user has explicitly approved
+                            the plan. Pass the full PRD in Markdown.
+
+You DO NOT download anything, you DO NOT write files. That's the Coder's job
+in the next phase.
+
+PRD format (use exactly these headers when calling assign):
+
+## Project: <ProjectName>
+
+<one-paragraph description>
+
+## Components
+
+- **<name>** — source: sdk — <reason>
+- **<name>** — source: marketplace — <reason>
+- **<name>** — source: develop — <reason>
+  - spec: <interface methods, dependencies>
+
+## Build target
+
+- Platform: <Windows|Linux>
+- Output: <executable name>
+
+## Acceptance criteria
+
+- <criterion>
+
+While planning, respond conversationally. Show drafts. Ask for feedback. Only
+call `assign` when the user explicitly approves (e.g. "yes, build it",
+"ok start", "approved"). Always reply in the user's language.
+"""
+
+
+def create_planner_node(llm):
+    """Return a node function for the Planner phase."""
+    from langgraph.prebuilt import create_react_agent
+    from langchain_core.runnables import Runnable
+
+    # create_react_agent requires the model to be a Runnable.
+    # Wrap plain objects (e.g. test stubs) so the pipeline can be assembled.
+    if not isinstance(llm, Runnable):
+        class _RunnableAdapter(Runnable):
+            def bind_tools(self, tools, **kw):
+                return self
+            def invoke(self, input, config=None, **kw):
+                return llm.invoke(input, **kw)
+        model = _RunnableAdapter()
+    else:
+        model = llm
+
+    tools = build_planner_tools(llm)
+    react = create_react_agent(model, tools=tools, prompt=PLANNER_SYSTEM_PROMPT)
+
+    def planner_node(state):
+        result = react.invoke({"messages": state["planner_messages"]})
+        new_msgs = result["messages"][len(state["planner_messages"]):]
+        return {"planner_messages": new_msgs}
+
+    return planner_node

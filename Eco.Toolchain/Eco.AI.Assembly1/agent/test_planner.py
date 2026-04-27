@@ -75,3 +75,47 @@ def test_read_component_errors_when_no_headers(tmp_path, monkeypatch):
     tool = next(t for t in build_planner_tools(None) if t.name == "read_component")
     result = tool.invoke({"name": "Eco.Empty"})
     assert "No headers" in result
+
+
+def test_create_planner_node_returns_callable():
+    from agent.planner import create_planner_node
+
+    class _LLMStub:
+        def bind_tools(self, tools, **kw):
+            return self
+        def invoke(self, messages, **kw):
+            from langchain_core.messages import AIMessage
+            return AIMessage(content="stub")
+
+    node = create_planner_node(_LLMStub())
+    assert callable(node)
+
+
+def test_planner_node_writes_to_planner_messages_only(monkeypatch):
+    """Smoke test: planner node should not touch coder/executor message lists."""
+    from agent.planner import create_planner_node
+    from langchain_core.messages import AIMessage
+
+    class _LLMStub:
+        def bind_tools(self, tools, **kw):
+            return self
+        def invoke(self, messages, **kw):
+            return AIMessage(content="hi user, what's the project?")
+
+    node = create_planner_node(_LLMStub())
+    state = {
+        "planner_messages": [{"role": "user", "content": "build x"}],
+        "coder_messages": [],
+        "executor_messages": [],
+        "phase": "planning",
+        "iteration": 0,
+        "max_iterations": 5,
+        "user_request": "build x",
+        "plan_md": "", "coder_summary_md": "", "feedback_md": "",
+        "executor_summary_md": "",
+        "project_dir": "", "project_name": "", "last_status": "",
+    }
+    update = node(state)
+    assert "planner_messages" in update
+    assert "coder_messages" not in update
+    assert "executor_messages" not in update
