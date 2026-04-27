@@ -307,3 +307,14 @@ def create_chat_agent_v3(llm):
     )
 
     return agent
+
+
+def create_chat_agent_v5(llm):
+    """V5: returns the three-node graph directly. Caller manages thread_id and state."""
+    from .three_node_graph import create_v5_graph
+    return create_v5_graph(llm)
+
+
+def make_chat_agent_initial_state(user_request: str, max_iterations: int = 5):
+    from .state_v5 import make_initial_state
+    return make_initial_state(user_request, max_iterations)
