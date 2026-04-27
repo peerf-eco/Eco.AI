@@ -12,8 +12,8 @@ _BULLET_RE = re.compile(
     re.MULTILINE,
 )
 _SPEC_RE = re.compile(r"^\s+-\s*spec:\s*(?P<spec>.+?)$", re.MULTILINE)
-_PLATFORM_RE = re.compile(r"^-\s*Platform:\s*(?P<platform>\S+)\s*$", re.MULTILINE)
-_OUTPUT_RE = re.compile(r"^-\s*Output:\s*(?P<output>\S+)\s*$", re.MULTILINE)
+_PLATFORM_RE = re.compile(r"^-\s*Platform:\s*(?P<platform>.+?)\s*$", re.MULTILINE)
+_OUTPUT_RE = re.compile(r"^-\s*Output:\s*(?P<output>.+?)\s*$", re.MULTILINE)
 
 
 def parse_plan(plan_md: str) -> dict[str, Any]:
@@ -34,10 +34,12 @@ def parse_plan(plan_md: str) -> dict[str, Any]:
             "spec": None,
         })
 
-    # Attach spec to immediately-preceding develop bullet (if line below is "  - spec: ...")
+    # Attach spec only to develop components (sdk/marketplace components don't have specs)
     bullet_positions = [(m.start(), m.end()) for m in _BULLET_RE.finditer(plan_md)]
     spec_matches = list(_SPEC_RE.finditer(plan_md))
     for i, (b_start, b_end) in enumerate(bullet_positions):
+        if components[i]["source"] != "develop":
+            continue
         next_bullet_start = bullet_positions[i + 1][0] if i + 1 < len(bullet_positions) else len(plan_md)
         for sm in spec_matches:
             if b_end < sm.start() < next_bullet_start:
@@ -45,9 +47,9 @@ def parse_plan(plan_md: str) -> dict[str, Any]:
                 break
 
     platform_match = _PLATFORM_RE.search(plan_md)
-    platform = platform_match["platform"] if platform_match else ""
+    platform = platform_match["platform"].strip() if platform_match else ""
     output_match = _OUTPUT_RE.search(plan_md)
-    output = output_match["output"] if output_match else ""
+    output = output_match["output"].strip() if output_match else ""
 
     return {
         "project_name": project_name,

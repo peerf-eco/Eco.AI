@@ -59,3 +59,86 @@ def test_parse_plan_returns_empty_components_on_garbage():
     result = parse_plan("just some prose, no markdown structure")
     assert result["components"] == []
     assert result["project_name"] == ""
+
+
+def test_parse_plan_does_not_attach_spec_to_sdk_component():
+    """Regression: spec line must NOT bind to non-develop bullets."""
+    md = """\
+## Project: X
+
+## Components
+
+- **Eco.Math.C89** — source: sdk — math
+  - spec: this should NOT attach to Math.C89
+- **Custom1** — source: develop — glue
+"""
+    result = parse_plan(md)
+    math = next(c for c in result["components"] if c["name"] == "Eco.Math.C89")
+    custom = next(c for c in result["components"] if c["name"] == "Custom1")
+    assert math["spec"] is None, "sdk component must not receive spec"
+    assert custom["spec"] is None, "develop component without spec line stays None"
+
+
+def test_parse_plan_handles_mixed_dash_styles():
+    """Em-dash and ASCII hyphen must both work, even mixed on the same line."""
+    md = """\
+## Project: Y
+
+## Components
+
+- **A** - source: sdk - hyphen-only
+- **B** — source: sdk — em-dash-only
+- **C** — source: sdk - mixed
+"""
+    result = parse_plan(md)
+    names = [c["name"] for c in result["components"]]
+    assert names == ["A", "B", "C"]
+
+
+def test_parse_plan_handles_optional_reason():
+    """Component bullets without trailing reason must still parse."""
+    md = """\
+## Project: Z
+
+## Components
+
+- **NoReason** — source: sdk
+"""
+    result = parse_plan(md)
+    assert len(result["components"]) == 1
+    assert result["components"][0]["name"] == "NoReason"
+    assert result["components"][0]["reason"] == ""
+
+
+def test_parse_plan_extracts_multiple_develop_specs():
+    """Two develop components, each with own spec line."""
+    md = """\
+## Project: Multi
+
+## Components
+
+- **A** — source: develop — first
+  - spec: spec for A
+- **B** — source: develop — second
+  - spec: spec for B
+"""
+    result = parse_plan(md)
+    a = next(c for c in result["components"] if c["name"] == "A")
+    b = next(c for c in result["components"] if c["name"] == "B")
+    assert a["spec"] == "spec for A"
+    assert b["spec"] == "spec for B"
+
+
+def test_parse_plan_handles_platform_with_spaces():
+    """Platform value with whitespace must be preserved."""
+    md = """\
+## Project: P
+
+## Build target
+
+- Platform: Mac OS
+- Output: my app.exe
+"""
+    result = parse_plan(md)
+    assert result["platform"] == "Mac OS"
+    assert result["output"] == "my app.exe"
