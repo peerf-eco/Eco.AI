@@ -2,8 +2,10 @@
 
 import logging
 from pathlib import Path
+from typing import Annotated
 
 from langchain_core.tools import tool
+from langchain_core.tools.base import InjectedToolCallId
 from langgraph.types import Command
 
 from .tools import list_all_components, rag_query, SOURCE_DIR
@@ -48,9 +50,16 @@ def build_planner_tools(llm):
         return "\n\n".join(out)
 
     @tool
-    def assign(plan_md: str) -> Command:
+    def assign(plan_md: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
         """HANDOFF: user approved the plan. Pass the FULL approved PRD as Markdown."""
-        return Command(update={"plan_md": plan_md, "phase": "coding"})
+        from langchain_core.messages import ToolMessage
+        return Command(
+            update={
+                "plan_md": plan_md,
+                "phase": "coding",
+                "planner_messages": [ToolMessage("Plan approved. Handing off to coder.", tool_call_id=tool_call_id)],
+            }
+        )
 
     return [list_all_components, rag_query, read_component, assign]
 
