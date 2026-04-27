@@ -19,12 +19,17 @@ import remarkGfm from "remark-gfm";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WS_URL = API_URL.replace(/^http/, "ws");
+const USE_V5 = process.env.NEXT_PUBLIC_USE_V5 === "true";
+
+type V5Phase = "planning" | "coding" | "executing" | "done";
 
 interface Message {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   files?: GeneratedFile[];
   result?: ResultData;
+  phase?: V5Phase;
+  isPlanDraft?: boolean;
 }
 
 interface GeneratedFile {
@@ -74,6 +79,7 @@ export function ChatInterface() {
   const [prdData, setPrdData] = useState<PRDData | null>(null);
   const [showPrdReview, setShowPrdReview] = useState(false);
   const [componentProgress, setComponentProgress] = useState<Record<string, string>>({});
+  const [currentPhase, setCurrentPhase] = useState<V5Phase | null>(null);
   const architectThreadId = useRef<string>("");
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -93,7 +99,10 @@ export function ChatInterface() {
 
     intentionalClose.current = false; // Reset on every connect attempt
 
-    const ws = new WebSocket(`${WS_URL}/ws/chat/${threadId.current}`);
+    const wsPath = USE_V5
+      ? `${WS_URL}/ws/v5/chat`
+      : `${WS_URL}/ws/chat/${threadId.current}`;
+    const ws = new WebSocket(wsPath);
 
     ws.onopen = () => {
       console.log("Connected to agent");
@@ -148,6 +157,53 @@ export function ChatInterface() {
 
   const handleWsMessage = useCallback((data: any) => {
     switch (data.type) {
+      // ===== V5 three-node pipeline events =====
+      case "phase_change":
+        setCurrentPhase(data.phase);
+        if (data.phase === "done") {
+          setIsProcessing(false);
+        }
+        break;
+
+      case "planner_message":
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: data.content,
+            phase: "planning",
+            isPlanDraft: /^##\s*Project:/m.test(data.content || ""),
+          },
+        ]);
+        // Planner finished its turn — agent waits for user input
+        setIsProcessing(false);
+        break;
+
+      case "coder_progress":
+      case "executor_progress":
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "system",
+            content: typeof data.data === "string" ? data.data : JSON.stringify(data.data),
+            phase: data.type === "coder_progress" ? "coding" : "executing",
+          },
+        ]);
+        break;
+
+      case "final_result":
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `**${data.status}**\n\n${data.summary || ""}`,
+            phase: "done",
+          },
+        ]);
+        setIsProcessing(false);
+        break;
+
+      // ===== V3 / V4 events =====
       case "token":
         setMessages((prev) => {
           const lastMsg = prev[prev.length - 1];
@@ -241,12 +297,13 @@ export function ChatInterface() {
     handleWsMessageRef.current = handleWsMessage;
   }, [handleWsMessage]);
 
-  const sendMessage = () => {
-    if (!input.trim() || !isConnected) return;
+  const sendMessage = (override?: string) => {
+    const text = (override ?? input).trim();
+    if (!text || !isConnected) return;
 
-    setMessages((prev) => [...prev, { role: "user", content: input }]);
-    wsRef.current?.send(JSON.stringify({ message: input }));
-    setInput("");
+    setMessages((prev) => [...prev, { role: "user", content: text }]);
+    wsRef.current?.send(JSON.stringify({ message: text }));
+    if (override === undefined) setInput("");
     setIsProcessing(true);
   };
 
@@ -322,9 +379,14 @@ export function ChatInterface() {
             <div>
               <h1 className="text-base font-semibold tracking-tight">EcoOS Component Agent</h1>
               <p className="text-xs text-muted-foreground">
-                V4 Architect Pipeline
+                {USE_V5 ? "V5 Three-Node Pipeline" : "V4 Architect Pipeline"}
               </p>
             </div>
+            {USE_V5 && currentPhase && (
+              <div className="ml-2 rounded-full glass px-3 py-1 text-[10px] uppercase tracking-wide text-blue-300/80">
+                Phase: {currentPhase}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 rounded-full glass px-3 py-1.5">
@@ -377,7 +439,26 @@ export function ChatInterface() {
 
             {/* Messages */}
             <AnimatePresence initial={false}>
-              {messages.map((msg, idx) => (
+              {messages.map((msg, idx) => {
+                if (msg.role === "system") {
+                  return (
+                    <motion.div
+                      key={idx}
+                      variants={msgVariants}
+                      initial="hidden"
+                      animate="visible"
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-white/[0.03] border border-white/[0.04] text-xs text-muted-foreground"
+                    >
+                      {msg.phase && (
+                        <span className="uppercase tracking-wide text-[10px] text-blue-400/80 font-medium">
+                          {msg.phase}
+                        </span>
+                      )}
+                      <span className="truncate">{msg.content}</span>
+                    </motion.div>
+                  );
+                }
+                return (
                 <motion.div
                   key={idx}
                   variants={msgVariants}
@@ -420,6 +501,22 @@ export function ChatInterface() {
                             <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{msg.content}</ReactMarkdown>
                           </div>
                         )}
+
+                        {msg.role === "assistant" && msg.phase && (
+                          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-2">
+                            Phase: {msg.phase}
+                          </div>
+                        )}
+                        {msg.isPlanDraft && (
+                          <button
+                            type="button"
+                            className="mt-2 px-3 py-1 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
+                            disabled={!isConnected || isProcessing}
+                            onClick={() => sendMessage("Approve and start building.")}
+                          >
+                            Approve plan
+                          </button>
+                        )}
                       </div>
                     )}
 
@@ -443,7 +540,8 @@ export function ChatInterface() {
                     )}
                   </div>
                 </motion.div>
-              ))}
+                );
+              })}
             </AnimatePresence>
 
             {/* PRD Review Card */}
@@ -516,7 +614,7 @@ export function ChatInterface() {
                 className="border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-sm placeholder:text-muted-foreground/60"
               />
               <Button
-                onClick={sendMessage}
+                onClick={() => sendMessage()}
                 disabled={!isConnected || isProcessing || !input.trim()}
                 size="icon"
                 className="shrink-0 rounded-lg bg-gradient-to-r from-blue-500 to-violet-500 hover:from-blue-600 hover:to-violet-600 shadow-lg shadow-blue-500/20 disabled:opacity-30 disabled:shadow-none transition-all"
