@@ -101,22 +101,9 @@ call `assign` when the user explicitly approves (e.g. "yes, build it",
 def create_planner_node(llm):
     """Return a node function for the Planner phase."""
     from langgraph.prebuilt import create_react_agent
-    from langchain_core.runnables import Runnable
-
-    # create_react_agent requires the model to be a Runnable.
-    # Wrap plain objects (e.g. test stubs) so the pipeline can be assembled.
-    if not isinstance(llm, Runnable):
-        class _RunnableAdapter(Runnable):
-            def bind_tools(self, tools, **kw):
-                return self
-            def invoke(self, input, config=None, **kw):
-                return llm.invoke(input, **kw)
-        model = _RunnableAdapter()
-    else:
-        model = llm
 
     tools = build_planner_tools(llm)
-    react = create_react_agent(model, tools=tools, prompt=PLANNER_SYSTEM_PROMPT)
+    react = create_react_agent(llm, tools=tools, prompt=PLANNER_SYSTEM_PROMPT)
 
     def planner_node(state):
         result = react.invoke({"messages": state["planner_messages"]})

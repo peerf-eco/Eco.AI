@@ -79,12 +79,13 @@ def test_read_component_errors_when_no_headers(tmp_path, monkeypatch):
 
 def test_create_planner_node_returns_callable():
     from agent.planner import create_planner_node
+    from langchain_core.runnables import Runnable
+    from langchain_core.messages import AIMessage
 
-    class _LLMStub:
+    class _LLMStub(Runnable):
         def bind_tools(self, tools, **kw):
             return self
-        def invoke(self, messages, **kw):
-            from langchain_core.messages import AIMessage
+        def invoke(self, input, config=None, **kw):
             return AIMessage(content="stub")
 
     node = create_planner_node(_LLMStub())
@@ -94,12 +95,13 @@ def test_create_planner_node_returns_callable():
 def test_planner_node_writes_to_planner_messages_only(monkeypatch):
     """Smoke test: planner node should not touch coder/executor message lists."""
     from agent.planner import create_planner_node
+    from langchain_core.runnables import Runnable
     from langchain_core.messages import AIMessage
 
-    class _LLMStub:
+    class _LLMStub(Runnable):
         def bind_tools(self, tools, **kw):
             return self
-        def invoke(self, messages, **kw):
+        def invoke(self, input, config=None, **kw):
             return AIMessage(content="hi user, what's the project?")
 
     node = create_planner_node(_LLMStub())
