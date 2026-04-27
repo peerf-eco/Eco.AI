@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import uuid
 import asyncio
 import logging
 from pathlib import Path
@@ -483,6 +484,104 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
         if hb_task:
             hb_task.cancel()
         logger.info(f"Client #{thread_id} cleanup done (pipeline continues if running)")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V5 WEBSOCKET — three-node pipeline (planner → coder → executor)
+# ═══════════════════════════════════════════════════════════════════════════
+
+from agent.chat_agent import create_chat_agent_v5, make_chat_agent_initial_state
+
+
+@app.websocket("/ws/v5/chat")
+async def v5_chat_endpoint(websocket: WebSocket):
+    await websocket.accept()
+
+    # Build LLM (mirrors agent/main.py:get_llm pattern)
+    try:
+        from agent.main import get_llm as _get_llm
+        llm = _get_llm()
+    except Exception:
+        # Fallback if agent.main.get_llm not importable as a function
+        llm = ChatOpenAI(
+            model=os.getenv("LLM_MODEL", "z-ai/glm-5.1"),
+            temperature=0,
+            openai_api_key=os.environ["OPENAI_API_KEY"],
+            openai_api_base=os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1"),
+            timeout=120,
+            max_retries=1,
+        )
+
+    graph = create_chat_agent_v5(llm)
+
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
+    logger.info(f"[V5 WS] connected thread_id={thread_id}")
+
+    state = None
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "Invalid JSON"})
+                continue
+
+            user_msg = payload.get("content", "")
+            if not user_msg:
+                await websocket.send_json({"type": "error", "message": "Missing 'content' field"})
+                continue
+
+            if state is None:
+                state = make_chat_agent_initial_state(user_msg, max_iterations=5)
+            else:
+                state["planner_messages"] = state.get("planner_messages", []) + [
+                    {"role": "user", "content": user_msg}
+                ]
+
+            try:
+                async for kind, data in graph.astream(state, config, stream_mode=["updates", "custom"]):
+                    if kind == "updates":
+                        for node, update in data.items():
+                            if isinstance(update, dict) and "phase" in update:
+                                await websocket.send_json({"type": "phase_change", "phase": update["phase"]})
+                            if node == "planner" and isinstance(update, dict) and "planner_messages" in update:
+                                for m in update["planner_messages"]:
+                                    content = getattr(m, "content", None) or (m.get("content") if isinstance(m, dict) else None)
+                                    if content:
+                                        await websocket.send_json({"type": "planner_message", "content": content})
+                            elif node == "coder":
+                                await websocket.send_json({"type": "coder_progress", "data": str(update)[:500]})
+                            elif node == "executor":
+                                await websocket.send_json({"type": "executor_progress", "data": str(update)[:500]})
+                    elif kind == "custom":
+                        await websocket.send_json(data)
+            except Exception as e:
+                logger.exception(f"[V5 WS] graph error thread_id={thread_id}")
+                await websocket.send_json({"type": "error", "message": f"Graph error: {type(e).__name__}: {e}"})
+                continue
+
+            # Refresh state from checkpointer
+            try:
+                state = graph.get_state(config).values
+            except Exception:
+                pass
+
+            if state and state.get("phase") == "done":
+                await websocket.send_json({
+                    "type": "final_result",
+                    "status": state.get("last_status", ""),
+                    "summary": state.get("executor_summary_md", "") or state.get("coder_summary_md", ""),
+                })
+                break
+
+    except Exception:
+        logger.info(f"[V5 WS] disconnected thread_id={thread_id}")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
