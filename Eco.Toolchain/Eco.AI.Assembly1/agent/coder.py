@@ -291,3 +291,95 @@ def _compile_linux(c_files, include_dirs, work_path):
     if ar_result.returncode == 0:
         return f"OK: Library built: {lib_path}\n{out[-500:]}"
     return f"ERROR: ar failed (exit {ar_result.returncode}):\n{out[:2000]}"
+
+
+def build_coder_tools_v5(work_dir: str):
+    """V5 Coder toolset: existing file ops + download_component + done handoff."""
+    from langgraph.types import Command
+    from .tools import download_component
+
+    work_path = Path(work_dir)
+
+    @tool
+    def write_file(relative_path: str, content: str) -> str:
+        """Write a file relative to the project working directory."""
+        target = work_path / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return f"OK: Written {relative_path} ({len(content)} bytes)"
+
+    @tool
+    def read_file(relative_path: str) -> str:
+        """Read a file relative to the project working directory."""
+        target = work_path / relative_path
+        if not target.exists():
+            return f"ERROR: File not found: {relative_path}"
+        return target.read_text(encoding="utf-8")
+
+    @tool
+    def list_files() -> str:
+        """List all files under the project working directory."""
+        if not work_path.exists():
+            return "(empty)"
+        return "\n".join(sorted(str(p.relative_to(work_path)) for p in work_path.rglob("*") if p.is_file()))
+
+    @tool
+    def load_skill(language: str) -> str:
+        """Load component-development templates for a language ('c', 'cpp', 'asm')."""
+        skill_file = SKILLS_DIR / f"{language}.md"
+        if not skill_file.exists():
+            available = [f.stem for f in SKILLS_DIR.glob("*.md")]
+            return f"ERROR: No skill for '{language}'. Available: {available}"
+        return skill_file.read_text(encoding="utf-8")
+
+    @tool
+    def done(summary_md: str) -> Command:
+        """HANDOFF: all files written. Pass a Markdown summary of what was done."""
+        return Command(update={"coder_summary_md": summary_md, "phase": "executing"})
+
+    return [write_file, read_file, list_files, load_skill, download_component, done]
+
+
+CODER_SYSTEM_PROMPT_V5 = """\
+You are the EcoOS Coder. You receive an approved PRD and must produce all the
+files for the project: download SDK components listed under source: sdk or
+marketplace, write custom components from scratch (source: develop), and write
+the EcoMain.c that wires them together.
+
+Tools:
+- write_file(path, content)
+- read_file(path)
+- list_files()
+- load_skill(language)        — load C/C++ component templates BEFORE writing custom components.
+- download_component(name)    — pull from marketplace into DependenciesFiles/.
+- done(summary_md)            — HANDOFF when all files are in place. List what
+                                 you wrote/modified.
+
+If feedback is provided (retry loop), focus your edits on the listed files and
+errors. Do not redo work that succeeded.
+
+Always reply in the user's language for any human-facing summary.
+"""
+
+
+def create_coder_node_v5(llm):
+    """V5 Coder node — receives plan_md (and feedback_md on retries) via system prompt."""
+    from langgraph.prebuilt import create_react_agent
+
+    def coder_node(state):
+        work_dir = state.get("project_dir") or "output/_v5_default"
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+
+        tools = build_coder_tools_v5(work_dir)
+        ctx_lines = [CODER_SYSTEM_PROMPT_V5, "", "## Approved Plan", state["plan_md"]]
+        if state.get("feedback_md"):
+            ctx_lines += ["", "## Previous build/test feedback (you must address these)", state["feedback_md"]]
+        prompt = "\n".join(ctx_lines)
+
+        react = create_react_agent(llm, tools=tools, prompt=prompt)
+        seed = state["coder_messages"] or [{"role": "user", "content": "Implement the plan above."}]
+        result = react.invoke({"messages": seed})
+        new_msgs = result["messages"][len(seed):]
+        return {"coder_messages": new_msgs}
+
+    return coder_node
