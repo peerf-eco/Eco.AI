@@ -142,3 +142,53 @@ def test_parse_plan_handles_platform_with_spaces():
     result = parse_plan(md)
     assert result["platform"] == "Mac OS"
     assert result["output"] == "my app.exe"
+
+
+from agent.parsers import parse_feedback
+
+
+SAMPLE_FEEDBACK_BUILD = """\
+## Stage: build
+## Status: FAIL
+
+## Errors
+- src/EcoMain.c:42: error C2065: 'IEcoMath' undeclared identifier
+- src/EcoMain.c:55: error C2143: missing ';' before identifier
+
+## Suggested focus
+- Forgot #include "IEcoMath.h"
+"""
+
+SAMPLE_FEEDBACK_TEST = """\
+## Stage: test
+## Status: FAIL
+
+## Test failures
+- test_calc_add: expected 5, got 4
+- test_calc_sub: expected 2, got 0
+"""
+
+
+def test_parse_feedback_build_stage():
+    result = parse_feedback(SAMPLE_FEEDBACK_BUILD)
+    assert result["stage"] == "build"
+    assert result["status"] == "FAIL"
+    assert len(result["errors"]) == 2
+    assert result["errors"][0]["file"] == "src/EcoMain.c"
+    assert result["errors"][0]["line"] == 42
+    assert "C2065" in result["errors"][0]["message"]
+
+
+def test_parse_feedback_test_stage():
+    result = parse_feedback(SAMPLE_FEEDBACK_TEST)
+    assert result["stage"] == "test"
+    assert len(result["test_failures"]) == 2
+    assert result["test_failures"][0]["test"] == "test_calc_add"
+    assert "expected 5" in result["test_failures"][0]["message"]
+
+
+def test_parse_feedback_empty_input():
+    result = parse_feedback("")
+    assert result["errors"] == []
+    assert result["test_failures"] == []
+    assert result["stage"] == ""

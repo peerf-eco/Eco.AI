@@ -57,3 +57,55 @@ def parse_plan(plan_md: str) -> dict[str, Any]:
         "platform": platform,
         "output": output,
     }
+
+
+_STAGE_RE = re.compile(r"^##\s*Stage:\s*(?P<stage>\w+)\s*$", re.MULTILINE)
+_STATUS_RE = re.compile(r"^##\s*Status:\s*(?P<status>\w+)\s*$", re.MULTILINE)
+_ERROR_LINE_RE = re.compile(
+    r"^-\s*(?P<file>[^:]+):(?P<line>\d+):\s*(?P<message>.+?)$",
+    re.MULTILINE,
+)
+_TEST_FAIL_RE = re.compile(
+    r"^-\s*(?P<test>\w+):\s*(?P<message>.+?)$",
+    re.MULTILINE,
+)
+
+
+def parse_feedback(feedback_md: str) -> dict[str, Any]:
+    """Extract structured failure info from Executor's back_to_code Markdown."""
+    stage_match = _STAGE_RE.search(feedback_md)
+    stage = stage_match["stage"] if stage_match else ""
+
+    status_match = _STATUS_RE.search(feedback_md)
+    status = status_match["status"] if status_match else ""
+
+    errors_section = _section(feedback_md, "Errors")
+    errors = [
+        {"file": m["file"].strip(), "line": int(m["line"]), "message": m["message"].strip()}
+        for m in _ERROR_LINE_RE.finditer(errors_section)
+    ]
+
+    tests_section = _section(feedback_md, "Test failures")
+    test_failures = [
+        {"test": m["test"], "message": m["message"].strip()}
+        for m in _TEST_FAIL_RE.finditer(tests_section)
+    ]
+
+    return {
+        "stage": stage,
+        "status": status,
+        "errors": errors,
+        "test_failures": test_failures,
+    }
+
+
+def _section(md: str, heading: str) -> str:
+    """Return everything between '## <heading>' and the next '## ' heading (or EOF)."""
+    pattern = re.compile(rf"^##\s*{re.escape(heading)}\s*$", re.MULTILINE)
+    m = pattern.search(md)
+    if not m:
+        return ""
+    start = m.end()
+    next_h = re.search(r"^##\s+", md[start:], re.MULTILINE)
+    end = start + next_h.start() if next_h else len(md)
+    return md[start:end]
