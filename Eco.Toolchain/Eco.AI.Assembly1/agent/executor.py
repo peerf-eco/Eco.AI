@@ -3,8 +3,10 @@
 import json
 import logging
 from pathlib import Path
+from typing import Annotated
 
 from langchain_core.tools import tool
+from langchain_core.tools.base import InjectedToolCallId
 from langgraph.types import Command
 
 from .tools import build_makefile, run_tests
@@ -65,29 +67,47 @@ def build_executor_tools(project_dir: str, iteration: int, max_iterations: int):
         return f"{'OK' if passed else 'FAIL'}: {total - failed}/{total} tests passed"
 
     @tool
-    def success(summary_md: str) -> Command:
+    def success(summary_md: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
         """HANDOFF (success path): everything green. Pass a user-facing summary."""
-        return Command(update={"phase": "done", "last_status": "success", "executor_summary_md": summary_md})
+        from langchain_core.messages import ToolMessage
+        return Command(
+            graph=Command.PARENT,
+            update={
+                "phase": "done",
+                "last_status": "success",
+                "executor_summary_md": summary_md,
+                "executor_messages": [ToolMessage("Execution succeeded.", tool_call_id=tool_call_id)],
+            },
+        )
 
     @tool
-    def back_to_code(feedback_md: str) -> Command:
+    def back_to_code(feedback_md: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
         """HANDOFF (failure path): pass structured Markdown feedback to the Coder.
 
         If max_iterations is reached, this transitions to 'done' with status
         'max_iterations_reached' instead of looping back.
         """
+        from langchain_core.messages import ToolMessage
         next_iter = iteration + 1
         if next_iter > max_iterations:
-            return Command(update={
-                "phase": "done",
-                "last_status": "max_iterations_reached",
+            return Command(
+                graph=Command.PARENT,
+                update={
+                    "phase": "done",
+                    "last_status": "max_iterations_reached",
+                    "feedback_md": feedback_md,
+                    "executor_messages": [ToolMessage("Max iterations reached.", tool_call_id=tool_call_id)],
+                },
+            )
+        return Command(
+            graph=Command.PARENT,
+            update={
+                "phase": "coding",
+                "iteration": next_iter,
                 "feedback_md": feedback_md,
-            })
-        return Command(update={
-            "phase": "coding",
-            "iteration": next_iter,
-            "feedback_md": feedback_md,
-        })
+                "executor_messages": [ToolMessage(f"Build/test failed. Sending back to coder (iteration {next_iter}/{max_iterations}).", tool_call_id=tool_call_id)],
+            },
+        )
 
     # rename to match contract; ReAct discovers tools by .name
     run_tests_tool.name = "run_tests"

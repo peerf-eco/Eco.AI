@@ -295,6 +295,8 @@ def _compile_linux(c_files, include_dirs, work_path):
 
 def build_coder_tools_v5(work_dir: str):
     """V5 Coder toolset: existing file ops + download_component + done handoff."""
+    from typing import Annotated
+    from langchain_core.tools.base import InjectedToolCallId
     from langgraph.types import Command
     from .tools import download_component
 
@@ -333,9 +335,17 @@ def build_coder_tools_v5(work_dir: str):
         return skill_file.read_text(encoding="utf-8")
 
     @tool
-    def done(summary_md: str) -> Command:
+    def done(summary_md: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
         """HANDOFF: all files written. Pass a Markdown summary of what was done."""
-        return Command(update={"coder_summary_md": summary_md, "phase": "executing"})
+        from langchain_core.messages import ToolMessage
+        return Command(
+            graph=Command.PARENT,
+            update={
+                "coder_summary_md": summary_md,
+                "phase": "executing",
+                "coder_messages": [ToolMessage("Coder done. Handing off to executor.", tool_call_id=tool_call_id)],
+            },
+        )
 
     return [write_file, read_file, list_files, load_skill, download_component, done]
 

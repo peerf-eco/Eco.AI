@@ -12,7 +12,7 @@ def test_done_tool_returns_command_to_executing():
 
     tools = build_coder_tools_v5(work_dir="/tmp/whatever")
     done = next(t for t in tools if t.name == "done")
-    result = done.invoke({"summary_md": "wrote files"})
+    result = done.invoke({"args": {"summary_md": "wrote files"}, "name": "done", "type": "tool_call", "id": "test_call_id"})
     assert isinstance(result, Command)
     assert result.update["coder_summary_md"] == "wrote files"
     assert result.update["phase"] == "executing"

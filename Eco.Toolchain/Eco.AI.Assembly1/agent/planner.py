@@ -54,6 +54,7 @@ def build_planner_tools(llm):
         """HANDOFF: user approved the plan. Pass the FULL approved PRD as Markdown."""
         from langchain_core.messages import ToolMessage
         return Command(
+            graph=Command.PARENT,
             update={
                 "plan_md": plan_md,
                 "phase": "coding",
