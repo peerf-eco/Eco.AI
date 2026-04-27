@@ -21,10 +21,18 @@ def build_planner_tools(llm):
         Args:
             name: Component name like 'Eco.Math.C89'.
         """
-        matches = list(Path(SOURCE_DIR).glob(f"{name}_DK_v.*"))
-        if not matches:
-            return f"ERROR: Component '{name}' not found in local SDK."
-        dk = matches[0]
+        # Two valid layouts (mirrors list_all_components in tools.py):
+        # 1) Eco.<Name>_DK_v.<version>/  (most components)
+        # 2) Eco.<Name>/                 (plain dir, e.g. Eco.MemoryManager1)
+        dk_versioned = sorted(Path(SOURCE_DIR).glob(f"{name}_DK_v.*"), reverse=True)
+        if dk_versioned:
+            dk = dk_versioned[0]  # latest by lexical version sort
+        else:
+            plain = Path(SOURCE_DIR) / name
+            if plain.is_dir():
+                dk = plain
+            else:
+                return f"ERROR: Component '{name}' not found in local SDK."
         shared = dk / "SharedFiles"
         if not shared.exists():
             return f"ERROR: SharedFiles missing for '{name}'."
