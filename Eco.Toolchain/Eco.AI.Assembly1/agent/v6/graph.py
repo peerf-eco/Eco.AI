@@ -71,6 +71,7 @@ def create_v6_graph(
     # Fixed edges
     g.add_edge("planner", "plan_gate")
     g.add_edge("setup", "coder")
+    g.add_edge("coder", "builder")
 
     # Conditional edges
     g.add_conditional_edges(
