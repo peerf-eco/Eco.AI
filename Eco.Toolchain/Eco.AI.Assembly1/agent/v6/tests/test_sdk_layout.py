@@ -96,3 +96,40 @@ def test_list_excludes_cid_directories(sdk):
 def test_list_returns_sorted(sdk):
     names = list_component_roots(sdk)
     assert names == sorted(names)
+
+
+def test_resolve_picks_numerically_latest_version_not_lexicographic(tmp_path):
+    """Versions are compared as integer tuples, not strings.
+    `1.0.10.0` > `1.0.9.0` numerically but the reverse lexicographically.
+    A naive sort would silently return the older package."""
+    base = "Eco.X"
+    (tmp_path / f"{base}_DK_v.1.0.9.0" / base / "SharedFiles").mkdir(parents=True)
+    (tmp_path / f"{base}_DK_v.1.0.10.0" / base / "SharedFiles").mkdir(parents=True)
+    root = resolve_component_root(tmp_path, base)
+    assert root.parent.name == f"{base}_DK_v.1.0.10.0"
+
+
+def test_list_excludes_versioned_without_payload(tmp_path):
+    """A _DK_v. directory that has no SharedFiles/ or BuildFiles/ at either
+    level must NOT appear in the listing — the resolver would return None
+    for it, and the planner must not select a phantom component."""
+    empty = tmp_path / "Eco.Phantom_DK_v.1.0.0.0"
+    empty.mkdir()
+    # Also a real one to make sure the listing isn't just empty.
+    real = tmp_path / "Eco.Real_DK_v.1.0.0.0" / "Eco.Real"
+    (real / "SharedFiles").mkdir(parents=True)
+    names = list_component_roots(tmp_path)
+    assert "Eco.Phantom" not in names
+    assert "Eco.Real" in names
+
+
+def test_resolve_skips_empty_versioned_to_older_with_payload(tmp_path):
+    """If the latest versioned dir has no payload, fall back to an older one."""
+    base = "Eco.Y"
+    # newer but EMPTY
+    (tmp_path / f"{base}_DK_v.2.0.0.0").mkdir(parents=True)
+    # older WITH payload
+    (tmp_path / f"{base}_DK_v.1.0.0.0" / base / "SharedFiles").mkdir(parents=True)
+    root = resolve_component_root(tmp_path, base)
+    assert root is not None
+    assert root.parent.name == f"{base}_DK_v.1.0.0.0"

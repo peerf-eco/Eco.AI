@@ -24,7 +24,7 @@ import re
 from pathlib import Path
 
 _DK_RE = re.compile(r"^(?P<base>.+)_DK_v\.(?P<ver>\d+\.\d+\.\d+\.\d+)$")
-_CID_DIR_RE = re.compile(r"^[0-9A-F]{32}$")
+_CID_DIR_RE = re.compile(r"^[0-9A-Fa-f]{32}$")
 
 
 def _has_payload(p: Path) -> bool:
@@ -42,8 +42,7 @@ def resolve_component_root(sdk_root: Path, base_name: str,
       3. Flat: `<sdk_root>/<base>/`
 
     If `version` is supplied, only that version is considered for (1)/(2);
-    otherwise the highest-sorted version wins (lexicographic on the version string —
-    sufficient for N.N.N.N format).
+    otherwise the highest version wins, compared numerically per N.N.N.N segment.
     """
     if not Path(sdk_root).is_dir():
         return None
@@ -60,7 +59,9 @@ def resolve_component_root(sdk_root: Path, base_name: str,
             continue
         candidates.append((m.group("ver"), d))
 
-    for _ver, outer in sorted(candidates, key=lambda t: t[0], reverse=True):
+    for _ver, outer in sorted(candidates,
+                              key=lambda t: tuple(int(x) for x in t[0].split(".")),
+                              reverse=True):
         inner = outer / base_name
         if _has_payload(inner):
             return inner
@@ -92,7 +93,9 @@ def list_component_roots(sdk_root: Path) -> list[str]:
             continue
         m = _DK_RE.match(d.name)
         if m:
-            names.add(m.group("base"))
+            base = m.group("base")
+            if _has_payload(d / base) or _has_payload(d):
+                names.add(base)
             continue
         # Flat: name without _DK_v. — but verify it actually has a payload to
         # avoid surfacing random subdirs (Lessons/, tmp/, ...).
