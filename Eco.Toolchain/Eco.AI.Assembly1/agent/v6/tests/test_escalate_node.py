@@ -83,3 +83,36 @@ def test_escalate_reason_for_setup_no_tool_call():
     result = graph.invoke(state)
     payload = result["__interrupt__"][0].value
     assert payload["reason"] == "setup_no_tool_call"
+
+
+def test_derive_reason_prefers_last_status():
+    from agent.v6.nodes.escalate import _derive_reason
+    state = make_initial_v6_state("x")
+    state["last_status"] = "builder_retry_limit"
+    state["last_failure_origin"] = "builder"
+    assert _derive_reason(state) == "builder_retry_limit"
+
+
+def test_derive_reason_falls_back_to_origin_unknown():
+    from agent.v6.nodes.escalate import _derive_reason
+    state = make_initial_v6_state("x")
+    state["last_status"] = ""
+    state["last_failure_origin"] = "builder"
+    assert _derive_reason(state) == "builder_unknown"
+
+
+def test_derive_reason_falls_back_to_unknown_when_nothing_set():
+    from agent.v6.nodes.escalate import _derive_reason
+    state = make_initial_v6_state("x")
+    state["last_status"] = ""
+    state["last_failure_origin"] = ""
+    assert _derive_reason(state) == "unknown"
+
+
+def test_derive_reason_strips_whitespace_in_last_status():
+    """Defensive: accidental whitespace from string interpolation must not produce
+    a stray reason like ' builder_retry_limit '."""
+    from agent.v6.nodes.escalate import _derive_reason
+    state = make_initial_v6_state("x")
+    state["last_status"] = "  builder_retry_limit  "
+    assert _derive_reason(state) == "builder_retry_limit"

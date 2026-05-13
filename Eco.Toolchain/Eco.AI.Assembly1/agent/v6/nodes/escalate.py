@@ -31,7 +31,7 @@ def escalate_node(state: V6State) -> dict:
         "reason":           reason,
         "failure_origin":   state.get("last_failure_origin", ""),
         "retry_count":      state.get("retry_count", 0),
-        "max_retries":      state.get("max_retries", 0),
+        "max_retries":      state.get("max_retries", 3),
         "build_log":        state.get("build_log", ""),
         "tester_report_md": state.get("tester_report_md", ""),
         "plan_md":          state.get("plan_md", ""),
