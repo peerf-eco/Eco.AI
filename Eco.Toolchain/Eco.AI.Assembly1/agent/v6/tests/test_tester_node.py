@@ -57,3 +57,20 @@ def test_tester_node_fail_returns_to_coding(monkeypatch, project_dir):
     assert delta["retry_count"] == 1
     assert delta["last_failure_origin"] == "tester"
     assert "expected 5" in delta["tester_report_md"]
+
+
+def test_tester_no_tool_call_sets_failure_origin(tmp_path):
+    """Tester agent that emits a bare text reply (no tool_calls) must set
+    last_failure_origin='tester' so escalate_node can label the cause."""
+    from agent.v6.tests.conftest import ai_text
+
+    state = make_initial_v6_state("x")
+    state["build_artifact"] = str(tmp_path / "fake.exe")
+    state["plan_md"] = "## Acceptance criteria\n- prints sum"
+
+    llm = ScriptedChatModel(script=[ai_text("I have no opinion")])
+
+    out = tester_node(state, llm=llm, max_iters=2)
+    assert out["phase"] == "failed_escalated"
+    assert out["last_failure_origin"] == "tester"
+    assert out["last_status"] == "tester_no_tool_call"

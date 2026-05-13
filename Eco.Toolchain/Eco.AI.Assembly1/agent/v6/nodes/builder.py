@@ -49,6 +49,7 @@ def builder_node(
     if result.status != "done":
         return {
             "phase": "failed_escalated",
+            "last_failure_origin": "builder",
             "last_status": f"builder_{result.status}",
             "builder_messages": result.history,
         }

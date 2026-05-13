@@ -52,6 +52,7 @@ def tester_node(state: V6State, *, llm, max_iters: int = 10) -> dict:
     if result.status != "done":
         return {
             "phase": "failed_escalated",
+            "last_failure_origin": "tester",
             "last_status": f"tester_{result.status}",
             "tester_messages": result.history,
         }

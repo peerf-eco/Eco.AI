@@ -94,3 +94,21 @@ def test_builder_node_fail_at_max_retries_escalates(monkeypatch, project_dir):
     )
     assert delta["phase"] == "failed_escalated"
     assert delta["retry_count"] == 3
+
+
+def test_builder_no_tool_call_sets_failure_origin(project_dir):
+    """Builder agent that emits a bare text reply (no tool_calls) must set
+    last_failure_origin='builder' so escalate_node can label the cause."""
+    from agent.v6.tests.conftest import ai_text
+
+    state = make_initial_v6_state("x")
+    state["project_dir"] = str(project_dir)
+    state["coder_summary_md"] = "fake summary"
+
+    # First (and only) LLM reply has no tool_calls → status=no_tool_call.
+    llm = ScriptedChatModel(script=[ai_text("I don't know what to build")])
+
+    out = builder_node(state, llm=llm, vcvarsall=None, make_exe=None, max_iters=2)
+    assert out["phase"] == "failed_escalated"
+    assert out["last_failure_origin"] == "builder"
+    assert out["last_status"] == "builder_no_tool_call"
