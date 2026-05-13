@@ -28,8 +28,14 @@ def _truncate_value(v):
 
 
 def _safe_args(args: dict) -> dict:
+    """Run per-value truncation; fall back to a sentinel if the payload is
+    still too big or not JSON-serializable.
+
+    Two sentinel shapes the frontend may receive:
+      {"__truncated__": True,    "keys": [...]} — too large even after truncation
+      {"__unserializable__": True,"keys": [...]} — TypeError/ValueError on json.dumps
+    """
     truncated = {k: _truncate_value(v) for k, v in args.items()}
-    # If JSON-encoded payload still huge, drop args entirely with a sentinel.
     try:
         if len(json.dumps(truncated)) > _ARG_CAP * 2:
             return {"__truncated__": True, "keys": list(args.keys())}
@@ -39,10 +45,19 @@ def _safe_args(args: dict) -> dict:
 
 
 def event_to_dict(node: str, ev: EcoAgentEvent) -> dict:
-    """Convert an EcoAgentEvent to a JSON-safe dict for the custom channel."""
+    """Convert an EcoAgentEvent to a JSON-safe dict for the custom channel.
+
+    Three keys in `ev.data` can carry LLM-controlled payloads and are routed
+    through the truncation/safety filter:
+      - `args` — input to a tool call (TOOL_START)
+      - `payload` — output of a stop tool call (DONE), e.g. submit_plan's plan_md
+      - `details` — opaque tool result details (TOOL_END), often a dict
+    """
     data = dict(ev.data)
     if "args" in data and isinstance(data["args"], dict):
         data["args"] = _safe_args(data["args"])
+    if "payload" in data and isinstance(data["payload"], dict):
+        data["payload"] = _safe_args(data["payload"])
     if "details" in data and not isinstance(data.get("details"), (dict, type(None))):
         data["details"] = str(data["details"])
     return {

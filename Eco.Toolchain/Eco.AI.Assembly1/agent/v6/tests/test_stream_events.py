@@ -46,3 +46,43 @@ def test_make_on_event_no_writer_is_silent():
     """If writer is None (running outside a graph context), event is dropped."""
     on_ev = make_on_event("planner", writer=None)
     on_ev(EcoAgentEvent(type=EventType.ITERATION, data={"i": 0}))  # must not raise
+
+
+def test_event_to_dict_truncated_sentinel_fires_for_multiple_huge_args():
+    """Two large args whose combined post-truncation JSON still exceeds the
+    sentinel threshold (_ARG_CAP * 2 = 4000) collapse to the __truncated__
+    sentinel."""
+    big = "x" * 5000
+    ev = EcoAgentEvent(type=EventType.TOOL_START, data={
+        "name": "write_file",
+        "args": {"path": big, "content": big},
+    })
+    d = event_to_dict("coder", ev)
+    assert d["data"]["args"] == {"__truncated__": True, "keys": ["path", "content"]}
+
+
+def test_event_to_dict_unserializable_sentinel_fires_for_non_json_value():
+    """Non-JSON-serialisable arg values land in the __unserializable__ sentinel."""
+    class NotJsonable:
+        pass
+    ev = EcoAgentEvent(type=EventType.TOOL_START, data={
+        "name": "weird",
+        "args": {"obj": NotJsonable()},
+    })
+    d = event_to_dict("planner", ev)
+    assert d["data"]["args"] == {"__unserializable__": True, "keys": ["obj"]}
+
+
+def test_event_to_dict_truncates_done_payload_just_like_args():
+    """DONE events carry `payload` (stop-tool args). Must go through the same
+    safety filter — otherwise submit_plan's multi-KB plan_md hits the WS at
+    full size."""
+    big_plan = "# plan\n" + ("x" * 5000)
+    ev = EcoAgentEvent(type=EventType.DONE, data={
+        "stop_tool": "submit_plan",
+        "payload": {"plan_md": big_plan, "project_name": "Calc"},
+    })
+    d = event_to_dict("planner", ev)
+    # plan_md gets per-value truncation suffix; project_name passes through.
+    assert "...<+" in d["data"]["payload"]["plan_md"]
+    assert d["data"]["payload"]["project_name"] == "Calc"

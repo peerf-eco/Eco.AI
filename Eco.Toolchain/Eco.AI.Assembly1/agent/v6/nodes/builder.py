@@ -41,7 +41,8 @@ def builder_node(
     )
     try:
         writer = get_stream_writer()
-    except Exception:
+    except RuntimeError:
+        # No active LangGraph stream context (e.g. node called from a unit test).
         writer = None
     on_event = make_on_event("builder", writer)
     agent = EcoAgent(
