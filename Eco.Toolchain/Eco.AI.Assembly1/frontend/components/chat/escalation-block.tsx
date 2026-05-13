@@ -12,11 +12,38 @@ interface EscalationBlockProps {
   onDecision: (cont: boolean) => void;
 }
 
+const REASON_LABEL: Record<string, string> = {
+  planner_max_iters:    "Planner timed out",
+  planner_no_tool_call: "Planner gave no answer",
+  planner_error:        "Planner crashed",
+  setup_max_iters:      "Setup timed out",
+  setup_no_tool_call:   "Setup gave no answer",
+  setup_error:          "Setup crashed",
+  coder_max_iters:      "Coder timed out",
+  coder_no_tool_call:   "Coder gave no answer",
+  coder_error:          "Coder crashed",
+  builder_retry_limit:  "Builder hit retry ceiling",
+  builder_max_iters:    "Builder timed out",
+  builder_no_tool_call: "Builder gave no answer",
+  builder_error:        "Builder crashed",
+  tester_retry_limit:   "Tester hit retry ceiling",
+  tester_max_iters:     "Tester timed out",
+  tester_no_tool_call:  "Tester gave no answer",
+  tester_error:         "Tester crashed",
+};
+
+function headerText(reason: string, retryCount: number, maxRetries: number): { primary: string; secondary: string } {
+  const primary = REASON_LABEL[reason] || `Pipeline escalated: ${reason || "unknown"}`;
+  const isRetryLimit = reason.endsWith("_retry_limit");
+  const secondary = isRetryLimit && retryCount > 0
+    ? `${retryCount}/${maxRetries || retryCount} retries used`
+    : "First attempt";
+  return { primary, secondary };
+}
+
 export function EscalationBlock({ block, disabled, onDecision }: EscalationBlockProps) {
   const frozen = block.status !== null;
-  const failureLabel = block.failureOrigin
-    ? block.failureOrigin.charAt(0).toUpperCase() + block.failureOrigin.slice(1)
-    : "Unknown";
+  const { primary, secondary } = headerText(block.reason, block.retryCount, block.maxRetries);
 
   return (
     <motion.div
@@ -36,16 +63,14 @@ export function EscalationBlock({ block, disabled, onDecision }: EscalationBlock
         !frozen && "bg-yellow-500/10 text-yellow-300",
       )}>
         <AlertTriangle className="h-4 w-4" />
-        <span>Max retries reached</span>
-        <span className="ml-auto text-xs text-muted-foreground/80">
-          {failureLabel} failed × {block.retryCount}
-        </span>
+        <span>{primary}</span>
+        <span className="ml-auto text-xs text-muted-foreground/80">{secondary}</span>
       </div>
 
       <div className="p-4 space-y-3">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          The pipeline hit its retry budget. Review the diagnostics below and decide
-          whether to give the coder another attempt or stop the run.
+          The pipeline paused. Review the diagnostics below and decide whether
+          to retry from the coder or stop the run.
         </p>
 
         {block.buildLog && (
