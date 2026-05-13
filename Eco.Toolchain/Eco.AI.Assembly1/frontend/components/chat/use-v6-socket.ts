@@ -164,13 +164,15 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
         return;
       }
 
-      case "max_retry_escalation": {
+      case "escalation_required": {
         setIsProcessing(false);
         setMessages((prev) => appendBlock(prev, {
           id: newId("escalation"),
           type: "escalation",
+          reason: ev.reason || "unknown",
           failureOrigin: ev.failure_origin || "",
           retryCount: ev.retry_count || 0,
+          maxRetries: ev.max_retries || 0,
           buildLog: ev.build_log || "",
           testerReportMd: ev.tester_report_md || "",
           planMd: ev.plan_md || "",
@@ -192,6 +194,67 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
           buildArtifact: ev.build_artifact || "",
           testerReportMd: ev.tester_report_md || "",
         }));
+        // Terminal state — drop the thread_id so the next user_request creates
+        // a fresh thread. Backend graph would otherwise resume a "dead" thread
+        // after page reload and reply with stale interrupts.
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem(THREAD_ID_KEY);
+        }
+        setThreadId(null);
+        return;
+      }
+
+      case "node_event": {
+        if (ev.event === "tool_call_start") {
+          const name = (ev.data.name as string | undefined) ?? "";
+          if (!name) return;
+          const args = (ev.data.args as Record<string, unknown>) ?? {};
+          setMessages((prev) => appendBlock(prev, {
+            id: newId("toolcall"),
+            type: "tool_call",
+            node: ev.node,
+            toolName: name,
+            args,
+            status: "running",
+            startedAt: typeof performance !== "undefined" ? performance.now() : Date.now(),
+          }));
+          return;
+        }
+
+        if (ev.event === "tool_call_end") {
+          const name = (ev.data.name as string | undefined) ?? "";
+          const isError = Boolean(ev.data.is_error);
+          // Match the most-recent running ToolCallBlock with the same node + toolName.
+          setMessages((prev) => {
+            let matchedOnce = false;
+            const reversed = [...prev].reverse();
+            const updated = reversed.map((msg) => {
+              const blocksRev = [...msg.blocks].reverse().map((b) => {
+                if (matchedOnce) return b;
+                if (b.type === "tool_call"
+                    && b.status === "running"
+                    && b.node === ev.node
+                    && b.toolName === name) {
+                  matchedOnce = true;
+                  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+                  return {
+                    ...b,
+                    status: isError ? ("error" as const) : ("ok" as const),
+                    durationMs: Math.max(0, now - b.startedAt),
+                    output: ev.data.details ? JSON.stringify(ev.data.details).slice(0, 500) : undefined,
+                  };
+                }
+                return b;
+              }).reverse();
+              return { ...msg, blocks: blocksRev };
+            }).reverse();
+            return updated;
+          });
+          return;
+        }
+
+        // Other node_event kinds (iteration, start, done, no_tool_call, max_iters, error)
+        // are bookkeeping — surface in a later iteration; spec §6 deferred them.
         return;
       }
 
@@ -328,6 +391,10 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
       (b) => ({ ...(b as any), status: cont ? "continue" : "abort" }),
     ));
     send({ type: "escalation_decision", continue: cont });
+    if (!cont && typeof window !== "undefined") {
+      sessionStorage.removeItem(THREAD_ID_KEY);
+      setThreadId(null);
+    }
   }, [send]);
 
   const sendAbort = useCallback(() => {
