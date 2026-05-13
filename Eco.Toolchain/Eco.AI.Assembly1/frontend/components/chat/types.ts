@@ -89,6 +89,17 @@ export interface NodeDoneBlock extends BlockBase {
   reasonMd?: string;
 }
 
+export interface ToolCallBlock extends BlockBase {
+  type: "tool_call";
+  node: PipelineNode;
+  toolName: string;
+  args: Record<string, unknown>;
+  status: "running" | "ok" | "error";
+  output?: string;        // populated on tool_call_end if details has stringifiable shape
+  durationMs?: number;
+  startedAt: number;      // performance.now() / Date.now()
+}
+
 export interface FailBlock extends BlockBase {
   type: "build_fail" | "test_fail";
   message: string;       // error_md or reason_md, Markdown-ish
@@ -106,8 +117,10 @@ export interface PlanReviewBlock extends BlockBase {
 
 export interface EscalationBlock extends BlockBase {
   type: "escalation";
+  reason: string;
   failureOrigin: string;
   retryCount: number;
+  maxRetries: number;
   buildLog: string;
   testerReportMd: string;
   planMd: string;
@@ -131,6 +144,7 @@ export type Block =
   | TextBlock
   | PhaseHeaderBlock
   | NodeDoneBlock
+  | ToolCallBlock
   | FailBlock
   | PlanReviewBlock
   | EscalationBlock
@@ -201,10 +215,44 @@ export interface PlanReviewRequiredEvent extends ServerEventBase {
   project_name: string;
 }
 
-export interface MaxRetryEscalationEvent extends ServerEventBase {
-  type: "max_retry_escalation";
+export type NodeEventKind =
+  | "start"
+  | "tool_call_start"
+  | "tool_call_end"
+  | "tool_update"
+  | "iteration"
+  | "done"
+  | "no_tool_call"
+  | "max_iters"
+  | "error";
+
+export interface NodeEventEvent extends ServerEventBase {
+  type: "node_event";
+  node: PipelineNode;
+  event: NodeEventKind;
+  data: {
+    // tool_call_start
+    name?: string;
+    args?: Record<string, unknown>;
+    // tool_call_end
+    is_error?: boolean;
+    details?: Record<string, unknown> | null;
+    // iteration
+    i?: number;
+    // error / max_iters
+    reason?: string;
+    // stop_tool / payload (done)
+    stop_tool?: string;
+    payload?: Record<string, unknown>;
+  };
+}
+
+export interface EscalationRequiredEvent extends ServerEventBase {
+  type: "escalation_required";
+  reason: string;
   failure_origin: string;
   retry_count: number;
+  max_retries: number;
   build_log: string;
   tester_report_md: string;
   plan_md: string;
@@ -227,10 +275,11 @@ export type ServerEvent =
   | HeartbeatEvent
   | PhaseChangeEvent
   | NodeDoneEvent
+  | NodeEventEvent
   | BuildFailEvent
   | TestFailEvent
   | PlanReviewRequiredEvent
-  | MaxRetryEscalationEvent
+  | EscalationRequiredEvent
   | PipelineDoneEvent
   | ErrorEvent;
 
