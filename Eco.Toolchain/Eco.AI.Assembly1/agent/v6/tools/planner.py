@@ -30,8 +30,10 @@ def _read_component(args: ReadComponentArgs, sdk_root: Path) -> ToolResult:
         )
     shared = root / "SharedFiles"
     if not shared.exists():
+        has_build = (root / "BuildFiles").is_dir()
+        hint = " (build-only package: no public headers, only .lib/.a)" if has_build else ""
         return ToolResult(
-            content=f"{root.name}: no SharedFiles/ subdir under resolved root {root}",
+            content=f"{root.name}: no SharedFiles/ subdir under resolved root {root}{hint}",
             is_error=True,
         )
     parts = []

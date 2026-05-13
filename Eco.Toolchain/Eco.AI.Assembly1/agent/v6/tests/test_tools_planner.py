@@ -98,3 +98,17 @@ def test_submit_plan_is_stop_tool_schema():
     )
     assert args.project_name == "Calculator"
     assert args.components[0]["cid"] == "ABCD" * 8
+
+
+def test_read_component_buildfiles_only_returns_informative_error(tmp_path):
+    """A package found by the resolver via BuildFiles/ only (no SharedFiles/)
+    must yield an error that explicitly says 'build-only package' so the LLM
+    knows to skip header introspection and just declare the dependency."""
+    pkg = tmp_path / "Eco.BuildOnly_DK_v.1.0.0.0" / "Eco.BuildOnly"
+    (pkg / "BuildFiles" / "Linux" / "x86_64" / "StaticRelease").mkdir(parents=True)
+    tools = make_planner_tools(sdk_root=tmp_path)
+    r = next(t for t in tools if t.name == "read_component").execute(
+        ReadComponentArgs(name="Eco.BuildOnly")
+    )
+    assert r.is_error
+    assert "build-only" in r.content.lower()
