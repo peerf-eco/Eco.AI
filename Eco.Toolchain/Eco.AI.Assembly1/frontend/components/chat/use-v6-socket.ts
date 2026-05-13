@@ -24,6 +24,20 @@ function newId(prefix: string): string {
 
 const THREAD_ID_KEY = "ecov6.thread_id";
 
+// Tool output preview cap — collapsible cards in the chat show only the
+// first N chars; the full payload is available in dev tools / logs.
+const TOOL_OUTPUT_PREVIEW_CHARS = 500;
+
+function safeStringifyPreview(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  try {
+    return JSON.stringify(value).slice(0, TOOL_OUTPUT_PREVIEW_CHARS);
+  } catch {
+    // Circular refs, BigInt, etc. — never crash the chat UI for telemetry.
+    return "[unserializable]";
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Pure helpers — append/update blocks immutably inside the message list.
 // Same idea as mek-ai useChatStream.ts:30-65.
@@ -241,7 +255,7 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
                     ...b,
                     status: isError ? ("error" as const) : ("ok" as const),
                     durationMs: Math.max(0, now - b.startedAt),
-                    output: ev.data.details ? JSON.stringify(ev.data.details).slice(0, 500) : undefined,
+                    output: safeStringifyPreview(ev.data.details),
                   };
                 }
                 return b;
