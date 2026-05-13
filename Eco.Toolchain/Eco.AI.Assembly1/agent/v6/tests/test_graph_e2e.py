@@ -212,3 +212,47 @@ def test_max_retry_user_aborts(sdk_root, fake_paths, mock_subprocess, project_di
     list(graph.stream(Command(resume={"continue": False}), config))
     final = graph.get_state(config).values
     assert final["last_status"] == "user_aborted"
+
+
+def test_graph_emits_node_events_on_planner_run(tmp_path):
+    """A planner happy path must emit at least one node_event (tool_call_start)
+    on the LangGraph custom channel for the planner node."""
+    from agent.v6.graph import create_v6_graph
+    from agent.v6.state import make_initial_v6_state
+    from agent.v6.tests.conftest import ScriptedChatModel, ai_tool
+
+    sdk = tmp_path / "sdk"
+    (sdk / "Eco.Math.C89_DK_v.1.0.1.2" / "Eco.Math.C89" / "SharedFiles").mkdir(parents=True)
+    (sdk / "Eco.Math.C89_DK_v.1.0.1.2" / "Eco.Math.C89" / "SharedFiles" / "IEcoMath.h").write_text("/* */")
+
+    plan_payload = {
+        "project_name": "Calc",
+        "plan_md": "# plan\n## Acceptance criteria\n- prints 7",
+        "components": [{"cid": "A" * 32, "version": "1.0.1.2", "name": "Eco.Math.C89", "reason": "math"}],
+        "acceptance_criteria": ["stdout 7"],
+    }
+    llm = ScriptedChatModel(script=[
+        ai_tool("list_components", {}),
+        ai_tool("submit_plan", plan_payload, call_id="call_2"),
+    ])
+
+    graph = create_v6_graph(
+        llm, sdk_root=sdk, cli_path=None, vcvarsall=None, make_exe=None,
+    )
+    config = {"configurable": {"thread_id": "te1"}, "recursion_limit": 50}
+
+    events = []
+    for kind, data in graph.stream(
+        make_initial_v6_state("build a calc"),
+        config=config,
+        stream_mode=["custom"],
+    ):
+        if kind == "custom":
+            events.append(data)
+        if len(events) >= 10:
+            break
+
+    node_events = [e for e in events if isinstance(e, dict) and e.get("type") == "node_event"]
+    assert node_events, f"expected at least one node_event, got {events}"
+    assert any(e["node"] == "planner" for e in node_events)
+    assert any(e["event"] == "tool_call_start" for e in node_events)

@@ -7,6 +7,8 @@ from pathlib import Path
 from agent.v6.eco_agent import EcoAgent
 from agent.v6.tools.setup import make_setup_tools
 from agent.v6.state import V6State
+from langgraph.config import get_stream_writer
+from agent.v6.stream_events import make_on_event
 
 
 SETUP_SYSTEM_PROMPT = """\
@@ -71,12 +73,18 @@ def setup_node(state: V6State, *, llm, cli_path: Path | None,
         f"Project dir (already created): {project_dir}\n\n"
         "Pull each component, verify with list_dir, then call mark_setup_done."
     )
+    try:
+        writer = get_stream_writer()
+    except Exception:
+        writer = None
+    on_event = make_on_event("setup", writer)
     agent = EcoAgent(
         llm=llm,
         system_prompt=SETUP_SYSTEM_PROMPT,
         tools=tools,
         stop_tool="mark_setup_done",
         max_iters=max_iters,
+        on_event=on_event,
     )
     result = agent.run(seed)
 

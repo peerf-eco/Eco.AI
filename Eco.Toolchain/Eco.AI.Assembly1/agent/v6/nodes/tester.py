@@ -5,6 +5,8 @@ from pathlib import Path
 from agent.v6.eco_agent import EcoAgent
 from agent.v6.tools.tester import make_tester_tools
 from agent.v6.state import V6State
+from langgraph.config import get_stream_writer
+from agent.v6.stream_events import make_on_event
 
 
 TESTER_SYSTEM_PROMPT = """\
@@ -40,12 +42,18 @@ def tester_node(state: V6State, *, llm, max_iters: int = 10) -> dict:
     artifact = Path(state["build_artifact"])
     tools = make_tester_tools(build_artifact=artifact)
 
+    try:
+        writer = get_stream_writer()
+    except Exception:
+        writer = None
+    on_event = make_on_event("tester", writer)
     agent = EcoAgent(
         llm=llm,
         system_prompt=TESTER_SYSTEM_PROMPT,
         tools=tools,
         stop_tool=["report_test_pass", "report_test_fail"],
         max_iters=max_iters,
+        on_event=on_event,
     )
     result = agent.run(_build_tester_seed(state))
 

@@ -6,6 +6,8 @@ from pathlib import Path
 from agent.v6.eco_agent import EcoAgent
 from agent.v6.tools.planner import make_planner_tools
 from agent.v6.state import V6State
+from langgraph.config import get_stream_writer
+from agent.v6.stream_events import make_on_event
 
 
 PLANNER_SYSTEM_PROMPT = """\
@@ -37,12 +39,18 @@ def planner_node(state: V6State, *, llm, sdk_root: Path, max_iters: int = 30) ->
         Delta dict with phase, plan_md, components, project_name, or error status
     """
     tools = make_planner_tools(sdk_root=sdk_root)
+    try:
+        writer = get_stream_writer()
+    except Exception:
+        writer = None
+    on_event = make_on_event("planner", writer)
     agent = EcoAgent(
         llm=llm,
         system_prompt=PLANNER_SYSTEM_PROMPT,
         tools=tools,
         stop_tool="submit_plan",
         max_iters=max_iters,
+        on_event=on_event,
     )
     result = agent.run(state["user_request"])
 

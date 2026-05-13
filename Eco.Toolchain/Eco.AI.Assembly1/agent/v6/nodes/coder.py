@@ -4,6 +4,8 @@ from pathlib import Path
 from agent.v6.eco_agent import EcoAgent
 from agent.v6.tools.coder import make_coder_tools
 from agent.v6.state import V6State
+from langgraph.config import get_stream_writer
+from agent.v6.stream_events import make_on_event
 
 
 CODER_SYSTEM_PROMPT = """\
@@ -49,12 +51,18 @@ def coder_node(state: V6State, *, llm, max_iters: int = 50) -> dict:
     downloaded = [Path(p) for p in state.get("downloaded_paths", [])]
     tools = make_coder_tools(project_dir=project_dir, downloaded_paths=downloaded)
 
+    try:
+        writer = get_stream_writer()
+    except Exception:
+        writer = None
+    on_event = make_on_event("coder", writer)
     agent = EcoAgent(
         llm=llm,
         system_prompt=CODER_SYSTEM_PROMPT,
         tools=tools,
         stop_tool="mark_code_done",
         max_iters=max_iters,
+        on_event=on_event,
     )
     result = agent.run(_build_coder_seed(state))
 

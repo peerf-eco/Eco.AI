@@ -4,6 +4,8 @@ from pathlib import Path
 from agent.v6.eco_agent import EcoAgent
 from agent.v6.tools.builder import make_builder_tools
 from agent.v6.state import V6State
+from langgraph.config import get_stream_writer
+from agent.v6.stream_events import make_on_event
 
 
 BUILDER_SYSTEM_PROMPT = """\
@@ -37,12 +39,18 @@ def builder_node(
         f"Coder summary:\n{state.get('coder_summary_md', '')}\n\n"
         "Run the build, then report pass or fail."
     )
+    try:
+        writer = get_stream_writer()
+    except Exception:
+        writer = None
+    on_event = make_on_event("builder", writer)
     agent = EcoAgent(
         llm=llm,
         system_prompt=BUILDER_SYSTEM_PROMPT,
         tools=tools,
         stop_tool=["report_build_pass", "report_build_fail"],
         max_iters=max_iters,
+        on_event=on_event,
     )
     result = agent.run(seed)
 
