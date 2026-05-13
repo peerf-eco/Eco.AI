@@ -21,7 +21,7 @@ services:
       - "127.0.0.1:8100:8000"
     command: ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-  # Frontend (Next.js)
+  # Frontend (Next.js) — V6 only
   frontend:
     build:
       context: ./frontend

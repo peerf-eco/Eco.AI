@@ -1,7 +1,6 @@
 """V6 state schema — five-node pipeline."""
-from typing import Annotated, Literal
+from typing import Literal
 from typing_extensions import TypedDict
-from langgraph.graph.message import add_messages
 
 
 Phase = Literal[
@@ -19,11 +18,16 @@ Phase = Literal[
 class V6State(TypedDict):
     user_request: str
 
-    planner_messages: Annotated[list, add_messages]
-    setup_messages:   Annotated[list, add_messages]
-    coder_messages:   Annotated[list, add_messages]
-    builder_messages: Annotated[list, add_messages]
-    tester_messages:  Annotated[list, add_messages]
+    # Per-node histories. Each node returns its full history under its key,
+    # which REPLACES the previous value (default LangGraph reducer). DO NOT
+    # add `add_messages` here — per spec §5.4 each node's history lives
+    # inside the node and is reset on entry. Cross-retry accumulation would
+    # otherwise quadratically grow the checkpointer payload.
+    planner_messages: list
+    setup_messages:   list
+    coder_messages:   list
+    builder_messages: list
+    tester_messages:  list
 
     plan_md:          str
     components:       list[dict]
@@ -38,7 +42,7 @@ class V6State(TypedDict):
     phase:               Phase
     retry_count:         int
     max_retries:         int
-    last_failure_origin: Literal["", "builder", "tester"]
+    last_failure_origin: Literal["", "planner", "setup", "coder", "builder", "tester"]
     last_status:         str
 
 

@@ -383,12 +383,32 @@ def create_coder_node_v5(llm):
         tools = build_coder_tools_v5(work_dir)
         ctx_lines = [CODER_SYSTEM_PROMPT_V5, "", "## Approved Plan", state["plan_md"]]
         if state.get("feedback_md"):
-            ctx_lines += ["", "## Previous build/test feedback (you must address these)", state["feedback_md"]]
+            ctx_lines += ["", "## Previous build/test feedback (you MUST address these)", state["feedback_md"]]
         prompt = "\n".join(ctx_lines)
 
         react = create_react_agent(llm, tools=tools, prompt=prompt)
-        seed = state["coder_messages"] or [{"role": "user", "content": "Implement the plan above."}]
+
+        # IMPORTANT: always seed with a fresh user message. State.coder_messages
+        # accumulates across iterations and ends with a ToolMessage from a prior
+        # done() call, which confuses the LLM ("I already finished") and produces
+        # malformed message sequences that some providers reject with HTTP 400.
+        # The plan + feedback already live in the system prompt above.
+        iteration = state.get("iteration", 0)
+        if iteration > 0:
+            seed = [{
+                "role": "user",
+                "content": (
+                    "The previous build attempt failed. The feedback is in your system "
+                    "prompt under '## Previous build/test feedback'. Read it carefully, "
+                    "fix only the specific files mentioned, then call done(summary_md) "
+                    "once the fixes are written."
+                ),
+            }]
+        else:
+            seed = [{"role": "user", "content": "Implement the plan above. Use load_skill('c') first if you need EcoOS C component templates."}]
+
         result = react.invoke({"messages": seed})
+        # Return only the messages produced this iteration (avoid replaying previous loop).
         new_msgs = result["messages"][len(seed):]
         return {"coder_messages": new_msgs}
 

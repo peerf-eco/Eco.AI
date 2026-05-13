@@ -127,7 +127,10 @@ def create_executor_node(llm):
             + state.get("coder_summary_md", "")
         )
         react = create_react_agent(llm, tools=tools, prompt=ctx)
-        seed = state["executor_messages"] or [{"role": "user", "content": "Build and test the project."}]
+        # Always seed fresh — replaying prior executor_messages (which end with a
+        # ToolMessage from success/back_to_code) confuses some providers and
+        # produces malformed message sequences (HTTP 400).
+        seed = [{"role": "user", "content": "Build the project and run tests, then hand off via success() or back_to_code()."}]
         result = react.invoke({"messages": seed})
         new_msgs = result["messages"][len(seed):]
         return {"executor_messages": new_msgs}

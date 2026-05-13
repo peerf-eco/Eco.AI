@@ -518,19 +518,28 @@ async def v5_chat_endpoint(websocket: WebSocket):
     config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
     logger.info(f"[V5 WS] connected thread_id={thread_id}")
 
+    # Send heartbeat so frontend confirms the V5 endpoint is alive.
+    await websocket.send_json({"type": "heartbeat", "version": "v5"})
+
     state = None
     try:
         while True:
             raw = await websocket.receive_text()
+            logger.info(f"[V5 WS] recv raw={raw[:200]}")
             try:
                 payload = json.loads(raw)
             except json.JSONDecodeError:
-                await websocket.send_json({"type": "error", "message": "Invalid JSON"})
+                await websocket.send_json({"type": "error", "content": "Invalid JSON"})
                 continue
 
-            user_msg = payload.get("content", "")
+            # Accept both keys — frontend uses "message", spec uses "content".
+            user_msg = payload.get("content") or payload.get("message") or ""
             if not user_msg:
-                await websocket.send_json({"type": "error", "message": "Missing 'content' field"})
+                # PRD-approve / PRD-reject coming from V4 UI? Just ignore — V5 has no PRD-modal.
+                if payload.get("type") in ("prd_approve", "prd_reject"):
+                    logger.info(f"[V5 WS] ignored V4-style {payload.get('type')} (V5 uses inline approve)")
+                    continue
+                await websocket.send_json({"type": "error", "content": f"Missing 'message'/'content' field in payload: {raw[:100]}"})
                 continue
 
             if state is None:
@@ -548,18 +557,56 @@ async def v5_chat_endpoint(websocket: WebSocket):
                                 await websocket.send_json({"type": "phase_change", "phase": update["phase"]})
                             if node == "planner" and isinstance(update, dict) and "planner_messages" in update:
                                 for m in update["planner_messages"]:
-                                    content = getattr(m, "content", None) or (m.get("content") if isinstance(m, dict) else None)
-                                    if content:
+                                    # Only forward the LLM's user-facing narration.
+                                    # Skip ToolMessage (raw tool output — clutters chat with header dumps etc.).
+                                    msg_class = type(m).__name__
+                                    if msg_class in ("ToolMessage", "HumanMessage"):
+                                        continue
+                                    content = getattr(m, "content", "") or ""
+                                    if not isinstance(content, str):
+                                        # Some LLMs return content as a list of blocks; flatten to text.
+                                        try:
+                                            content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
+                                        except Exception:
+                                            content = str(content)
+                                    if content.strip():
                                         await websocket.send_json({"type": "planner_message", "content": content})
                             elif node == "coder":
-                                await websocket.send_json({"type": "coder_progress", "data": str(update)[:500]})
+                                # Send a human-readable progress line instead of raw dict.
+                                summary = update.get("coder_summary_md") if isinstance(update, dict) else None
+                                if summary:
+                                    await websocket.send_json({"type": "coder_progress", "data": f"Coder finished. Summary:\n\n{summary[:1500]}"})
+                                else:
+                                    # Stream individual coder AIMessages (file-write announcements, reasoning).
+                                    for m in (update.get("coder_messages", []) if isinstance(update, dict) else []):
+                                        if type(m).__name__ in ("ToolMessage", "HumanMessage"):
+                                            continue
+                                        content = getattr(m, "content", "") or ""
+                                        if isinstance(content, list):
+                                            content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
+                                        if content.strip():
+                                            await websocket.send_json({"type": "coder_progress", "data": content[:1500]})
                             elif node == "executor":
-                                await websocket.send_json({"type": "executor_progress", "data": str(update)[:500]})
+                                fb = update.get("feedback_md") if isinstance(update, dict) else None
+                                exec_summary = update.get("executor_summary_md") if isinstance(update, dict) else None
+                                if exec_summary:
+                                    await websocket.send_json({"type": "executor_progress", "data": f"✓ Build & tests succeeded:\n\n{exec_summary[:1500]}"})
+                                elif fb:
+                                    await websocket.send_json({"type": "executor_progress", "data": f"✗ Build/test failed, returning to coder:\n\n{fb[:1500]}"})
+                                else:
+                                    for m in (update.get("executor_messages", []) if isinstance(update, dict) else []):
+                                        if type(m).__name__ in ("ToolMessage", "HumanMessage"):
+                                            continue
+                                        content = getattr(m, "content", "") or ""
+                                        if isinstance(content, list):
+                                            content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
+                                        if content.strip():
+                                            await websocket.send_json({"type": "executor_progress", "data": content[:1500]})
                     elif kind == "custom":
                         await websocket.send_json(data)
             except Exception as e:
                 logger.exception(f"[V5 WS] graph error thread_id={thread_id}")
-                await websocket.send_json({"type": "error", "message": f"Graph error: {type(e).__name__}: {e}"})
+                await websocket.send_json({"type": "error", "content": f"Graph error: {type(e).__name__}: {e}"})
                 continue
 
             # Refresh state from checkpointer
@@ -576,8 +623,289 @@ async def v5_chat_endpoint(websocket: WebSocket):
                 })
                 break
 
+    except WebSocketDisconnect:
+        logger.info(f"[V5 WS] client disconnected thread_id={thread_id}")
     except Exception:
-        logger.info(f"[V5 WS] disconnected thread_id={thread_id}")
+        logger.exception(f"[V5 WS] handler crashed thread_id={thread_id}")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V6 WEBSOCKET — five-node pipeline (planner → plan_gate → setup → coder → builder → tester)
+# Spec: docs/superpowers/specs/2026-05-13-v6-pipeline-design.md §9
+#
+# Client → server messages:
+#   {"type": "user_request", "user_request": "...", "project_dir"?: "...", "max_retries"?: 3}
+#   {"type": "plan_decision", "approved": true|false, "modified_plan_md"?: "...", "reason"?: "..."}
+#   {"type": "escalation_decision", "continue": true|false}
+#   {"type": "abort"}
+#
+# Server → client events:
+#   {"type": "heartbeat", "version": "v6", "thread_id": "..."}
+#   {"type": "phase_change", "phase": "...", "node": "..."}
+#   {"type": "node_done", "node": "planner|setup|coder|builder|tester", ...}
+#   {"type": "build_fail", "error_md": "...", "retry_count": N}
+#   {"type": "test_fail", "reason_md": "...", "retry_count": N}
+#   {"type": "plan_review_required", "plan_md": "...", "components": [...], "project_name": "..."}
+#   {"type": "max_retry_escalation", "failure_origin": "...", "build_log": "...", ...}
+#   {"type": "pipeline_done", "status": "success|user_aborted|...", "build_artifact"?, "tester_report_md"?}
+#   {"type": "error", "content": "..."}
+# ═══════════════════════════════════════════════════════════════════════════
+
+# V6 checkpointer is shared across reconnects so that a client that sends
+# ?thread_id=<existing> can resume a paused graph after page reload.
+_v6_checkpointer = None
+
+
+def _get_v6_checkpointer():
+    global _v6_checkpointer
+    if _v6_checkpointer is None:
+        from langgraph.checkpoint.memory import MemorySaver
+        _v6_checkpointer = MemorySaver()
+    return _v6_checkpointer
+
+
+@app.websocket("/ws/v6/chat")
+async def v6_chat_endpoint(websocket: WebSocket):
+    await websocket.accept()
+
+    # Lazy imports — keeps startup light if V6 layer is in flux.
+    from agent.v6.graph import create_v6_graph
+    from agent.v6.state import make_initial_v6_state
+    from langgraph.types import Command
+
+    try:
+        from agent.main import get_llm as _get_llm
+        llm = _get_llm()
+    except Exception:
+        llm = ChatOpenAI(
+            model=os.getenv("LLM_MODEL", "moonshotai/kimi-k2-thinking"),
+            temperature=0,
+            openai_api_key=os.environ["OPENAI_API_KEY"],
+            openai_api_base=os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1"),
+            timeout=30,
+            max_retries=2,
+        )
+
+    # Platform-dependent toolchain defaults. Override any via env.
+    _is_windows = sys.platform == "win32"
+    sdk_root  = Path(os.getenv("V6_SDK_ROOT", "source"))
+    if _is_windows:
+        cli_path: Path | None = Path(os.getenv("V6_CLI_PATH", "eco.sli/eco-cli.exe"))
+        vcvarsall: Path | None = Path(os.getenv("V6_VCVARSALL",
+            r"C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvarsall.bat"))
+        make_exe = Path(os.getenv("V6_MAKE_EXE", r"C:/Users/gaevy/gcc/bin/make.exe"))
+    else:
+        # Linux/macOS: eco-cli is Windows-only — fall back to copying SDK
+        # packages directly from sdk_root (mounted read-only in Docker).
+        cli_path = None
+        vcvarsall = None
+        make_exe = Path(os.getenv("V6_MAKE_EXE", "make"))
+
+    graph = create_v6_graph(
+        llm,
+        sdk_root=sdk_root,
+        cli_path=cli_path,
+        vcvarsall=vcvarsall,
+        make_exe=make_exe,
+        checkpointer=_get_v6_checkpointer(),
+    )
+
+    # Allow client to resume an existing thread via ?thread_id=<uuid>. If
+    # absent or empty, generate a fresh one. The shared checkpointer keeps
+    # paused graph state between reconnects.
+    requested_tid = websocket.query_params.get("thread_id", "").strip()
+    thread_id = requested_tid or str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 200}
+    logger.info(f"[V6 WS] connected thread_id={thread_id} (resumed={bool(requested_tid)})")
+    await websocket.send_json({"type": "heartbeat", "version": "v6", "thread_id": thread_id})
+
+    # On resume: replay current pending interrupts so client UI can re-render.
+    try:
+        snapshot = graph.get_state(config)
+        if snapshot.next:
+            for task in snapshot.tasks:
+                for interrupt_obj in (task.interrupts or ()):
+                    value = interrupt_obj.value or {}
+                    if task.name == "plan_gate":
+                        await websocket.send_json({
+                            "type": "plan_review_required",
+                            "plan_md":      value.get("plan_md", ""),
+                            "components":   value.get("components", []),
+                            "project_name": value.get("project_name", ""),
+                        })
+                    elif task.name == "escalate":
+                        await websocket.send_json({
+                            "type": "max_retry_escalation",
+                            "failure_origin":   value.get("failure_origin", ""),
+                            "retry_count":      value.get("retry_count", 0),
+                            "build_log":        value.get("build_log", "")[:4000],
+                            "tester_report_md": value.get("tester_report_md", "")[:4000],
+                            "plan_md":          value.get("plan_md", ""),
+                            "coder_summary_md": value.get("coder_summary_md", "")[:2000],
+                        })
+    except Exception:
+        logger.exception(f"[V6 WS] resume replay failed thread_id={thread_id}")
+
+    last_phase: str | None = None
+
+    async def emit_updates(updates_dict: dict):
+        """Translate a LangGraph node update into typed WS events."""
+        nonlocal last_phase
+        for node, update in updates_dict.items():
+            if not isinstance(update, dict):
+                continue
+            phase = update.get("phase")
+            if phase and phase != last_phase:
+                await websocket.send_json({"type": "phase_change", "phase": phase, "node": node})
+                last_phase = phase
+            if node == "planner" and "plan_md" in update:
+                await websocket.send_json({
+                    "type": "node_done", "node": "planner",
+                    "project_name": update.get("project_name", ""),
+                    "components_count": len(update.get("components", [])),
+                })
+            elif node == "setup" and "downloaded_paths" in update:
+                await websocket.send_json({
+                    "type": "node_done", "node": "setup",
+                    "downloaded_paths": update["downloaded_paths"],
+                })
+            elif node == "coder" and "coder_summary_md" in update:
+                await websocket.send_json({
+                    "type": "node_done", "node": "coder",
+                    "summary_md": update["coder_summary_md"][:2000],
+                })
+            elif node == "builder":
+                if "build_artifact" in update:
+                    await websocket.send_json({
+                        "type": "node_done", "node": "builder",
+                        "build_artifact": update["build_artifact"],
+                    })
+                elif "build_log" in update:
+                    await websocket.send_json({
+                        "type": "build_fail",
+                        "error_md": update["build_log"][:4000],
+                        "retry_count": update.get("retry_count", 0),
+                    })
+            elif node == "tester":
+                if update.get("last_status") == "success":
+                    await websocket.send_json({
+                        "type": "node_done", "node": "tester",
+                        "reason_md": update.get("tester_report_md", "")[:2000],
+                    })
+                elif "tester_report_md" in update:
+                    await websocket.send_json({
+                        "type": "test_fail",
+                        "reason_md": update["tester_report_md"][:4000],
+                        "retry_count": update.get("retry_count", 0),
+                    })
+
+    async def handle_pending_interrupts() -> bool:
+        """If the graph paused on an interrupt, emit the matching event.
+
+        Returns True if an interrupt was emitted (client should respond),
+        False if the run reached END.
+        """
+        snapshot = graph.get_state(config)
+        pending_nodes = snapshot.next or ()
+        if not pending_nodes:
+            return False
+        for task in snapshot.tasks:
+            for interrupt_obj in (task.interrupts or ()):
+                value = interrupt_obj.value or {}
+                if task.name == "plan_gate":
+                    await websocket.send_json({
+                        "type": "plan_review_required",
+                        "plan_md":      value.get("plan_md", ""),
+                        "components":   value.get("components", []),
+                        "project_name": value.get("project_name", ""),
+                    })
+                elif task.name == "escalate":
+                    await websocket.send_json({
+                        "type": "max_retry_escalation",
+                        "failure_origin":   value.get("failure_origin", ""),
+                        "retry_count":      value.get("retry_count", 0),
+                        "build_log":        value.get("build_log", "")[:4000],
+                        "tester_report_md": value.get("tester_report_md", "")[:4000],
+                        "plan_md":          value.get("plan_md", ""),
+                        "coder_summary_md": value.get("coder_summary_md", "")[:2000],
+                    })
+        return True
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "content": "Invalid JSON"})
+                continue
+
+            msg_type = payload.get("type", "user_request")
+
+            if msg_type == "abort":
+                await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
+                break
+            elif msg_type == "plan_decision":
+                resume_val = {"approved": bool(payload.get("approved", False))}
+                if payload.get("modified_plan_md"):
+                    resume_val["modified_plan_md"] = payload["modified_plan_md"]
+                if payload.get("reason"):
+                    resume_val["reason"] = payload["reason"]
+                graph_input = Command(resume=resume_val)
+            elif msg_type == "escalation_decision":
+                graph_input = Command(resume={"continue": bool(payload.get("continue", False))})
+            else:  # user_request (also accepts plain "message"/"content" for compat)
+                user_req = (payload.get("user_request")
+                            or payload.get("message")
+                            or payload.get("content") or "")
+                if not user_req:
+                    await websocket.send_json({"type": "error", "content": "Missing user_request"})
+                    continue
+                initial = make_initial_v6_state(
+                    user_req,
+                    max_retries=int(payload.get("max_retries", 3)),
+                )
+                if payload.get("project_dir"):
+                    initial["project_dir"] = payload["project_dir"]
+                graph_input = initial
+
+            try:
+                async for kind, data in graph.astream(
+                    graph_input, config=config, stream_mode=["updates", "custom"]
+                ):
+                    if kind == "updates":
+                        await emit_updates(data)
+                    elif kind == "custom":
+                        await websocket.send_json(data)
+            except Exception as e:
+                logger.exception(f"[V6 WS] graph error thread_id={thread_id}")
+                await websocket.send_json({
+                    "type": "error",
+                    "content": f"Graph error: {type(e).__name__}: {e}",
+                })
+                continue
+
+            if await handle_pending_interrupts():
+                # Wait for client decision in next loop iteration.
+                continue
+
+            snapshot_values = graph.get_state(config).values
+            await websocket.send_json({
+                "type": "pipeline_done",
+                "status":           snapshot_values.get("last_status", "unknown"),
+                "build_artifact":   snapshot_values.get("build_artifact", ""),
+                "tester_report_md": snapshot_values.get("tester_report_md", ""),
+            })
+            break
+
+    except WebSocketDisconnect:
+        logger.info(f"[V6 WS] disconnected thread_id={thread_id}")
+    except Exception:
+        logger.exception(f"[V6 WS] handler crashed thread_id={thread_id}")
         try:
             await websocket.close()
         except Exception:

@@ -22,7 +22,8 @@ list of verified directories. If any pull or verification fails, do NOT mark \
 done — the loop will exit with max_iters and escalate."""
 
 
-def setup_node(state: V6State, *, llm, cli_path: Path, max_iters: int = 30) -> dict:
+def setup_node(state: V6State, *, llm, cli_path: Path | None,
+               sdk_root: Path | None = None, max_iters: int = 30) -> dict:
     """Run the setup agent.
 
     Args:
@@ -42,6 +43,7 @@ def setup_node(state: V6State, *, llm, cli_path: Path, max_iters: int = 30) -> d
         cli_path=cli_path,
         project_dir=project_dir,
         allowed_components=state["components"],
+        sdk_root=sdk_root,
     )
     seed = (
         f"Plan:\n{state['plan_md']}\n\n"
@@ -68,6 +70,7 @@ def setup_node(state: V6State, *, llm, cli_path: Path, max_iters: int = 30) -> d
     # max_iters or no_tool_call or error
     return {
         "phase": "failed_escalated",
+        "last_failure_origin": "setup",
         "last_status": f"setup_{result.status}",
         "setup_messages": result.history,
     }

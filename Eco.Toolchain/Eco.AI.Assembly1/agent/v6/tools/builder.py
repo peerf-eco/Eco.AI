@@ -1,11 +1,24 @@
-"""BUILDER tools — run_make + report_build_pass/fail."""
+"""BUILDER tools — run_make + report_build_pass/fail.
+
+Cross-platform:
+- Windows: spawn `cmd.exe /c "vcvarsall.bat x64 && make <target>"`.
+- Linux/macOS: spawn `make <target>` directly (assumes gcc + make on PATH).
+The build itself is identical because the SDK Makefile already supports gcc
+(see memory: "Linux: gcc + ar argv (PR #10)").
+"""
 from __future__ import annotations
 import os
+import re
 import subprocess
+import sys
 from pathlib import Path
 from pydantic import BaseModel, Field
 from agent.v6.eco_agent import EcoTool, ToolResult
 from agent.v6.tools.common import ensure_inside
+
+
+_MAKE_TARGET_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,40}$")
+_IS_WINDOWS = sys.platform == "win32"
 
 
 class RunMakeArgs(BaseModel):
@@ -28,14 +41,29 @@ class ReportBuildFailArgs(BaseModel):
     error_md: str = Field(..., description="Markdown summary of the key error(s) — NOT raw log")
 
 
-def _run_make(args: RunMakeArgs, project_dir: Path, vcvarsall: Path, make_exe: Path) -> ToolResult:
-    cmd_line = f'"{vcvarsall}" x64 && "{make_exe}" {args.target}'
+def _run_make(args: RunMakeArgs, project_dir: Path, vcvarsall: Path | None, make_exe: Path) -> ToolResult:
+    if not _MAKE_TARGET_RE.match(args.target):
+        return ToolResult(
+            content=f"invalid make target: {args.target!r} (allowed: ^[A-Za-z0-9_.-]{{1,40}}$)",
+            is_error=True,
+        )
     env = dict(os.environ)
-    env["MSYS_NO_PATHCONV"] = "1"
-    env["MSYS2_ARG_CONV_EXCL"] = "*"
+    if _IS_WINDOWS:
+        if vcvarsall is None:
+            return ToolResult(
+                content="run_make: vcvarsall path is required on Windows",
+                is_error=True,
+            )
+        env["MSYS_NO_PATHCONV"] = "1"
+        env["MSYS2_ARG_CONV_EXCL"] = "*"
+        cmd_line = f'"{vcvarsall}" x64 && "{make_exe}" {args.target}'
+        cmd: list[str] = ["cmd.exe", "/c", cmd_line]
+    else:
+        # Linux/macOS: gcc + make are on PATH (or make_exe is an absolute path).
+        cmd = [str(make_exe), args.target]
     try:
         proc = subprocess.run(
-            ["cmd.exe", "/c", cmd_line],
+            cmd,
             cwd=str(project_dir),
             env=env,
             shell=False,
@@ -45,6 +73,8 @@ def _run_make(args: RunMakeArgs, project_dir: Path, vcvarsall: Path, make_exe: P
         )
     except subprocess.TimeoutExpired:
         return ToolResult(content="build timed out after 300s", is_error=True)
+    except FileNotFoundError as e:
+        return ToolResult(content=f"build tool not found: {e}", is_error=True)
     out = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
     if proc.returncode != 0:
         return ToolResult(content=f"build failed (exit {proc.returncode}):\n{out}",
@@ -71,7 +101,7 @@ def _list_dir(args: ListDirArgs, project_dir: Path) -> ToolResult:
     return ToolResult(content="\n".join(sorted(e.name for e in p.iterdir())))
 
 
-def make_builder_tools(*, project_dir: Path, vcvarsall: Path, make_exe: Path) -> list[EcoTool]:
+def make_builder_tools(*, project_dir: Path, vcvarsall: Path | None, make_exe: Path) -> list[EcoTool]:
     return [
         EcoTool("run_make", "Build the project: vcvarsall.bat x64 && make <target>.",
                 RunMakeArgs, lambda a: _run_make(a, project_dir, vcvarsall, make_exe)),

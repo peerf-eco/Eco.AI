@@ -72,3 +72,6 @@ def tester_node(state: V6State, *, llm, max_iters: int = 10) -> dict:
         "phase": "failed_escalated" if new_retry >= state.get("max_retries", 3) else "coding",
         "tester_messages": result.history,
     }
+
+
+tester_node.__test__ = False  # don't let pytest collect this as a test function

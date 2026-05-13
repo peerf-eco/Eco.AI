@@ -66,6 +66,7 @@ def coder_node(state: V6State, *, llm, max_iters: int = 50) -> dict:
         }
     return {
         "phase": "failed_escalated",
+        "last_failure_origin": "coder",
         "last_status": f"coder_{result.status}",
         "coder_messages": result.history,
     }

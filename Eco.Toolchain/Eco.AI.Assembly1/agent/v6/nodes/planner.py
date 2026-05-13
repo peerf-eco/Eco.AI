@@ -57,6 +57,7 @@ def planner_node(state: V6State, *, llm, sdk_root: Path, max_iters: int = 30) ->
     # max_iters or no_tool_call or error
     return {
         "phase": "failed_escalated",
+        "last_failure_origin": "planner",
         "last_status": f"planner_{result.status}",
         "planner_messages": result.history,
     }

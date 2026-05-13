@@ -219,11 +219,16 @@ def main():
     print()
 
     try:
-        # Удаляем старую базу если есть
+        # Очищаем содержимое старой БД, но сохраняем директорию
+        # (она может быть Docker volume mount-point — rmdir вернёт EBUSY)
         if Path(CHROMA_DB).exists():
             import shutil
-            print(f"[INFO] Removing old ChromaDB at: {CHROMA_DB}")
-            shutil.rmtree(CHROMA_DB)
+            print(f"[INFO] Clearing contents of existing ChromaDB at: {CHROMA_DB}")
+            for entry in Path(CHROMA_DB).iterdir():
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
         
         # Создаем новую базу
         vectorstore = Chroma.from_documents(

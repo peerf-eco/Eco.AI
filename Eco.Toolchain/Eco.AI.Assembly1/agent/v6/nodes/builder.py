@@ -23,7 +23,7 @@ def builder_node(
     state: V6State,
     *,
     llm,
-    vcvarsall: Path,
+    vcvarsall: Path | None,
     make_exe: Path,
     max_iters: int = 15,
 ) -> dict:

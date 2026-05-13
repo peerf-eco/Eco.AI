@@ -2,6 +2,7 @@
 import subprocess
 from pathlib import Path
 import pytest
+from agent.v6.tools import setup as setup_mod
 from agent.v6.tools.setup import (
     make_setup_tools, EcoosPullArgs, ListDirArgs, ReadFileArgs, MarkSetupDoneArgs,
 )
@@ -9,7 +10,8 @@ from agent.v6.tools.setup import (
 
 @pytest.fixture
 def fake_cli(tmp_path: Path, monkeypatch):
-    """Mock eco-cli binary path + subprocess.run."""
+    """Mock eco-cli binary path + subprocess.run; force Windows pathway."""
+    monkeypatch.setattr(setup_mod, "_IS_WINDOWS", True)
     cli = tmp_path / "eco-cli.exe"
     cli.write_text("")  # only needs to exist
     captured = {"calls": []}
@@ -78,3 +80,67 @@ def test_list_dir_rejects_outside(project_dir, fake_cli, tmp_path):
 def test_mark_setup_done_args():
     args = MarkSetupDoneArgs(downloaded_paths=["/path/a", "/path/b"])
     assert args.downloaded_paths == ["/path/a", "/path/b"]
+
+
+# ── Linux pathway — eco-cli absent, copy from sdk_root ─────────────────────
+
+def test_ecoos_pull_linux_copies_from_sdk_root(tmp_path, project_dir, monkeypatch):
+    """On non-Windows, ecoos_pull copies the SDK package from sdk_root."""
+    monkeypatch.setattr(setup_mod, "_IS_WINDOWS", False)
+    # subprocess.run must NOT be called on the Linux path.
+    def fake_run(*a, **kw):
+        raise AssertionError("subprocess.run must not be invoked on Linux pathway")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    sdk = tmp_path / "sdk"
+    pkg = sdk / "Eco.X_DK_v.1.0.1.2" / "SharedFiles"
+    pkg.mkdir(parents=True)
+    (pkg / "IEcoX.h").write_text("/* x */")
+
+    tools = make_setup_tools(
+        cli_path=None,
+        project_dir=project_dir,
+        allowed_components=[{"cid": "A"*32, "version": "1.0.1.2", "name": "Eco.X"}],
+        sdk_root=sdk,
+    )
+    r = next(t for t in tools if t.name == "ecoos_pull").execute(
+        EcoosPullArgs(cid="A"*32, version="1.0.1.2")
+    )
+    assert not r.is_error, r.content
+    copied = project_dir / "Eco.X_DK_v.1.0.1.2" / "SharedFiles" / "IEcoX.h"
+    assert copied.exists()
+    assert copied.read_text() == "/* x */"
+
+
+def test_ecoos_pull_linux_missing_package(tmp_path, project_dir, monkeypatch):
+    """Linux pathway reports a clear error if the SDK mirror has no matching dir."""
+    monkeypatch.setattr(setup_mod, "_IS_WINDOWS", False)
+    sdk = tmp_path / "sdk"
+    sdk.mkdir()
+    tools = make_setup_tools(
+        cli_path=None,
+        project_dir=project_dir,
+        allowed_components=[{"cid": "A"*32, "version": "1.0.1.2", "name": "Eco.X"}],
+        sdk_root=sdk,
+    )
+    r = next(t for t in tools if t.name == "ecoos_pull").execute(
+        EcoosPullArgs(cid="A"*32, version="1.0.1.2")
+    )
+    assert r.is_error
+    assert "not found in local sdk_root" in r.content.lower()
+
+
+def test_ecoos_pull_linux_needs_sdk_root(project_dir, monkeypatch):
+    """Without sdk_root configured, Linux pathway must fail cleanly."""
+    monkeypatch.setattr(setup_mod, "_IS_WINDOWS", False)
+    tools = make_setup_tools(
+        cli_path=None,
+        project_dir=project_dir,
+        allowed_components=[{"cid": "A"*32, "version": "1.0.1.2", "name": "Eco.X"}],
+        sdk_root=None,
+    )
+    r = next(t for t in tools if t.name == "ecoos_pull").execute(
+        EcoosPullArgs(cid="A"*32, version="1.0.1.2")
+    )
+    assert r.is_error
+    assert "neither eco-cli nor sdk_root" in r.content.lower()
