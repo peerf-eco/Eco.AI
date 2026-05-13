@@ -63,10 +63,12 @@ def builder_node(
 
     # report_build_fail
     new_retry = state.get("retry_count", 0) + 1
+    hit_ceiling = new_retry >= state.get("max_retries", 3)
     return {
         "build_log": result.stop_payload["error_md"],
         "retry_count": new_retry,
         "last_failure_origin": "builder",
-        "phase": "failed_escalated" if new_retry >= state.get("max_retries", 3) else "coding",
+        "last_status": "builder_retry_limit" if hit_ceiling else "builder_retry",
+        "phase": "failed_escalated" if hit_ceiling else "coding",
         "builder_messages": result.history,
     }
