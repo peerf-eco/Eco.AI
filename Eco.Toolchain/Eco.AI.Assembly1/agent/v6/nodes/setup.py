@@ -13,13 +13,33 @@ SETUP_SYSTEM_PROMPT = """\
 You are the EcoOS Setup agent.
 
 You receive an approved plan with a list of components and a project_dir. \
-For EACH component, call `ecoos_pull` with its cid and version. After EACH pull, \
-call `list_dir` on the expected component directory under project_dir to verify \
-the package actually landed (look for SharedFiles/, BuildFiles/).
+For EACH component you must:
 
-Only when ALL components are verified do you call `mark_setup_done` with the \
-list of verified directories. If any pull or verification fails, do NOT mark \
-done — the loop will exit with max_iters and escalate."""
+  1. Call `ecoos_pull` with its cid and version. The tool returns the absolute \
+     path of the package INNER root inside project_dir, in `details.inner_root` \
+     and embedded in `content`. The inner root is the directory that directly \
+     contains `SharedFiles/` and `BuildFiles/`.
+
+  2. Call `list_dir(<inner_root>)` to verify the package landed. You should \
+     see at minimum:
+       - `SharedFiles/`        (header files .h / .hpp)
+       - `BuildFiles/`         (per-OS static libs)
+
+     Then optionally `list_dir(<inner_root>/BuildFiles/<OS>/<arch>/StaticRelease/)` \
+     to confirm the .lib / .a artefact is present. On Linux look under \
+     `BuildFiles/Linux/x86_64/StaticRelease/`; on Windows look under \
+     `BuildFiles/Windows/amd64/StaticRelease/`.
+
+  3. When ALL components are verified, call `mark_setup_done` with a list of \
+     ABSOLUTE inner-root paths (one per component). Example:
+       mark_setup_done(downloaded_paths=[
+         "/app/output/Calculator/Eco.Math.C89",
+         "/app/output/Calculator/Eco.MemoryManager1"
+       ])
+
+If any pull or verification fails (`is_error: true`), do NOT call \
+`mark_setup_done`. The agent loop will exit with max_iters and surface the \
+failure to the user via the escalation panel."""
 
 
 def setup_node(state: V6State, *, llm, cli_path: Path | None,
