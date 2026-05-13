@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from pydantic import BaseModel, Field
 from agent.v6.eco_agent import EcoTool, ToolResult
+from agent.v6.tools.sdk_layout import resolve_component_root, list_component_roots
 
 
 class ReadComponentArgs(BaseModel):
@@ -21,28 +22,34 @@ class SubmitPlanArgs(BaseModel):
 
 
 def _read_component(args: ReadComponentArgs, sdk_root: Path) -> ToolResult:
-    matches = sorted(sdk_root.glob(f"{args.name}_DK_v.*"))
-    if not matches:
-        return ToolResult(content=f"Component '{args.name}' not found in {sdk_root}", is_error=True)
-    pkg = matches[-1]   # latest version
-    shared = pkg / "SharedFiles"
+    root = resolve_component_root(sdk_root, args.name)
+    if root is None:
+        return ToolResult(
+            content=f"Component '{args.name}' not found in {sdk_root}",
+            is_error=True,
+        )
+    shared = root / "SharedFiles"
     if not shared.exists():
-        return ToolResult(content=f"{pkg.name}: no SharedFiles/ subdir", is_error=True)
+        return ToolResult(
+            content=f"{root.name}: no SharedFiles/ subdir under resolved root {root}",
+            is_error=True,
+        )
     parts = []
     for f in sorted(shared.rglob("*.h")):
-        parts.append(f"=== {f.relative_to(pkg)} ===\n{f.read_text(errors='replace')}")
+        parts.append(f"=== {f.relative_to(root)} ===\n{f.read_text(errors='replace')}")
     if not parts:
-        return ToolResult(content=f"{pkg.name}: no .h files in SharedFiles/", is_error=True)
-    return ToolResult(content="\n\n".join(parts), details={"package": pkg.name})
+        return ToolResult(
+            content=f"{root.name}: no .h files in SharedFiles/",
+            is_error=True,
+        )
+    return ToolResult(
+        content="\n\n".join(parts),
+        details={"package": root.name, "resolved_root": str(root)},
+    )
 
 
 def _list_components(_args: ListComponentsArgs, sdk_root: Path) -> ToolResult:
-    names = []
-    for d in sorted(sdk_root.iterdir()):
-        if d.is_dir() and "_DK_v." in d.name:
-            base = d.name.split("_DK_v.")[0]
-            if base not in names:
-                names.append(base)
+    names = list_component_roots(sdk_root)
     return ToolResult(content="\n".join(names))
 
 
