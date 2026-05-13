@@ -8,6 +8,7 @@ Cross-platform:
   the package landing inside project_dir — is the same.
 """
 from __future__ import annotations
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,11 @@ from agent.v6.tools.sdk_layout import resolve_component_root
 
 
 _IS_WINDOWS = sys.platform == "win32"
+
+# Matches any directory whose name ends with the versioned DK suffix,
+# e.g. "Eco.X_DK_v.1.0.1.2". Used to guard the no-version fallback so we
+# do NOT silently substitute a wrong-versioned package.
+_VERSIONED_RE = re.compile(r"^.+_DK_v\.\d+\.\d+\.\d+\.\d+$")
 
 
 class EcoosPullArgs(BaseModel):
@@ -84,9 +90,15 @@ def _ecoos_pull(args: EcoosPullArgs, cli_path: Path | None, project_dir: Path,
 
     inner = resolve_component_root(Path(sdk_root), name, version=args.version)
     if inner is None:
-        # Fall back to base-name without explicit version (e.g. flat packages
-        # whose version pins are conventional, not encoded in the dirname).
-        inner = resolve_component_root(Path(sdk_root), name)
+        # Fallback ONLY for flat packages (Eco.MemoryManager1-style) whose
+        # version pin is conventional, not encoded in the dirname. We must NOT
+        # silently substitute a different versioned package — that would have
+        # the tool report "v2.0.0.0 copied" when only v1.0.1.2 was on disk.
+        candidate = resolve_component_root(Path(sdk_root), name)
+        if candidate is not None \
+                and not _VERSIONED_RE.match(candidate.name) \
+                and not _VERSIONED_RE.match(candidate.parent.name):
+            inner = candidate
     if inner is None:
         return ToolResult(
             content=f"Component '{name}' v{args.version} not found in local sdk_root: {sdk_root}",
@@ -101,16 +113,17 @@ def _ecoos_pull(args: EcoosPullArgs, cli_path: Path | None, project_dir: Path,
             content=f"copy from sdk_root failed: {type(e).__name__}: {e}",
             is_error=True,
         )
+    dst_posix = dst.as_posix()
     return ToolResult(
         content=(
             f"copied {name} v{args.version} from sdk_root.\n"
-            f"Inner root inside project_dir: {dst}\n"
-            f"Verify with `list_dir('{dst}')` — you should see SharedFiles/ and BuildFiles/."
+            f"Inner root inside project_dir: {dst_posix}\n"
+            f"Verify with `list_dir('{dst_posix}')` — you should see SharedFiles/ and BuildFiles/."
         ),
         details={
             "source": str(inner),
             "target": str(dst),
-            "inner_root": str(dst),
+            "inner_root": dst_posix,
         },
     )
 

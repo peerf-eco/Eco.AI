@@ -197,3 +197,28 @@ def test_ecoos_pull_linux_copies_flat_framework(tmp_path, project_dir, monkeypat
     copied = project_dir / "Eco.MemoryManager1" / "SharedFiles" / "IEcoMem.h"
     assert copied.exists()
     assert r.details["inner_root"].endswith("Eco.MemoryManager1")
+
+
+def test_ecoos_pull_linux_does_not_silently_substitute_wrong_version(tmp_path, project_dir, monkeypatch):
+    """If planner asks for v2.0.0.0 but only v1.0.1.2 exists, the tool MUST
+    return an error — not silently copy v1 and report success for v2."""
+    monkeypatch.setattr(setup_mod, "_IS_WINDOWS", False)
+
+    sdk = tmp_path / "sdk"
+    # Only v1.0.1.2 is on disk.
+    inner = sdk / "Eco.X_DK_v.1.0.1.2" / "Eco.X"
+    (inner / "SharedFiles").mkdir(parents=True)
+    (inner / "SharedFiles" / "IEcoX.h").write_text("/* v1 */")
+
+    tools = make_setup_tools(
+        cli_path=None,
+        project_dir=project_dir,
+        # Plan demands v2.0.0.0.
+        allowed_components=[{"cid": "A"*32, "version": "2.0.0.0", "name": "Eco.X"}],
+        sdk_root=sdk,
+    )
+    r = next(t for t in tools if t.name == "ecoos_pull").execute(
+        EcoosPullArgs(cid="A"*32, version="2.0.0.0")
+    )
+    assert r.is_error, f"expected error for wrong-version, got success: {r.content}"
+    assert "not found" in r.content.lower()
