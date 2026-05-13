@@ -33,8 +33,12 @@ const REASON_LABEL: Record<string, string> = {
 };
 
 function headerText(reason: string, retryCount: number, maxRetries: number): { primary: string; secondary: string } {
-  const primary = REASON_LABEL[reason] || `Pipeline escalated: ${reason || "unknown"}`;
-  const isRetryLimit = reason.endsWith("_retry_limit");
+  // Defensive: backend may emit null/undefined for `reason` if state is corrupt.
+  // Coerce to "" so endsWith and string-templating never throw at the exact
+  // moment the user most needs to see an actionable header.
+  const safeReason = reason ?? "";
+  const primary = REASON_LABEL[safeReason] || `Pipeline escalated: ${safeReason || "unknown"}`;
+  const isRetryLimit = safeReason.endsWith("_retry_limit");
   const secondary = isRetryLimit && retryCount > 0
     ? `${retryCount}/${maxRetries || retryCount} retries used`
     : "First attempt";
