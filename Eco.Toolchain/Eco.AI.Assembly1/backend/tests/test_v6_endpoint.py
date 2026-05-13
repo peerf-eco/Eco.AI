@@ -145,3 +145,38 @@ def test_v6_invalid_json_does_not_crash(monkeypatch, v6_env):
         err = ws.receive_json()
         assert err["type"] == "error"
         assert "Invalid JSON" in err["content"]
+
+
+def test_v6_planner_no_tool_call_emits_escalation_required(monkeypatch, v6_env):
+    """Planner LLM emits a bare text reply (no tool_calls).
+
+    EcoAgent's run() returns status=no_tool_call → planner_node sets
+      phase="failed_escalated"
+      last_failure_origin="planner"
+      last_status="planner_no_tool_call"
+    Graph routes to escalate_node, which surfaces the reason in the
+    interrupt payload. Backend WS forwards it as `escalation_required`.
+    """
+    from agent.v6.tests.conftest import ScriptedChatModel, ai_text
+
+    # Single bare-text reply — no tool_calls → status=no_tool_call.
+    script = [ai_text("I have no idea what to plan, sorry.")]
+    monkeypatch.setattr("agent.main.get_llm", lambda: ScriptedChatModel(script=script))
+
+    from backend.server import app
+    with TestClient(app).websocket_connect("/ws/v6/chat") as ws:
+        hb = ws.receive_json()
+        assert hb["type"] == "heartbeat"
+
+        ws.send_text(json.dumps({
+            "type": "user_request",
+            "user_request": "build something",
+            "project_dir": str(v6_env["project_dir"]),
+        }))
+
+        final = _drain_until(ws, lambda m: m.get("type") == "escalation_required", limit=100)[-1]
+        assert final["reason"] == "planner_no_tool_call"
+        assert final["failure_origin"] == "planner"
+        # Defensive: retry_count must be 0 — planner failed on FIRST attempt,
+        # not after exhausting a retry ceiling.
+        assert final["retry_count"] == 0
