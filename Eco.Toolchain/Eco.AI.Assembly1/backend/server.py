@@ -650,7 +650,7 @@ async def v5_chat_endpoint(websocket: WebSocket):
 #   {"type": "build_fail", "error_md": "...", "retry_count": N}
 #   {"type": "test_fail", "reason_md": "...", "retry_count": N}
 #   {"type": "plan_review_required", "plan_md": "...", "components": [...], "project_name": "..."}
-#   {"type": "max_retry_escalation", "failure_origin": "...", "build_log": "...", ...}
+#   {"type": "escalation_required", "reason": "...", "failure_origin": "...", "retry_count": N, "max_retries": M, "build_log": "...", ...}
 #   {"type": "pipeline_done", "status": "success|user_aborted|...", "build_artifact"?, "tester_report_md"?}
 #   {"type": "error", "content": "..."}
 # ═══════════════════════════════════════════════════════════════════════════
@@ -739,9 +739,11 @@ async def v6_chat_endpoint(websocket: WebSocket):
                         })
                     elif task.name == "escalate":
                         await websocket.send_json({
-                            "type": "max_retry_escalation",
+                            "type": "escalation_required",
+                            "reason":           value.get("reason", "unknown"),
                             "failure_origin":   value.get("failure_origin", ""),
                             "retry_count":      value.get("retry_count", 0),
+                            "max_retries":      value.get("max_retries", 3),
                             "build_log":        value.get("build_log", "")[:4000],
                             "tester_report_md": value.get("tester_report_md", "")[:4000],
                             "plan_md":          value.get("plan_md", ""),
@@ -825,9 +827,11 @@ async def v6_chat_endpoint(websocket: WebSocket):
                     })
                 elif task.name == "escalate":
                     await websocket.send_json({
-                        "type": "max_retry_escalation",
+                        "type": "escalation_required",
+                        "reason":           value.get("reason", "unknown"),
                         "failure_origin":   value.get("failure_origin", ""),
                         "retry_count":      value.get("retry_count", 0),
+                        "max_retries":      value.get("max_retries", 3),
                         "build_log":        value.get("build_log", "")[:4000],
                         "tester_report_md": value.get("tester_report_md", "")[:4000],
                         "plan_md":          value.get("plan_md", ""),
