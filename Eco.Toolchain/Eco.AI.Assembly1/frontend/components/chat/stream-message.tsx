@@ -17,6 +17,7 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { PlanReviewBlock as PlanReviewBlockView } from "./plan-review-block";
 import { EscalationBlock as EscalationBlockView } from "./escalation-block";
+import { ToolCallBlock as ToolCallBlockView } from "./tool-call-block";
 import {
   PHASE_LABEL,
   type Block,
@@ -187,6 +188,9 @@ function BlockView({
         </motion.div>
       );
     }
+
+    case "tool_call":
+      return <ToolCallBlockView block={block} />;
 
     case "plan_review":
       return (
