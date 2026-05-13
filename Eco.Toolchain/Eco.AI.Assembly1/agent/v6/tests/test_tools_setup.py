@@ -85,17 +85,16 @@ def test_mark_setup_done_args():
 # ── Linux pathway — eco-cli absent, copy from sdk_root ─────────────────────
 
 def test_ecoos_pull_linux_copies_from_sdk_root(tmp_path, project_dir, monkeypatch):
-    """On non-Windows, ecoos_pull copies the SDK package from sdk_root."""
+    """Linux pathway: copy the resolved inner root from sdk_root into project_dir."""
     monkeypatch.setattr(setup_mod, "_IS_WINDOWS", False)
-    # subprocess.run must NOT be called on the Linux path.
     def fake_run(*a, **kw):
         raise AssertionError("subprocess.run must not be invoked on Linux pathway")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     sdk = tmp_path / "sdk"
-    pkg = sdk / "Eco.X_DK_v.1.0.1.2" / "SharedFiles"
-    pkg.mkdir(parents=True)
-    (pkg / "IEcoX.h").write_text("/* x */")
+    inner = sdk / "Eco.X_DK_v.1.0.1.2" / "Eco.X"
+    (inner / "SharedFiles").mkdir(parents=True)
+    (inner / "SharedFiles" / "IEcoX.h").write_text("/* x */")
 
     tools = make_setup_tools(
         cli_path=None,
@@ -107,7 +106,7 @@ def test_ecoos_pull_linux_copies_from_sdk_root(tmp_path, project_dir, monkeypatc
         EcoosPullArgs(cid="A"*32, version="1.0.1.2")
     )
     assert not r.is_error, r.content
-    copied = project_dir / "Eco.X_DK_v.1.0.1.2" / "SharedFiles" / "IEcoX.h"
+    copied = project_dir / "Eco.X" / "SharedFiles" / "IEcoX.h"
     assert copied.exists()
     assert copied.read_text() == "/* x */"
 
@@ -144,3 +143,57 @@ def test_ecoos_pull_linux_needs_sdk_root(project_dir, monkeypatch):
     )
     assert r.is_error
     assert "neither eco-cli nor sdk_root" in r.content.lower()
+
+
+def test_ecoos_pull_linux_copies_inner_root_versioned_2level(tmp_path, project_dir, monkeypatch):
+    """On Linux for a versioned-2-level package, copy the INNER root (the dir
+    that directly contains SharedFiles/), not the outer _DK_v. directory.
+    Otherwise downloaded_paths would point one level too high."""
+    monkeypatch.setattr(setup_mod, "_IS_WINDOWS", False)
+
+    sdk = tmp_path / "sdk"
+    inner = sdk / "Eco.X_DK_v.1.0.1.2" / "Eco.X"
+    (inner / "SharedFiles").mkdir(parents=True)
+    (inner / "SharedFiles" / "IEcoX.h").write_text("/* x */")
+    (inner / "BuildFiles" / "Linux" / "x86_64" / "StaticRelease").mkdir(parents=True)
+
+    tools = make_setup_tools(
+        cli_path=None,
+        project_dir=project_dir,
+        allowed_components=[{"cid": "A"*32, "version": "1.0.1.2", "name": "Eco.X"}],
+        sdk_root=sdk,
+    )
+    r = next(t for t in tools if t.name == "ecoos_pull").execute(
+        EcoosPullArgs(cid="A"*32, version="1.0.1.2")
+    )
+    assert not r.is_error, r.content
+    # Inner root lands at <project_dir>/Eco.X/, with SharedFiles directly inside.
+    copied = project_dir / "Eco.X" / "SharedFiles" / "IEcoX.h"
+    assert copied.exists(), list(project_dir.rglob("*"))
+    # Tool details expose the inner root for downstream nodes (coder/builder).
+    assert r.details is not None
+    assert r.details["inner_root"].endswith("Eco.X")
+
+
+def test_ecoos_pull_linux_copies_flat_framework(tmp_path, project_dir, monkeypatch):
+    """Flat framework packages (Eco.MemoryManager1) must also be copyable."""
+    monkeypatch.setattr(setup_mod, "_IS_WINDOWS", False)
+
+    sdk = tmp_path / "sdk"
+    flat = sdk / "Eco.MemoryManager1"
+    (flat / "SharedFiles").mkdir(parents=True)
+    (flat / "SharedFiles" / "IEcoMem.h").write_text("/* mem */")
+
+    tools = make_setup_tools(
+        cli_path=None,
+        project_dir=project_dir,
+        allowed_components=[{"cid": "A"*32, "version": "1.0.1.2", "name": "Eco.MemoryManager1"}],
+        sdk_root=sdk,
+    )
+    r = next(t for t in tools if t.name == "ecoos_pull").execute(
+        EcoosPullArgs(cid="A"*32, version="1.0.1.2")
+    )
+    assert not r.is_error, r.content
+    copied = project_dir / "Eco.MemoryManager1" / "SharedFiles" / "IEcoMem.h"
+    assert copied.exists()
+    assert r.details["inner_root"].endswith("Eco.MemoryManager1")

@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from agent.v6.eco_agent import EcoTool, ToolResult
 from agent.v6.tools.common import is_valid_cid, is_valid_version, ensure_inside
+from agent.v6.tools.sdk_layout import resolve_component_root
 
 
 _IS_WINDOWS = sys.platform == "win32"
@@ -68,7 +69,7 @@ def _ecoos_pull(args: EcoosPullArgs, cli_path: Path | None, project_dir: Path,
             )
         return ToolResult(content=f"pulled {args.cid} v{args.version}", details={"stdout": proc.stdout})
 
-    # Linux/macOS or no eco-cli: copy from local sdk_root mirror.
+    # Linux/macOS or no eco-cli: copy the INNER root from local sdk_root mirror.
     if sdk_root is None:
         return ToolResult(
             content="ecoos_pull: neither eco-cli nor sdk_root configured",
@@ -80,24 +81,37 @@ def _ecoos_pull(args: EcoosPullArgs, cli_path: Path | None, project_dir: Path,
             content=f"Component {args.cid} v{args.version} has no `name` in plan — cannot resolve in sdk_root",
             is_error=True,
         )
-    pkg_dir_name = f"{name}_DK_v.{args.version}"
-    src = Path(sdk_root) / pkg_dir_name
-    if not src.exists() or not src.is_dir():
+
+    inner = resolve_component_root(Path(sdk_root), name, version=args.version)
+    if inner is None:
+        # Fall back to base-name without explicit version (e.g. flat packages
+        # whose version pins are conventional, not encoded in the dirname).
+        inner = resolve_component_root(Path(sdk_root), name)
+    if inner is None:
         return ToolResult(
-            content=f"Package not found in local sdk_root: {src}",
+            content=f"Component '{name}' v{args.version} not found in local sdk_root: {sdk_root}",
             is_error=True,
         )
-    dst = Path(project_dir) / pkg_dir_name
+
+    dst = Path(project_dir) / inner.name
     try:
-        shutil.copytree(src, dst, dirs_exist_ok=True)
+        shutil.copytree(inner, dst, dirs_exist_ok=True)
     except Exception as e:
         return ToolResult(
             content=f"copy from sdk_root failed: {type(e).__name__}: {e}",
             is_error=True,
         )
     return ToolResult(
-        content=f"copied {pkg_dir_name} from sdk_root",
-        details={"source": str(src), "target": str(dst)},
+        content=(
+            f"copied {name} v{args.version} from sdk_root.\n"
+            f"Inner root inside project_dir: {dst}\n"
+            f"Verify with `list_dir('{dst}')` — you should see SharedFiles/ and BuildFiles/."
+        ),
+        details={
+            "source": str(inner),
+            "target": str(dst),
+            "inner_root": str(dst),
+        },
     )
 
 
