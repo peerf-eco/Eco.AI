@@ -13,6 +13,7 @@ services:
       - ./rag_storage:/app/rag_storage:ro
       - ./chroma_db:/app/chroma_db
       - ./output:/app/output
+      - ./traces:/app/traces
       - ./source:/app/source:ro
       # Два варианта eco-cli (выбор через V6_CLI_PATH в .env):
       #   eco.sli/        — Windows .exe (запуск через wine)
