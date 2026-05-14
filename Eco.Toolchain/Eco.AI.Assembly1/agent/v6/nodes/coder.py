@@ -4,6 +4,7 @@ from pathlib import Path
 from agent.v6.eco_agent import EcoAgent
 from agent.v6.tools.coder import make_coder_tools
 from agent.v6.state import V6State
+from agent.v6.trace import write_trace
 from langgraph.config import get_stream_writer
 from agent.v6.stream_events import make_on_event
 
@@ -66,6 +67,7 @@ def coder_node(state: V6State, *, llm, max_iters: int = 50) -> dict:
         on_event=on_event,
     )
     result = agent.run(_build_coder_seed(state))
+    write_trace(result, node="coder", state=state)
 
     if result.status == "done":
         return {

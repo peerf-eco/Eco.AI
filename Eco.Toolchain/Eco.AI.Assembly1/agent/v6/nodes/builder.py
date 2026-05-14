@@ -4,6 +4,7 @@ from pathlib import Path
 from agent.v6.eco_agent import EcoAgent
 from agent.v6.tools.builder import make_builder_tools
 from agent.v6.state import V6State
+from agent.v6.trace import write_trace
 from langgraph.config import get_stream_writer
 from agent.v6.stream_events import make_on_event
 
@@ -54,6 +55,7 @@ def builder_node(
         on_event=on_event,
     )
     result = agent.run(seed)
+    write_trace(result, node="builder", state=state)
 
     if result.status != "done":
         return {
