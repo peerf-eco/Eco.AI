@@ -1,6 +1,7 @@
 """Tests for write_trace — V6 node execution trace persistence."""
 import json
 
+import pytest
 from langchain_core.messages import (
     SystemMessage, HumanMessage, AIMessage, ToolMessage, messages_from_dict,
 )
@@ -75,17 +76,23 @@ def test_write_trace_seq_increments(monkeypatch, tmp_path):
     assert p2.name == "02-setup.json"
 
 
-def test_write_trace_sanitizes_thread_id(monkeypatch, tmp_path):
-    """A path-traversal thread_id must not escape traces_root."""
+@pytest.mark.parametrize("evil_id, expected_dir", [
+    ("../../evil", "evil"),
+    ("..", "unknown"),
+    (".", "unknown"),
+    ("", "unknown"),
+    ("/abs/path", "path"),
+])
+def test_write_trace_sanitizes_thread_id(monkeypatch, tmp_path, evil_id, expected_dir):
+    """Path-traversal / degenerate thread_ids must not escape traces_root."""
     monkeypatch.setattr(
         trace_mod, "get_config",
-        lambda: {"configurable": {"thread_id": "../../evil"}},
+        lambda: {"configurable": {"thread_id": evil_id}},
     )
     state = make_initial_v6_state("x")
 
     path = write_trace(_result(), node="coder", state=state, traces_root=tmp_path)
 
     assert path is not None
-    # the written file stays inside tmp_path — no traversal
-    assert tmp_path in path.parents
-    assert path.parent.name == "evil"
+    assert tmp_path in path.parents          # never escapes the root
+    assert path.parent.name == expected_dir

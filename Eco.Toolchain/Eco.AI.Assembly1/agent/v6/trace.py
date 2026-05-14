@@ -38,8 +38,12 @@ def write_trace(
     cfg = get_config()
     raw_thread_id = cfg["configurable"]["thread_id"]
     # thread_id originates from a client-supplied WebSocket query param and is
-    # used as a path component — strip any directory parts to prevent traversal.
-    thread_id = Path(raw_thread_id).name or "unknown"
+    # used as a path component. Path().name strips directory separators; the
+    # explicit check rejects the remaining traversal/degenerate tokens — note
+    # Path("..").name returns ".." (truthy), so `or "unknown"` alone is not enough.
+    thread_id = Path(raw_thread_id).name
+    if thread_id in ("", ".", ".."):
+        thread_id = "unknown"
 
     thread_dir = root / thread_id
     thread_dir.mkdir(parents=True, exist_ok=True)
