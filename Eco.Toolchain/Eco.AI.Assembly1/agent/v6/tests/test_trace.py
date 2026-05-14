@@ -162,3 +162,7 @@ def test_write_trace_default_str_safety_net(monkeypatch, tmp_path):
     assert path is not None
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["meta"]["node"] == "coder"
+    # prove default=str actually coerced the object() — not just that the
+    # write didn't crash
+    ai_msg_data = next(m for m in payload["messages"] if m["type"] == "ai")
+    assert "<object object at" in str(ai_msg_data)

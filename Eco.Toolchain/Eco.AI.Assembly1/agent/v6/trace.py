@@ -96,5 +96,7 @@ def write_trace(
         os.replace(tmp, final)
         return final
     except Exception as e:  # never let trace persistence break the pipeline
-        logger.warning("write_trace failed (node=%s): %s", node, e)
+        logger.warning(
+            "write_trace failed (node=%s): %s", node, e, exc_info=True
+        )
         return None
