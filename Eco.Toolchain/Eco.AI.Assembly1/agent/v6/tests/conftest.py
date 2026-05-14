@@ -66,3 +66,15 @@ def project_dir(tmp_path: Path) -> Path:
     d = tmp_path / "Project1"
     d.mkdir()
     return d
+
+
+@pytest.fixture(autouse=True)
+def _isolate_v6_traces(tmp_path_factory, monkeypatch):
+    """Redirect write_trace output to a throwaway dir for every V6 test.
+
+    Graph-level tests exercise the real nodes, which call write_trace with
+    no explicit traces_root — without this they would write into the repo's
+    ./traces/ directory. Tests that pass traces_root explicitly are
+    unaffected (write_trace prefers the argument over the env var).
+    """
+    monkeypatch.setenv("V6_TRACES_DIR", str(tmp_path_factory.mktemp("v6_traces")))
