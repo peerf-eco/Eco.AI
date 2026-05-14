@@ -14,6 +14,11 @@ services:
       - ./chroma_db:/app/chroma_db
       - ./output:/app/output
       - ./source:/app/source:ro
+      # Два варианта eco-cli (выбор через V6_CLI_PATH в .env):
+      #   eco.sli/        — Windows .exe (запуск через wine)
+      #   eco.sli-linux/  — нативный Linux ELF (предпочтительнее)
+      - ../../eco.sli:/opt/eco:ro
+      - ../../eco.sli-linux:/opt/eco-linux:ro
       # Монтируем код для разработки (hot reload)
       - ./agent:/app/agent
       - ./backend:/app/backend
