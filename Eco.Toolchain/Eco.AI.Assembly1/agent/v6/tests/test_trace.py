@@ -80,7 +80,6 @@ def test_write_trace_seq_increments(monkeypatch, tmp_path):
     ("../../evil", "evil"),
     ("..", "unknown"),
     (".", "unknown"),
-    ("", "unknown"),
     ("/abs/path", "path"),
 ])
 def test_write_trace_sanitizes_thread_id(monkeypatch, tmp_path, evil_id, expected_dir):
@@ -97,3 +96,69 @@ def test_write_trace_sanitizes_thread_id(monkeypatch, tmp_path, evil_id, expecte
     # real containment proof — resolve() collapses any "../" before the check
     assert path.resolve().is_relative_to(tmp_path.resolve())
     assert path.parent.name == expected_dir
+
+
+def test_write_trace_no_thread_id_returns_none(monkeypatch, tmp_path):
+    """Config present but thread_id missing/empty — skip silently, no file."""
+    monkeypatch.setattr(
+        trace_mod, "get_config",
+        lambda: {"configurable": {"thread_id": ""}},
+    )
+    state = make_initial_v6_state("x")
+
+    path = write_trace(_result(), node="coder", state=state, traces_root=tmp_path)
+
+    assert path is None
+    assert list(tmp_path.glob("**/*.json")) == []
+
+
+def test_write_trace_no_graph_context_returns_none(monkeypatch, tmp_path):
+    """No active LangGraph context (e.g. a unit test) — skip silently."""
+    def _boom():
+        raise RuntimeError("Called get_config outside of a runnable context")
+    monkeypatch.setattr(trace_mod, "get_config", _boom)
+    state = make_initial_v6_state("x")
+
+    path = write_trace(_result(), node="coder", state=state, traces_root=tmp_path)
+
+    assert path is None
+    assert list(tmp_path.glob("**/*.json")) == []
+
+
+def test_write_trace_never_raises_on_bad_root(monkeypatch, tmp_path):
+    """A broken traces_root must not propagate an exception to the node."""
+    monkeypatch.setattr(
+        trace_mod, "get_config",
+        lambda: {"configurable": {"thread_id": "t"}},
+    )
+    # traces_root points at a FILE, so mkdir under it will fail
+    bad_root = tmp_path / "i-am-a-file"
+    bad_root.write_text("not a dir")
+    state = make_initial_v6_state("x")
+
+    path = write_trace(_result(), node="coder", state=state, traces_root=bad_root)
+
+    assert path is None  # no exception propagated
+
+
+def test_write_trace_default_str_safety_net(monkeypatch, tmp_path):
+    """A non-JSON-serializable object in additional_kwargs is coerced, not fatal."""
+    monkeypatch.setattr(
+        trace_mod, "get_config",
+        lambda: {"configurable": {"thread_id": "t-safety"}},
+    )
+    history = [
+        SystemMessage(content="s"),
+        AIMessage(content="a", additional_kwargs={"weird": object()}),
+    ]
+    result = EcoAgentResult(
+        status="done", stop_tool_name="", stop_payload={},
+        history=history, error="",
+    )
+    state = make_initial_v6_state("x")
+
+    path = write_trace(result, node="coder", state=state, traces_root=tmp_path)
+
+    assert path is not None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["meta"]["node"] == "coder"
