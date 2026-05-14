@@ -202,11 +202,32 @@ git commit -m "feat(v6/trace): add write_trace — serialize node history to JSO
 - Modify: `agent/v6/trace.py` (rewrite the function body with error handling)
 - Test: `agent/v6/tests/test_trace.py` (append 3 tests)
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Adjust the Task 1 test, then write the failing tests**
 
-Append to `agent/v6/tests/test_trace.py`:
+First, in `agent/v6/tests/test_trace.py`, **remove the `("", "unknown")` case**
+from the `test_write_trace_sanitizes_thread_id` parametrize list. Rationale:
+Task 1's review cycle added `thread_id` sanitization, but an *empty* thread_id
+is now handled by the "no thread_id → skip" path added in this task (Step 3),
+which returns `None` instead of writing to `traces/unknown/`. The parametrize
+list keeps the other four cases (`../../evil`, `..`, `.`, `/abs/path`).
+
+Then append these tests to `agent/v6/tests/test_trace.py`:
 
 ```python
+def test_write_trace_no_thread_id_returns_none(monkeypatch, tmp_path):
+    """Config present but thread_id missing/empty — skip silently, no file."""
+    monkeypatch.setattr(
+        trace_mod, "get_config",
+        lambda: {"configurable": {"thread_id": ""}},
+    )
+    state = make_initial_v6_state("x")
+
+    path = write_trace(_result(), node="coder", state=state, traces_root=tmp_path)
+
+    assert path is None
+    assert list(tmp_path.glob("**/*.json")) == []
+
+
 def test_write_trace_no_graph_context_returns_none(monkeypatch, tmp_path):
     """No active LangGraph context (e.g. a unit test) — skip silently."""
     def _boom():
@@ -262,7 +283,7 @@ def test_write_trace_default_str_safety_net(monkeypatch, tmp_path):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest agent/v6/tests/test_trace.py -v`
-Expected: FAIL — `test_write_trace_no_graph_context_returns_none` raises `RuntimeError`; `test_write_trace_never_raises_on_bad_root` raises `NotADirectoryError` (or similar). The first two new tests error out instead of asserting.
+Expected: FAIL — `test_write_trace_no_graph_context_returns_none` raises `RuntimeError`, `test_write_trace_never_raises_on_bad_root` raises `NotADirectoryError`, and `test_write_trace_no_thread_id_returns_none` fails its assertion (the Task 1 code writes a `traces/unknown/` file instead of returning `None`). `test_write_trace_default_str_safety_net` may already pass — Task 1's code already has `default=str`.
 
 - [ ] **Step 3: Rewrite `agent/v6/trace.py` with error handling**
 
@@ -319,12 +340,21 @@ def write_trace(
             logger.debug("write_trace: no graph context, skipping (node=%s)", node)
             return None
 
-        thread_id = (cfg.get("configurable") or {}).get("thread_id")
-        if not thread_id:
+        raw_thread_id = (cfg.get("configurable") or {}).get("thread_id")
+        if not raw_thread_id:
             logger.warning(
                 "write_trace: no thread_id in config, skipping (node=%s)", node
             )
             return None
+
+        # thread_id originates from a client-supplied WebSocket query param and
+        # is used as a path component. Path().name strips directory separators;
+        # the explicit check rejects the remaining traversal/degenerate tokens —
+        # note Path("..").name returns ".." (truthy), so `or "unknown"` alone is
+        # not enough. (Added in Task 1's security review cycle.)
+        thread_id = Path(raw_thread_id).name
+        if thread_id in ("", ".", ".."):
+            thread_id = "unknown"
 
         thread_dir = root / thread_id
         thread_dir.mkdir(parents=True, exist_ok=True)
@@ -365,7 +395,8 @@ def write_trace(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest agent/v6/tests/test_trace.py -v`
-Expected: PASS — 5 passed (2 from Task 1 still pass, 3 new ones pass)
+Expected: PASS — 10 passed (happy_path + seq_increments + 4 sanitize-parametrize
+cases from Task 1, plus the 4 new resilience tests added in this task)
 
 - [ ] **Step 5: Commit**
 
