@@ -1,7 +1,6 @@
 """Tests for write_trace — V6 node execution trace persistence."""
 import json
 
-import pytest
 from langchain_core.messages import (
     SystemMessage, HumanMessage, AIMessage, ToolMessage, messages_from_dict,
 )
@@ -70,5 +69,23 @@ def test_write_trace_seq_increments(monkeypatch, tmp_path):
     p1 = write_trace(_result(), node="planner", state=state, traces_root=tmp_path)
     p2 = write_trace(_result(), node="setup", state=state, traces_root=tmp_path)
 
+    assert p1 is not None
+    assert p2 is not None
     assert p1.name == "01-planner.json"
     assert p2.name == "02-setup.json"
+
+
+def test_write_trace_sanitizes_thread_id(monkeypatch, tmp_path):
+    """A path-traversal thread_id must not escape traces_root."""
+    monkeypatch.setattr(
+        trace_mod, "get_config",
+        lambda: {"configurable": {"thread_id": "../../evil"}},
+    )
+    state = make_initial_v6_state("x")
+
+    path = write_trace(_result(), node="coder", state=state, traces_root=tmp_path)
+
+    assert path is not None
+    # the written file stays inside tmp_path — no traversal
+    assert tmp_path in path.parents
+    assert path.parent.name == "evil"

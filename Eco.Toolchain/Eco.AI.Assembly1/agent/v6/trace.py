@@ -36,7 +36,10 @@ def write_trace(
     root = traces_root or Path(os.getenv("V6_TRACES_DIR", "traces"))
 
     cfg = get_config()
-    thread_id = cfg["configurable"]["thread_id"]
+    raw_thread_id = cfg["configurable"]["thread_id"]
+    # thread_id originates from a client-supplied WebSocket query param and is
+    # used as a path component — strip any directory parts to prevent traversal.
+    thread_id = Path(raw_thread_id).name or "unknown"
 
     thread_dir = root / thread_id
     thread_dir.mkdir(parents=True, exist_ok=True)
