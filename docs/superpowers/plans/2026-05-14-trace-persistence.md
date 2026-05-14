@@ -492,10 +492,19 @@ to:
     write_trace(result, node="tester", state=state)
 ```
 
-- [ ] **Step 6: Run the full V6 test suite to verify no regressions**
+- [ ] **Step 6: Run the V6 test suite to verify no regressions**
 
-Run: `python -m pytest agent/v6/tests/ -q`
-Expected: PASS — all tests pass (the 5 node modules import cleanly, `test_trace.py` and the new wiring test pass)
+Run: `python -m pytest agent/v6/tests/ -q --ignore=agent/v6/tests/test_tools_setup.py`
+Expected: PASS — all tests pass (the 5 node modules import cleanly, `test_trace.py` and the new wiring test pass).
+
+**Note — `test_tools_setup.py` is excluded on purpose.** At the time this plan
+runs it has 6 pre-existing failures + 5 errors, all from
+`AttributeError: module 'agent.v6.tools.setup' has no attribute '_IS_WINDOWS'`
+— stale tests against an unrelated uncommitted refactor of `tools/setup.py`
+(the find→devkit-pull rewrite). That failure set is NOT caused by this plan
+and NOT this plan's responsibility to fix. Do not touch `tools/setup.py` or
+`test_tools_setup.py`. If you see any *other* test fail, that IS a regression
+from this task — investigate it.
 
 - [ ] **Step 7: Commit**
 
