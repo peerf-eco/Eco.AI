@@ -94,5 +94,6 @@ def test_write_trace_sanitizes_thread_id(monkeypatch, tmp_path, evil_id, expecte
     path = write_trace(_result(), node="coder", state=state, traces_root=tmp_path)
 
     assert path is not None
-    assert tmp_path in path.parents          # never escapes the root
+    # real containment proof — resolve() collapses any "../" before the check
+    assert path.resolve().is_relative_to(tmp_path.resolve())
     assert path.parent.name == expected_dir
