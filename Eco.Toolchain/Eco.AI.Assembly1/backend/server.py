@@ -699,9 +699,11 @@ async def v6_chat_endpoint(websocket: WebSocket):
             r"C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvarsall.bat"))
         make_exe = Path(os.getenv("V6_MAKE_EXE", r"C:/Users/gaevy/gcc/bin/make.exe"))
     else:
-        # Linux/macOS: eco-cli is Windows-only — fall back to copying SDK
-        # packages directly from sdk_root (mounted read-only in Docker).
-        cli_path = None
+        # Linux/macOS: eco-cli.exe is Windows-only but we run it through
+        # Wine (see Dockerfile + V6_CLI_PREFIX in tools/setup.py). If env
+        # didn't set V6_CLI_PATH, we have no CLI and pull falls back to
+        # the local sdk_root mirror — kept as a safety net only.
+        cli_path = Path(os.environ["V6_CLI_PATH"]) if os.getenv("V6_CLI_PATH") else None
         vcvarsall = None
         make_exe = Path(os.getenv("V6_MAKE_EXE", "make"))
 
@@ -872,6 +874,8 @@ async def v6_chat_endpoint(websocket: WebSocket):
                 initial = make_initial_v6_state(
                     user_req,
                     max_retries=int(payload.get("max_retries", 3)),
+                    target_os=str(payload.get("target_os") or "Linux"),
+                    target_arch=str(payload.get("target_arch") or "x86_64"),
                 )
                 if payload.get("project_dir"):
                     initial["project_dir"] = payload["project_dir"]
@@ -910,6 +914,187 @@ async def v6_chat_endpoint(websocket: WebSocket):
         logger.info(f"[V6 WS] disconnected thread_id={thread_id}")
     except Exception:
         logger.exception(f"[V6 WS] handler crashed thread_id={thread_id}")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V7 WEBSOCKET — three-agent pipeline (architect → coder → tester) with
+# backward handoff edges. No LangGraph, no checkpointer, no HITL interrupts.
+#
+# Reuses the v6 client event shape so the existing frontend (use-v6-socket.ts)
+# can render v7 with no changes beyond the WS URL — see frontend env flag
+# NEXT_PUBLIC_PIPELINE_VERSION=v7.
+#
+# Mapping (v7 internal → v6 client event):
+#   architect-agent active   → phase_change phase=planning node=planner
+#   coder-agent active       → phase_change phase=coding   node=coder
+#   tester-agent active      → phase_change phase=testing  node=tester
+#   EcoAgent.TEXT_DELTA      → node_event event=text_delta
+#   EcoAgent.THINKING_DELTA  → node_event event=thinking_delta
+#   EcoAgent.TOOL_START/END  → node_event event=tool_call_start|end
+#   orchestrator terminates  → pipeline_done status=success|failed
+#
+# Note: v7 has no plan_gate or escalate, so plan_review_required and
+# escalation_required events are NEVER emitted. The frontend already tolerates
+# their absence (use-v6-socket.ts only renders them on receipt).
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.websocket("/ws/v7/chat")
+async def v7_chat_endpoint(websocket: WebSocket):
+    await websocket.accept()
+
+    # Lazy imports — keep startup light even if v7 layer churns.
+    from agent.v6.entry import build_v7_pipeline
+    from agent.v6.eco_agent import EventType
+
+    # V7 uses pi_ai.Model directly (no langchain). This is the path where
+    # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
+    from agent.main import get_model as _get_model
+    model = _get_model()
+
+    is_windows = sys.platform == "win32"
+    cli_path: Path | None = (
+        Path(os.environ["V6_CLI_PATH"]) if os.getenv("V6_CLI_PATH") else None
+    )
+    make_exe = Path(os.getenv(
+        "V6_MAKE_EXE",
+        r"C:/Users/gaevy/gcc/bin/make.exe" if is_windows else "make",
+    ))
+
+    thread_id = str(uuid.uuid4())
+    project_dir = Path(os.getenv("V7_OUTPUT_ROOT", "./output")) / f"v7-{thread_id[:8]}"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"[V7 WS] connected thread_id={thread_id} project_dir={project_dir}")
+    await websocket.send_json({"type": "heartbeat", "version": "v7", "thread_id": thread_id})
+
+    # v6 client expects these agent identifiers in its `node` field — translate.
+    PHASE_OF = {"architect": "planning", "coder": "coding",  "tester": "testing"}
+    NODE_OF  = {"architect": "planner",  "coder": "coder",   "tester": "tester"}
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "content": "Invalid JSON"})
+                continue
+
+            msg_type = payload.get("type", "user_request")
+            if msg_type == "abort":
+                # v7 orchestrator.run is sync inside to_thread — we can't cancel
+                # mid-run. Surface as a clean done so the UI unfreezes.
+                await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
+                break
+            if msg_type in ("plan_decision", "escalation_decision"):
+                # v7 has no HITL interrupts — silently ignore these v6 leftovers
+                # if the frontend sends them by mistake.
+                continue
+
+            user_req = (
+                payload.get("user_request")
+                or payload.get("message")
+                or payload.get("content")
+                or ""
+            )
+            if not user_req:
+                await websocket.send_json({"type": "error", "content": "Missing user_request"})
+                continue
+
+            # ── Event bridge: sync on_event (called from to_thread worker) →
+            #    asyncio.Queue → main loop sends through WebSocket.
+            loop = asyncio.get_event_loop()
+            ev_queue: asyncio.Queue = asyncio.Queue()
+            SENTINEL = object()
+
+            def on_event(wrapped: dict):
+                # wrapped = {"agent": "architect|coder|tester", "event": EcoAgentEvent}
+                # Runs in the worker thread spawned by asyncio.to_thread.
+                try:
+                    loop.call_soon_threadsafe(ev_queue.put_nowait, wrapped)
+                except RuntimeError:
+                    pass  # loop closed, drop event silently
+
+            orch = build_v7_pipeline(
+                model=model,
+                cli_path=cli_path,
+                project_dir=project_dir,
+                make_exe=make_exe,
+                on_event=on_event,
+            )
+
+            async def run_orchestrator():
+                try:
+                    return await asyncio.to_thread(orch.run, user_req)
+                finally:
+                    loop.call_soon_threadsafe(ev_queue.put_nowait, SENTINEL)
+
+            async def drain_events():
+                current_agent: str | None = None
+                while True:
+                    item = await ev_queue.get()
+                    if item is SENTINEL:
+                        return
+                    agent = item.get("agent")
+                    ev = item.get("event")
+                    if agent is None or ev is None:
+                        continue
+                    if agent != current_agent:
+                        current_agent = agent
+                        await websocket.send_json({
+                            "type":  "phase_change",
+                            "phase": PHASE_OF.get(agent, "planning"),
+                            "node":  NODE_OF.get(agent, "planner"),
+                        })
+                    etype = ev.type.value if hasattr(ev.type, "value") else str(ev.type)
+                    if etype in ("text_delta", "thinking_delta",
+                                 "tool_call_start", "tool_call_end"):
+                        await websocket.send_json({
+                            "type":  "node_event",
+                            "node":  NODE_OF.get(agent, "planner"),
+                            "event": etype,
+                            "data":  ev.data or {},
+                        })
+                    # Other EcoAgent events (start/iteration/done/error/etc) are
+                    # bookkeeping — orchestrator-level done is emitted below.
+
+            try:
+                run_task = asyncio.create_task(run_orchestrator())
+                drain_task = asyncio.create_task(drain_events())
+                result, _ = await asyncio.gather(run_task, drain_task)
+            except Exception as e:
+                logger.exception(f"[V7 WS] orchestrator crashed thread_id={thread_id}")
+                await websocket.send_json({
+                    "type": "error",
+                    "content": f"Orchestrator error: {type(e).__name__}: {e}",
+                })
+                break
+
+            # Translate OrchestratorResult into v6-shape pipeline_done.
+            #   terminal + edge=done → success
+            #   terminal + edge=fail → failed (with last_message as reason)
+            #   anything else        → failed (loop_exceeded / agent_failed / unknown_edge)
+            success = (result.status == "terminal" and result.terminal_edge == "done")
+            await websocket.send_json({
+                "type":             "pipeline_done",
+                "status":           "success" if success else "failed",
+                "build_artifact":   "",
+                "tester_report_md": result.last_message
+                                    + (f"\n\n(orchestrator: {result.status}"
+                                       + (f", edge={result.terminal_edge}"
+                                          if result.terminal_edge else "")
+                                       + f", hops={len(result.hops)})"),
+            })
+            break
+
+    except WebSocketDisconnect:
+        logger.info(f"[V7 WS] disconnected thread_id={thread_id}")
+    except Exception:
+        logger.exception(f"[V7 WS] handler crashed thread_id={thread_id}")
         try:
             await websocket.close()
         except Exception:

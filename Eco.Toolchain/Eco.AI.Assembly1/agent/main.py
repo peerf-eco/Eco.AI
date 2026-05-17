@@ -21,25 +21,25 @@ load_dotenv()
 
 def get_llm():
     """
-    Инициализирует LLM модель с поддержкой OpenRouter.
-    
-    Returns:
-        Инициализированная LLM модель
+    Инициализирует LLM модель с поддержкой OpenRouter (langchain ChatOpenAI).
+
+    Используется legacy V5/V6 endpoints. Новый код должен использовать
+    get_model() — pi_ai.Model, без langchain.
     """
     from langchain_openai import ChatOpenAI
-    
+
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1")
     model = os.getenv("LLM_MODEL", "moonshotai/kimi-k2-thinking")
-    
+
     if not api_key:
         print("[ERROR] OPENAI_API_KEY not set")
         print("[INFO] Set it in .env file or export OPENAI_API_KEY=your-key")
         sys.exit(1)
-    
+
     print(f"[INFO] Using LLM: {model}")
     print(f"[INFO] API URL: {base_url}")
-    
+
     return ChatOpenAI(
         model=model,
         temperature=0,
@@ -47,6 +47,40 @@ def get_llm():
         openai_api_base=base_url,
         timeout=30,
         max_retries=2,
+    )
+
+
+def get_model():
+    """Build a pi_ai.Model for the configured OpenRouter endpoint.
+
+    Used by V7 endpoint (and any new code) instead of get_llm(). The model
+    streams via pi_ai.stream_simple, which passes delta.reasoning through
+    correctly (langchain_openai 1.2.1 silently drops that field).
+    """
+    from agent.pi_ai import Model, ModelCost, OpenAICompletionsCompat
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1")
+    model_id = os.getenv("LLM_MODEL", "moonshotai/kimi-k2-thinking")
+
+    if not api_key:
+        print("[ERROR] OPENAI_API_KEY not set")
+        print("[INFO] Set it in .env file or export OPENAI_API_KEY=your-key")
+        sys.exit(1)
+
+    print(f"[INFO] Using pi_ai Model: {model_id}")
+    print(f"[INFO] API URL: {base_url}")
+
+    return Model(
+        id=model_id,
+        name=model_id,
+        api="openai-completions",
+        provider="openrouter",
+        baseUrl=base_url.rstrip("/"),
+        reasoning=True,
+        cost=ModelCost(),
+        headers={"Authorization": f"Bearer {api_key}"},
+        compat=OpenAICompletionsCompat(thinkingFormat="openrouter"),
     )
 
 
