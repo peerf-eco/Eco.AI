@@ -922,24 +922,33 @@ async def v6_chat_endpoint(websocket: WebSocket):
 
 # ═══════════════════════════════════════════════════════════════════════════
 # V7 WEBSOCKET — three-agent pipeline (architect → coder → tester) with
-# backward handoff edges. No LangGraph, no checkpointer, no HITL interrupts.
+# backward handoff edges and HITL plan review.
 #
-# Reuses the v6 client event shape so the existing frontend (use-v6-socket.ts)
-# can render v7 with no changes beyond the WS URL — see frontend env flag
-# NEXT_PUBLIC_PIPELINE_VERSION=v7.
+# Flow:
+#   1. User sends user_request.
+#   2. Architect (planner) runs. Its handoff (to_coder.message) is surfaced
+#      to the UI as plan_review_required.
+#   3. User clicks Approve → coder+tester sub-orchestrator runs with the plan
+#      as seed. User clicks Reject + comment → planner re-runs with user_req
+#      + feedback appended. User can iterate plans as many times as needed.
+#   4. If planner stops via `fail` instead of `to_coder`, pipeline ends as
+#      pipeline_done(failed).
 #
-# Mapping (v7 internal → v6 client event):
+# Reuses the v6 client event shape: plan_review_required + plan_decision are
+# exactly what the existing frontend (use-v6-socket.ts) already handles.
+#
+# Mapping (internal → v6 client event):
 #   architect-agent active   → phase_change phase=planning node=planner
 #   coder-agent active       → phase_change phase=coding   node=coder
 #   tester-agent active      → phase_change phase=testing  node=tester
 #   EcoAgent.TEXT_DELTA      → node_event event=text_delta
 #   EcoAgent.THINKING_DELTA  → node_event event=thinking_delta
 #   EcoAgent.TOOL_START/END  → node_event event=tool_call_start|end
+#   EcoAgent.DONE handoff    → node_event event=text_delta (surfaces message)
+#   EcoAgent.ERROR           → node_event event=error
+#   planner.to_coder         → plan_review_required (HITL gate)
+#   user plan_decision       → consumed, then approve/reject branch
 #   orchestrator terminates  → pipeline_done status=success|failed
-#
-# Note: v7 has no plan_gate or escalate, so plan_review_required and
-# escalation_required events are NEVER emitted. The frontend already tolerates
-# their absence (use-v6-socket.ts only renders them on receipt).
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.websocket("/ws/v7/chat")
@@ -947,8 +956,10 @@ async def v7_chat_endpoint(websocket: WebSocket):
     await websocket.accept()
 
     # Lazy imports — keep startup light even if v7 layer churns.
-    from agent.v6.entry import build_v7_pipeline
-    from agent.v6.eco_agent import EventType
+    from agent.v6.agents.architect import make_architect
+    from agent.v6.agents.coder import make_coder
+    from agent.v6.agents.tester import make_tester
+    from agent.v6.orchestrator import Orchestrator
 
     # V7 uses pi_ai.Model directly (no langchain). This is the path where
     # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
@@ -975,6 +986,93 @@ async def v7_chat_endpoint(websocket: WebSocket):
     PHASE_OF = {"architect": "planning", "coder": "coding",  "tester": "testing"}
     NODE_OF  = {"architect": "planner",  "coder": "coder",   "tester": "tester"}
 
+    loop = asyncio.get_event_loop()
+
+    def _make_on_event(ev_queue: asyncio.Queue, agent_name: str):
+        """Build an on_event callback for a specific agent name. Called from
+        the worker thread spawned by asyncio.to_thread — we marshal events
+        through ev_queue to the main loop's drain task."""
+        def on_event(eco_event):
+            try:
+                loop.call_soon_threadsafe(
+                    ev_queue.put_nowait,
+                    {"agent": agent_name, "event": eco_event},
+                )
+            except RuntimeError:
+                pass  # loop closed, drop event silently
+        return on_event
+
+    async def _drain_events_until_sentinel(ev_queue: asyncio.Queue, sentinel) -> None:
+        """Drain ev_queue, forwarding events to the WebSocket until sentinel arrives.
+
+        Resets current_agent on each call so a fresh phase_change is emitted
+        at the start of each agent run (planner / coder+tester are separate runs)."""
+        current_agent: str | None = None
+        while True:
+            item = await ev_queue.get()
+            if item is sentinel:
+                return
+            agent = item.get("agent")
+            ev = item.get("event")
+            if agent is None or ev is None:
+                continue
+            if agent != current_agent:
+                current_agent = agent
+                await websocket.send_json({
+                    "type":  "phase_change",
+                    "phase": PHASE_OF.get(agent, "planning"),
+                    "node":  NODE_OF.get(agent, "planner"),
+                })
+            etype = ev.type.value if hasattr(ev.type, "value") else str(ev.type)
+            if etype in ("text_delta", "thinking_delta",
+                         "tool_call_start", "tool_call_end"):
+                await websocket.send_json({
+                    "type":  "node_event",
+                    "node":  NODE_OF.get(agent, "planner"),
+                    "event": etype,
+                    "data":  ev.data or {},
+                })
+            elif etype == "done":
+                # Stop-tool reached. Surface stop_payload.message so the user
+                # sees coder/tester handoff text. Planner's handoff is handled
+                # specially below via plan_review_required.
+                pld = (ev.data or {}).get("payload") or {}
+                stop_tool = (ev.data or {}).get("stop_tool", "")
+                message = pld.get("message") or pld.get("reason") or ""
+                if message and agent != "architect":
+                    header = f"\n\n--- {stop_tool} ---\n" if stop_tool else "\n\n"
+                    await websocket.send_json({
+                        "type":  "node_event",
+                        "node":  NODE_OF.get(agent, "planner"),
+                        "event": "text_delta",
+                        "data":  {"content": header + message},
+                    })
+            elif etype == "error":
+                reason = (ev.data or {}).get("reason", "")
+                await websocket.send_json({
+                    "type":  "node_event",
+                    "node":  NODE_OF.get(agent, "planner"),
+                    "event": "error",
+                    "data":  {"reason": reason},
+                })
+
+    async def _run_agent(agent_runner, ev_queue: asyncio.Queue, *args):
+        """Run agent_runner(*args) in a worker thread and drain events
+        concurrently. Returns the agent's result. Pushes a sentinel after
+        the runner finishes to stop the drain task cleanly."""
+        sentinel = object()
+
+        async def run_and_signal():
+            try:
+                return await asyncio.to_thread(agent_runner, *args)
+            finally:
+                loop.call_soon_threadsafe(ev_queue.put_nowait, sentinel)
+
+        run_task = asyncio.create_task(run_and_signal())
+        drain_task = asyncio.create_task(_drain_events_until_sentinel(ev_queue, sentinel))
+        result, _ = await asyncio.gather(run_task, drain_task)
+        return result
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -986,13 +1084,10 @@ async def v7_chat_endpoint(websocket: WebSocket):
 
             msg_type = payload.get("type", "user_request")
             if msg_type == "abort":
-                # v7 orchestrator.run is sync inside to_thread — we can't cancel
-                # mid-run. Surface as a clean done so the UI unfreezes.
                 await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
                 break
             if msg_type in ("plan_decision", "escalation_decision"):
-                # v7 has no HITL interrupts — silently ignore these v6 leftovers
-                # if the frontend sends them by mistake.
+                # Stale message from a previous run with no active gate. Ignore.
                 continue
 
             user_req = (
@@ -1005,107 +1100,143 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "content": "Missing user_request"})
                 continue
 
-            # ── Event bridge: sync on_event (called from to_thread worker) →
-            #    asyncio.Queue → main loop sends through WebSocket.
-            loop = asyncio.get_event_loop()
-            ev_queue: asyncio.Queue = asyncio.Queue()
-            SENTINEL = object()
+            # ── Phase 1: plan-review loop (planner re-runs on reject + feedback) ──
+            planner_seed = user_req
+            approved_plan_md: str | None = None
+            terminate_chat = False
 
-            def on_event(wrapped: dict):
-                # wrapped = {"agent": "architect|coder|tester", "event": EcoAgentEvent}
-                # Runs in the worker thread spawned by asyncio.to_thread.
+            while True:
+                ev_queue: asyncio.Queue = asyncio.Queue()
+                planner = make_architect(
+                    model=model, cli_path=cli_path, project_dir=project_dir,
+                    on_event=_make_on_event(ev_queue, "architect"),
+                )
                 try:
-                    loop.call_soon_threadsafe(ev_queue.put_nowait, wrapped)
-                except RuntimeError:
-                    pass  # loop closed, drop event silently
+                    planner_result = await _run_agent(planner.run, ev_queue, planner_seed)
+                except Exception as e:
+                    logger.exception(f"[V7 WS] planner crashed thread_id={thread_id}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": f"Planner crashed: {type(e).__name__}: {e}",
+                    })
+                    terminate_chat = True
+                    break
 
-            orch = build_v7_pipeline(
-                model=model,
-                cli_path=cli_path,
-                project_dir=project_dir,
-                make_exe=make_exe,
-                on_event=on_event,
+                # Planner couldn't reach a stop-tool — surface as pipeline_done(failed).
+                if planner_result.status != "done":
+                    await websocket.send_json({
+                        "type": "pipeline_done",
+                        "status": "failed",
+                        "build_artifact": "",
+                        "tester_report_md": (
+                            f"Planner ended without handoff.\n"
+                            f"status: {planner_result.status}\n"
+                            f"error: {planner_result.error or '(none)'}\n\n"
+                            f"(orchestrator: agent_failed, hops=0)"
+                        ),
+                    })
+                    terminate_chat = True
+                    break
+
+                # Planner declared an honest fail — pipeline ends here.
+                if planner_result.stop_tool_name == "fail":
+                    fail_reason = (planner_result.stop_payload or {}).get("reason", "") \
+                                  or (planner_result.stop_payload or {}).get("message", "")
+                    await websocket.send_json({
+                        "type": "pipeline_done",
+                        "status": "failed",
+                        "build_artifact": "",
+                        "tester_report_md": (
+                            f"Planner declared fail.\n\n{fail_reason}\n\n"
+                            f"(orchestrator: terminal, edge=fail, hops=1)"
+                        ),
+                    })
+                    terminate_chat = True
+                    break
+
+                # Planner reached to_coder — show the plan for user review.
+                plan_md = (planner_result.stop_payload or {}).get("message", "")
+                await websocket.send_json({
+                    "type":         "plan_review_required",
+                    "plan_md":      plan_md,
+                    "components":   [],
+                    "project_name": "",
+                })
+
+                # Wait for the user's plan_decision (or abort).
+                decision_received = False
+                while not decision_received:
+                    raw2 = await websocket.receive_text()
+                    try:
+                        p2 = json.loads(raw2)
+                    except json.JSONDecodeError:
+                        continue
+                    p2_type = p2.get("type")
+                    if p2_type == "abort":
+                        await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
+                        terminate_chat = True
+                        decision_received = True
+                        break
+                    if p2_type != "plan_decision":
+                        # ignore stale events
+                        continue
+                    if bool(p2.get("approved")):
+                        approved_plan_md = p2.get("modified_plan_md") or plan_md
+                        decision_received = True
+                        break
+                    # Rejected — re-run planner with feedback appended.
+                    reason = (p2.get("reason") or "").strip()
+                    planner_seed = user_req
+                    if reason:
+                        planner_seed = (
+                            user_req
+                            + "\n\n=== Feedback on your previous plan ===\n"
+                            + reason
+                            + "\n\nRevise the plan addressing this feedback."
+                        )
+                    decision_received = True
+                    # Outer while restarts planner with the new seed.
+
+                if terminate_chat or approved_plan_md is not None:
+                    break
+                # else: rejected, loop continues with planner re-run
+
+            if terminate_chat or approved_plan_md is None:
+                break  # exit per-message loop
+
+            # ── Phase 2: run coder + tester sub-orchestrator with approved plan ──
+            ev_queue = asyncio.Queue()
+            coder = make_coder(
+                model=model, project_dir=project_dir, make_exe=make_exe,
+                on_event=_make_on_event(ev_queue, "coder"),
+            )
+            tester = make_tester(
+                model=model, project_dir=project_dir,
+                on_event=_make_on_event(ev_queue, "tester"),
+            )
+            # coder.to_architect edge is terminated as None — we don't restart
+            # the planner from inside the sub-orchestrator (user already approved
+            # the plan; if coder thinks the plan is wrong, it should fail honestly).
+            sub_orch = Orchestrator(
+                agents={"coder": coder, "tester": tester},
+                edges={
+                    "coder":  {"to_tester": "tester", "to_architect": None, "fail": None},
+                    "tester": {"to_coder":  "coder",  "done":         None, "fail": None},
+                },
+                entry="coder",
+                max_hops=8,
             )
 
-            async def run_orchestrator():
-                try:
-                    return await asyncio.to_thread(orch.run, user_req)
-                finally:
-                    loop.call_soon_threadsafe(ev_queue.put_nowait, SENTINEL)
-
-            async def drain_events():
-                current_agent: str | None = None
-                while True:
-                    item = await ev_queue.get()
-                    if item is SENTINEL:
-                        return
-                    agent = item.get("agent")
-                    ev = item.get("event")
-                    if agent is None or ev is None:
-                        continue
-                    if agent != current_agent:
-                        current_agent = agent
-                        await websocket.send_json({
-                            "type":  "phase_change",
-                            "phase": PHASE_OF.get(agent, "planning"),
-                            "node":  NODE_OF.get(agent, "planner"),
-                        })
-                    etype = ev.type.value if hasattr(ev.type, "value") else str(ev.type)
-                    if etype in ("text_delta", "thinking_delta",
-                                 "tool_call_start", "tool_call_end"):
-                        await websocket.send_json({
-                            "type":  "node_event",
-                            "node":  NODE_OF.get(agent, "planner"),
-                            "event": etype,
-                            "data":  ev.data or {},
-                        })
-                    elif etype == "done":
-                        # The agent finished via a stop-tool. stop_payload.message
-                        # is the human-readable handoff text (architect's plan,
-                        # coder's build report, tester's verdict). Surface it in
-                        # the chat as a text_delta so the existing frontend handler
-                        # renders it without UI changes.
-                        payload = (ev.data or {}).get("payload") or {}
-                        stop_tool = (ev.data or {}).get("stop_tool", "")
-                        message = payload.get("message") or payload.get("reason") or ""
-                        if message:
-                            header = f"\n\n--- {stop_tool} ---\n" if stop_tool else "\n\n"
-                            await websocket.send_json({
-                                "type":  "node_event",
-                                "node":  NODE_OF.get(agent, "planner"),
-                                "event": "text_delta",
-                                "data":  {"content": header + message},
-                            })
-                    elif etype == "error":
-                        # Stream-level error from pi_ai (HTTP fail, abort, etc.).
-                        # Surface so the UI shows the actual failure reason instead
-                        # of a generic "agent_failed".
-                        reason = (ev.data or {}).get("reason", "")
-                        await websocket.send_json({
-                            "type":  "node_event",
-                            "node":  NODE_OF.get(agent, "planner"),
-                            "event": "error",
-                            "data":  {"reason": reason},
-                        })
-                    # Other EcoAgent events (start/iteration/no_tool_call/max_iters)
-                    # are bookkeeping — orchestrator-level done is emitted below.
-
             try:
-                run_task = asyncio.create_task(run_orchestrator())
-                drain_task = asyncio.create_task(drain_events())
-                result, _ = await asyncio.gather(run_task, drain_task)
+                result = await _run_agent(sub_orch.run, ev_queue, approved_plan_md)
             except Exception as e:
-                logger.exception(f"[V7 WS] orchestrator crashed thread_id={thread_id}")
+                logger.exception(f"[V7 WS] sub_orch crashed thread_id={thread_id}")
                 await websocket.send_json({
                     "type": "error",
                     "content": f"Orchestrator error: {type(e).__name__}: {e}",
                 })
                 break
 
-            # Translate OrchestratorResult into v6-shape pipeline_done.
-            #   terminal + edge=done → success
-            #   terminal + edge=fail → failed (with last_message as reason)
-            #   anything else        → failed (loop_exceeded / agent_failed / unknown_edge)
             success = (result.status == "terminal" and result.terminal_edge == "done")
             await websocket.send_json({
                 "type":             "pipeline_done",
