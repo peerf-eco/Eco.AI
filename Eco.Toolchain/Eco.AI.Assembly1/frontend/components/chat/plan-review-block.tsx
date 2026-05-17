@@ -2,11 +2,10 @@
 
 import { useState } from "react";
 import { CheckCircle2, XCircle, Package, FileText } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { EnhancedMarkdown } from "./enhanced-markdown";
 import type { PlanReviewBlock as PlanReviewBlockType } from "./types";
 
 interface PlanReviewBlockProps {
@@ -51,11 +50,11 @@ export function PlanReviewBlock({ block, disabled, onDecision }: PlanReviewBlock
       <div className="p-4 space-y-3">
         {/* Plan markdown — toggle between viewer and editable textarea */}
         {!showEdit ? (
-          <div className="prose prose-sm prose-invert max-w-none leading-relaxed
-            prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1 prose-li:my-0.5
-            prose-code:text-blue-300 prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{edited}</ReactMarkdown>
-          </div>
+          <EnhancedMarkdown
+            className="prose prose-sm prose-invert max-w-none leading-relaxed
+              prose-p:my-1.5 prose-ul:my-1 prose-li:my-0.5
+              prose-code:text-blue-300 prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded"
+          >{edited}</EnhancedMarkdown>
         ) : (
           <textarea
             value={edited}

@@ -11,13 +11,13 @@ import {
   Download,
   AlertCircle,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { EnhancedMarkdown } from "./enhanced-markdown";
 import { PlanReviewBlock as PlanReviewBlockView } from "./plan-review-block";
 import { EscalationBlock as EscalationBlockView } from "./escalation-block";
 import { ToolCallBlock as ToolCallBlockView } from "./tool-call-block";
+import { ThinkingBlock as ThinkingBlockView } from "./thinking-block";
 import {
   PHASE_LABEL,
   type Block,
@@ -94,7 +94,7 @@ function BlockView({
             prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5
             prose-li:my-0.5 prose-pre:my-2 prose-strong:text-white
             prose-code:text-blue-300 prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{block.content}</ReactMarkdown>
+            <EnhancedMarkdown>{block.content}</EnhancedMarkdown>
           </div>
         </div>
       );
@@ -153,7 +153,7 @@ function BlockView({
                 Summary
               </summary>
               <div className="mt-1 prose prose-sm prose-invert max-w-none prose-p:my-1">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{block.summaryMd}</ReactMarkdown>
+                <EnhancedMarkdown>{block.summaryMd}</EnhancedMarkdown>
               </div>
             </details>
           )}
@@ -191,6 +191,9 @@ function BlockView({
 
     case "tool_call":
       return <ToolCallBlockView block={block} />;
+
+    case "thinking":
+      return <ThinkingBlockView block={block} />;
 
     case "plan_review":
       return (
@@ -249,7 +252,7 @@ function BlockView({
                     Tester report
                   </summary>
                   <div className="mt-1 prose prose-sm prose-invert max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{block.testerReportMd}</ReactMarkdown>
+                    <EnhancedMarkdown>{block.testerReportMd}</EnhancedMarkdown>
                   </div>
                 </details>
               )}

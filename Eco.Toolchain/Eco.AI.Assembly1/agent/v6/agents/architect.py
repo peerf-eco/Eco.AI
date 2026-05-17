@@ -112,6 +112,24 @@ not on rediscovery:
   ## Project layout
   <where source files / Makefile should live under project_dir>
 
+  ## Architecture diagram
+  <mandatory ```mermaid block describing the component structure or
+   call-flow. Use 'graph TD' or 'flowchart LR' for components,
+   'sequenceDiagram' for the runtime interaction. Show: the user-facing
+   entry (main / TUI), each marketplace component the app consumes
+   (label with its name), and each custom code piece. Arrows show
+   "calls" or "queries interface" relationships. Keep node labels short
+   (1-3 words). Example:
+     ```mermaid
+     flowchart LR
+       User-->Main
+       Main-->TUI[TUI loop]
+       TUI-->CalcEngine
+       CalcEngine-->|sin/cos/log|EcoMath["Eco.Math.C89"]
+     ```
+   This diagram is rendered for the user during plan review — make it
+   honest about which boxes are marketplace components vs to-be-written.>
+
   ## Interface contracts
   <for each consumed marketplace interface: function signatures pulled
    from headers; for each custom component: the interface it should expose>

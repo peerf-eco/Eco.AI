@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import uuid
@@ -951,6 +952,31 @@ async def v6_chat_endpoint(websocket: WebSocket):
 #   orchestrator terminates  → pipeline_done status=success|failed
 # ═══════════════════════════════════════════════════════════════════════════
 
+_MERMAID_FENCE_RE = re.compile(
+    r"```mermaid\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE,
+)
+
+
+def _save_mermaid_blocks(plan_md: str, project_dir: Path) -> list[Path]:
+    """Extract ```mermaid fenced blocks from the planner's handoff markdown
+    and save each into project_dir/docs/architecture_NN.mmd. Returns the
+    list of paths written (empty if no diagrams in the plan)."""
+    blocks = [m.group(1).strip() for m in _MERMAID_FENCE_RE.finditer(plan_md)]
+    if not blocks:
+        return []
+    docs_dir = project_dir / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for i, body in enumerate(blocks, start=1):
+        path = docs_dir / (f"architecture.mmd" if i == 1 else f"architecture_{i}.mmd")
+        try:
+            path.write_text(body + "\n", encoding="utf-8")
+            written.append(path)
+        except OSError:
+            logger.exception(f"failed to save mermaid block {i} to {path}")
+    return written
+
+
 @app.websocket("/ws/v7/chat")
 async def v7_chat_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -1203,6 +1229,18 @@ async def v7_chat_endpoint(websocket: WebSocket):
 
             if terminate_chat or approved_plan_md is None:
                 break  # exit per-message loop
+
+            # Persist any mermaid diagrams from the approved plan so the coder
+            # (and post-mortem inspection) has them on disk under project_dir/docs/.
+            try:
+                saved = _save_mermaid_blocks(approved_plan_md, project_dir)
+                if saved:
+                    logger.info(
+                        f"[V7 WS] saved {len(saved)} mermaid diagram(s) for "
+                        f"thread_id={thread_id}: {[str(p) for p in saved]}"
+                    )
+            except Exception:
+                logger.exception(f"[V7 WS] mermaid save failed thread_id={thread_id}")
 
             # ── Phase 2: run coder + tester sub-orchestrator with approved plan ──
             ev_queue = asyncio.Queue()
