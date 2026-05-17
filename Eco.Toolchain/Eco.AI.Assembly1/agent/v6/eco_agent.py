@@ -30,16 +30,17 @@ class EcoTool:
 
 
 class EventType(str, Enum):
-    START         = "start"
-    TEXT_DELTA    = "text_delta"        # reserved for future streaming
-    TOOL_START    = "tool_call_start"
-    TOOL_END      = "tool_call_end"
-    TOOL_UPDATE   = "tool_update"
-    ITERATION     = "iteration"
-    DONE          = "done"
-    NO_TOOL_CALL  = "no_tool_call"
-    MAX_ITERS     = "max_iters"
-    ERROR         = "error"
+    START          = "start"
+    TEXT_DELTA     = "text_delta"        # streaming visible content (final answer tokens)
+    THINKING_DELTA = "thinking_delta"    # streaming reasoning/thinking tokens
+    TOOL_START     = "tool_call_start"
+    TOOL_END       = "tool_call_end"
+    TOOL_UPDATE    = "tool_update"
+    ITERATION      = "iteration"
+    DONE           = "done"
+    NO_TOOL_CALL   = "no_tool_call"
+    MAX_ITERS      = "max_iters"
+    ERROR          = "error"
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,79 @@ class EcoAgent:
             return [HumanMessage(content=seed)]
         return list(seed)
 
+    @staticmethod
+    def _extract_chunk_text(chunk_content) -> str:
+        """`content` on AIMessageChunk is usually a string but providers may
+        send a list of typed parts ({"type": "text", "text": "..."}). Pull
+        only the text fragments so tool_use / image_url parts don't leak
+        into the stream as garbage."""
+        if isinstance(chunk_content, str):
+            return chunk_content
+        if isinstance(chunk_content, list):
+            parts: list[str] = []
+            for part in chunk_content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(str(part.get("text", "")))
+            return "".join(parts)
+        return ""
+
+    @staticmethod
+    def _extract_chunk_reasoning(chunk) -> str:
+        """OpenRouter forwards reasoning models' chain-of-thought in
+        AIMessageChunk.additional_kwargs under one of several keys depending
+        on the provider/version. Coalesce them so the UI sees a single
+        thinking-stream regardless of vendor."""
+        ak = getattr(chunk, "additional_kwargs", None) or {}
+        for key in ("reasoning_content", "reasoning", "thinking"):
+            val = ak.get(key)
+            if isinstance(val, str) and val:
+                return val
+        return ""
+
+    def _stream_llm(self, history: list[BaseMessage]) -> BaseMessage:
+        """Stream the bound LLM, emit token deltas, return the merged AIMessage.
+
+        Two execution paths:
+        - pi_ai bridge (preferred): when llm is a langchain_openai.ChatOpenAI
+          pointed at an OpenAI-compat endpoint, route through pi_ai to get
+          correct reasoning passthrough (langchain_openai 1.2.1 drops
+          delta.reasoning silently).
+        - legacy llm.stream(): for ScriptedChatModel in tests and any other
+          BaseChatModel that doesn't expose the ChatOpenAI shape.
+
+        Why streaming inside a synchronous loop: LangGraph nodes are invoked
+        synchronously by `astream(stream_mode="updates")`, so we cannot await
+        here. The pi_ai bridge uses asyncio.run() inside; ChatModel.stream()
+        yields chunks synchronously.
+        """
+        # Try the pi_ai bridge first — it's the whole reason we're here.
+        from agent.v6._pi_ai_bridge import is_chat_openai_like, stream_eco_via_pi_ai
+        if is_chat_openai_like(self.llm):
+            return stream_eco_via_pi_ai(
+                llm=self.llm,
+                history=history,
+                eco_tools=list(self.tools.values()),
+                on_text_delta=lambda d: self._emit(EventType.TEXT_DELTA, {"content": d}),
+                on_thinking_delta=lambda d: self._emit(EventType.THINKING_DELTA, {"content": d}),
+            )
+
+        # Legacy path: ScriptedChatModel in tests and other non-ChatOpenAI providers.
+        merged = None
+        for chunk in self._llm_bound.stream(history):
+            merged = chunk if merged is None else merged + chunk
+            text = self._extract_chunk_text(chunk.content)
+            if text:
+                self._emit(EventType.TEXT_DELTA, {"content": text})
+            reasoning = self._extract_chunk_reasoning(chunk)
+            if reasoning:
+                self._emit(EventType.THINKING_DELTA, {"content": reasoning})
+        if merged is None:
+            from langchain_core.messages import AIMessage
+            return AIMessage(content="")
+        return merged
+
     # ── main entrypoint ────────────────────────────────────────────────────
     def run(self, seed) -> EcoAgentResult:
         self._emit(EventType.START)
@@ -131,7 +205,7 @@ class EcoAgent:
             self._emit(EventType.ITERATION, {"i": i})
 
             try:
-                resp = self._llm_bound.invoke(history)
+                resp = self._stream_llm(history)
             except Exception as e:
                 self._emit(EventType.ERROR, {"reason": str(e)})
                 return EcoAgentResult(
