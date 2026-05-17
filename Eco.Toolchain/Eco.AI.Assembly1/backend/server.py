@@ -1059,8 +1059,36 @@ async def v7_chat_endpoint(websocket: WebSocket):
                             "event": etype,
                             "data":  ev.data or {},
                         })
-                    # Other EcoAgent events (start/iteration/done/error/etc) are
-                    # bookkeeping — orchestrator-level done is emitted below.
+                    elif etype == "done":
+                        # The agent finished via a stop-tool. stop_payload.message
+                        # is the human-readable handoff text (architect's plan,
+                        # coder's build report, tester's verdict). Surface it in
+                        # the chat as a text_delta so the existing frontend handler
+                        # renders it without UI changes.
+                        payload = (ev.data or {}).get("payload") or {}
+                        stop_tool = (ev.data or {}).get("stop_tool", "")
+                        message = payload.get("message") or payload.get("reason") or ""
+                        if message:
+                            header = f"\n\n--- {stop_tool} ---\n" if stop_tool else "\n\n"
+                            await websocket.send_json({
+                                "type":  "node_event",
+                                "node":  NODE_OF.get(agent, "planner"),
+                                "event": "text_delta",
+                                "data":  {"content": header + message},
+                            })
+                    elif etype == "error":
+                        # Stream-level error from pi_ai (HTTP fail, abort, etc.).
+                        # Surface so the UI shows the actual failure reason instead
+                        # of a generic "agent_failed".
+                        reason = (ev.data or {}).get("reason", "")
+                        await websocket.send_json({
+                            "type":  "node_event",
+                            "node":  NODE_OF.get(agent, "planner"),
+                            "event": "error",
+                            "data":  {"reason": reason},
+                        })
+                    # Other EcoAgent events (start/iteration/no_tool_call/max_iters)
+                    # are bookkeeping — orchestrator-level done is emitted below.
 
             try:
                 run_task = asyncio.create_task(run_orchestrator())
