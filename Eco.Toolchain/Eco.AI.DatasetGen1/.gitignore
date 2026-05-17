@@ -23,8 +23,10 @@ env/
 .coverage.*
 htmlcov/
 
-# Runtime outputs and generated reports
+# Runtime outputs (per-repo datasets + reports)
 outputs/
+datasets/
+reports/
 *.jsonl
 tests/
 first_ex/
@@ -39,3 +41,4 @@ first_ex/
 .DS_Store
 .idea/
 .vscode/
+

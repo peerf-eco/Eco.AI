@@ -1,5 +1,7 @@
 # Eco.AI.Data — Полный отчёт по проекту
 
+> **Актуальный запуск и формат вывода** — см. [README.md](README.md): `outputs/<repo>/` (зеркало путей + `<repo>.jsonl` + `reports/`), команда `eco-ai-data analyze`. Разделы ниже с `pipeline.jsonl`, `qa-flatten` и `by_source_file` описывают ранние итерации.
+
 ## 1. Введение и цель проекта
 
 ### 1.1 Исходная задача

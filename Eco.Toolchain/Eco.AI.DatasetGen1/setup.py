@@ -11,6 +11,7 @@ setup(
         "console_scripts": [
             "eco-ai-data=eco_ai_data.cli.main_cli:main",
             "eco-ai-data-doc=eco_ai_data.cli.doc_main_cli:main",
+            "eco-ai-data-quality=eco_ai_data.cli.quality_cli:main",
         ]
     },
 )

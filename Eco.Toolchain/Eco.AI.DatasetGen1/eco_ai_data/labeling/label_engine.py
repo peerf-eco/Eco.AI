@@ -44,11 +44,16 @@ _BAD_ANSWER_HEDGE_RE = re.compile(
 
 def _dotenv_candidate_paths() -> List[Path]:
     here = Path(__file__).resolve().parent
-    return [
-        Path.cwd() / ".env",
-        here.parent.parent / ".env",
-        here.parent.parent.parent / ".env",
-    ]
+    paths: List[Path] = [Path.cwd() / ".env"]
+    cur = here
+    for _ in range(10):
+        candidate = cur / ".env"
+        if candidate not in paths:
+            paths.append(candidate)
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return paths
 
 
 def _parse_openai_key_from_env_file(path: Path) -> Optional[str]:
@@ -62,13 +67,15 @@ def _parse_openai_key_from_env_file(path: Path) -> Optional[str]:
         s = line.strip()
         if not s or s.startswith("#"):
             continue
-        if not s.startswith("OPENAI_API_KEY"):
+        if not (s.startswith("OPENAI_API_KEY=") or s.startswith("OPENAI_API_KEYS")):
             continue
         _, _, rhs = s.partition("=")
-        raw = rhs.strip()
+        raw = rhs.strip().rstrip(",").strip()
         if "#" in raw and not (raw.startswith('"') or raw.startswith("'")):
             raw = raw.split("#", 1)[0].strip()
-        return _strip_api_key_quotes(raw) or None
+        key = _strip_api_key_quotes(raw)
+        if key and key.startswith("sk-"):
+            return key
     return None
 
 
@@ -544,8 +551,7 @@ class LabelEngine:
     ) -> Optional[str]:
         if not self._qa_answers_via_openai:
             return None
-        key = self._effective_openai_key()
-        if not key:
+        if not self._effective_openai_key():
             return None
         try:
             from openai import OpenAI
@@ -575,6 +581,9 @@ class LabelEngine:
             "You produce answers for a code question-answer dataset. "
             "Be precise and short; prefer explicit control-flow facts from source."
         )
+        key = self._effective_openai_key()
+        if not key:
+            return None
         try:
             client = OpenAI(api_key=key)
             r = client.chat.completions.create(
@@ -759,9 +768,7 @@ class LabelEngine:
             f"Signature:\n{signature}\n\n"
             f"Function source:\n{src}\n"
         )
-        system = (
-            "You create compact task context for implementing existing functions."
-        )
+        system = "You create compact task context for implementing existing functions."
         try:
             client = OpenAI(api_key=key)
             r = client.chat.completions.create(

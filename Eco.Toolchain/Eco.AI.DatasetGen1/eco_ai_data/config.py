@@ -31,7 +31,6 @@ class PipelineConfig:
     tool_name: str = "ast"
     strict_python_only: bool = False
     strict_c_cpp_only: bool = False
-    output_format: str = "json"
     openai_model: str = "gpt-4o-mini"
     openai_api_key: Optional[str] = None
     dataset_mode: str = "generation"
@@ -51,9 +50,6 @@ class PipelineConfig:
         self.dataset_mode = str(self.dataset_mode).lower().strip()
         if self.dataset_mode not in {"generation", "documentation"}:
             raise ValueError("dataset_mode must be 'generation' or 'documentation'")
-        self.output_format = str(self.output_format).lower().strip()
-        if self.output_format not in {"json", "jsonl"}:
-            raise ValueError("output_format must be 'json' or 'jsonl'")
 
     def output_path(self) -> Path:
         path = Path(self.output_dir)
