@@ -1,55 +1,104 @@
-# Project Structure
-
-This document describes the organization of folders and files within the project repository.
-
-## Overview
-
-The project is organized using a strict folder naming convention, where each folder contains files of a specific type and purpose. All folder names use `PascalCase` styling and end with the `Files` suffix.
-
+<<<<<<< HEAD
+# AI проекты 
 ```
-/
-├── AssemblyFiles
-├── BuildFiles
-├── DependenciesFiles
-├── DesignFiles
-├── HeaderFiles
-├── SharedFiles
-├── SourceFiles
-└── UnitTestFiles
+Eco.AI.git/
+├── Eco.Toolchain/                                      # Набор инструментов
+│ ├── Eco.AI.Assembly1/                                 # Сборочное программирование
+│ ├── Eco.AI.ClearSet1/                                 # Проект де-дупликации данных 
+│ ├── Eco.AI.DatasetGen1/                               # Проект генерации данных
+│ ├── Eco.AI.DocsGen1/                                  # Проект генерации документов
+│ ├── Eco.AI.Engine1/                                   # ПО для инференса моделей 
+│ ├── Eco.AI.Inference1/                                # ПО для инференса моделей 
+│ ├── Eco.AI.Promts/                                    # Системные промты 
+│ ├── Eco.AI.Trainer1/                                  # Проект для подготовки данных и обучения моделей
+│ ├── Eco.GGUF1/                                        # Формат файла LLM
+│ ├── Eco.HDF5/                                         # Формат файла BigData/Container/LLM
+│ ├── Eco.ONNX1/                                        # Формат файла LLM
+│ └── Eco.RAG.ChatBot1/                                 # RAG-ассистент по компонентам Eco платформы
+├── Eco.Shell/                                          # Интеллектуальная оболочка управления (Smart Shell)
+└── README.md                                           # Этот файл
 ```
+=======
+# Eco.GGUF1
 
----
+Eco.GGUF1 - это Eco-компонент для чтения, валидации и записи файлов GGUF v3.
+Реализация сохраняет metadata и tensor payload как непрозрачные данные на
+уровне Eco API и при этом сохраняет исходную раскладку файла при round-trip
+записи.
 
-## Folder Descriptions
+## Область применения
 
-### `AssemblyFiles`
+- имя компонента: `EcoGGUF1`
+- публичный корневой интерфейс: `IEcoGGUF1`
+- поддерживаемая версия GGUF: `3`
+- выравнивание тензоров по умолчанию: `32`
+- режим хранения tensor payload:
+  - в памяти для небольших входных данных, загруженных из памяти;
+  - file-backed streaming для `readFile()`, чтобы большие модели не копировались
+    в `IEcoRawData1`.
 
-Contains scripts, configuration files, and tools necessary for the project's build process (e.g., `Makefile`, `pom.xml`, files for CI/CD, or automation scripts).
+## Публичные Eco-интерфейсы
 
-### `BuildFiles`
+Модуль определяет GGUF-специфичные Eco-интерфейсы в `SharedFiles`:
 
-Contains the compiled output files of the project (executables, DLL libraries, `.jar` files, or other build artifacts), ready for deployment or execution.
+- `IEcoGGUF1`
+- `IEcoGGUF1File`
+- `IEcoGGUF1TensorInfo`
+- `IEcoGGUF1MetadataKV`
+- `IEcoGGUF1MetadataValue`
+- `IEcoRawData1`
 
-### `DependenciesFiles`
+Реализации компонентов находятся в `SourceFiles`, а приватные заголовки
+компонентов - в `HeaderFiles`.
 
-Contains third-party libraries, frameworks, and external dependencies of the project that are not part of the core source code. These can be compiled libraries or source files of external packages.
+## Необходимые заголовки Eco SDK
 
-### `DesignFiles`
+В репозитории есть GGUF-специфичные заголовки, но стандартные заголовки Eco
+framework должны быть доступны через include path Eco SDK:
 
-Contains all artifacts related to the design and planning of the project: technical specifications (TS), UML diagrams, user interface mockups (UI/UX), database schemas, and other project documentation.
+- `IEcoBase1.h`
+- `IEcoSystem1.h`
+- `IEcoInterfaceBus1.h`
+- `IEcoList1.h`
+- `IdEcoInterfaceBus1.h`
+- `IdEcoList1.h`
+- `IdEcoMemoryManager1.h`
+- `IdEcoString1.h`
+- `IdEcoFileSystemManagement1.h`
 
-### `HeaderFiles`
+Для Eco unit test дополнительно нужны:
 
-Contains **private** header files (`.h`, `.hpp`) that describe the internal class structures and implementation details of the ACOM/COM components. These files are not intended for public consumption by external clients.
+- `IdEcoLog1.h`
+- `IEcoLog1FileAffiliate.h`
 
-### `SharedFiles`
+В build-проектах нужно добавить include-директорию Eco SDK перед компиляцией
+файлов из `SourceFiles`, `HeaderFiles`, `SharedFiles` и `UnitTestFiles`.
 
-Contains **public** shared ACOM/COM interface header files (`.h`, `.hpp`) and Interface Definition Language source files (`.idl` files). These files provide external clients with the necessary information to interact with your component.
+## Структура исходников
 
-### `SourceFiles`
+- `SharedFiles/` - публичные GGUF Eco-интерфейсы, идентификаторы, определения и
+  локальный заголовок GGUF C API.
+- `HeaderFiles/` - приватные заголовки компонентов.
+- `SourceFiles/` - реализация Eco-компонента и GGUF parser/writer.
+- `DesignFiles/` - локальные design notes и справочные заметки по upstream GGUF.
+- `AssemblyFiles/` - placeholder-директории сборки, соответствующие layout
+  репозиториев Eco-компонентов.
+- `UnitTestFiles/SourceFiles/` - точки входа для Eco-теста и standalone C-теста.
+- `UnitTestFiles/TestFiles/` - локальная директория для sample-файлов. Большие
+  модели `.gguf` и сгенерированные бинарники не должны попадать в commit.
 
-The core folder of the project. Contains the **main source code** of the application (`.c`, `.cpp`, `.py`, `.js`, `.java`, etc.).
+## Валидация
 
-### `UnitTestFiles`
+Текущий GGUF reader/writer проверяет:
 
-Contains unit test files, integration tests, and other scripts for automated testing of the code located within `SourceFiles`.
+- magic и version GGUF;
+- metadata и tensor descriptors;
+- строки с префиксом длины, включая embedded NUL bytes;
+- выравнивание tensor offset;
+- границы tensor data, ожидаемые размеры в байтах и пересечения;
+- защиту от перезаписи исходного файла при source-backed записи.
+
+`writeFileToMemory()` намеренно ограничен контрактом Eco raw-data API, где
+размер представлен как `uint32_t`. Для больших GGUF-моделей используйте
+`writeFile()`.
+>>>>>>> c711e5f4e3a6356e88022fc42210e0310781feee
