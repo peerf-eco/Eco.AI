@@ -62,6 +62,7 @@ class PipelineSession:
 
     V4: interrupt/resume is handled inside chat_agent (GraphInterrupt catch).
     Server only needs to forward prd_approve/reject as new user messages.
+
     """
 
     def __init__(self):
@@ -166,7 +167,9 @@ async def run_pipeline(session: PipelineSession, user_message: str, thread_id: s
     except Exception as e:
         logger.error(f"Pipeline error: {e}", exc_info=True)
         await session.emit({"type": "error", "content": str(e)})
+
         await session.emit({"type": "done", "content": f"Ошибка: {e}"})
+
     finally:
         session.is_done = True
 

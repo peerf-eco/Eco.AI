@@ -1,43 +1,18 @@
-/*
- * <character encoding>
- *   Cyrillic (UTF-8 with signature) - Codepage 65001
- * </character encoding>
- *
- * <summary>
- *   IdEcoGGUF1
- * </summary>
- *
- * <description>
- *   This header describes the interface IdEcoGGUF1
- * </description>
- *
- * <reference>
- *
- * </reference>
- *
- * <author>
- *   Copyright (c) 2018 Vladimir Bashev. All rights reserved.
- * </author>
- *
- */
-
-#ifndef __ID_ECOGGUF1_H__
-#define __ID_ECOGGUF1_H__
+#ifndef __ID_ECO_GGUF_1_H__
+#define __ID_ECO_GGUF_1_H__
 
 #include "IEcoBase1.h"
 #include "IEcoGGUF1.h"
 
-/* EcoGGUF1 CID = {C7ADC3D5-07DD-4913-B5C4-4103B24682B2} */
+/* EcoGGUF1 CID = {A1C53A77-9BCB-4AD7-8B63-4F1A6EAA44B1} */
 #ifndef __CID_EcoGGUF1
-static const UGUID CID_EcoGGUF1 = {0x01, 0x10, {0xC7, 0xAD, 0xC3, 0xD5, 0x07, 0xDD, 0x49, 0x13, 0xB5, 0xC4, 0x41, 0x03, 0xB2, 0x46, 0x82, 0xB2}};
-#endif /* __CID_EcoGGUF1 */
+static const UGUID CID_EcoGGUF1 = {0x01, 0x10, {0xA1, 0xC5, 0x3A, 0x77, 0x9B, 0xCB, 0x4A, 0xD7, 0x8B, 0x63, 0x4F, 0x1A, 0x6E, 0xAA, 0x44, 0xB1}};
+#endif
 
-/* Component factory for dynamic and static layout */
 #ifdef ECO_DLL
 ECO_EXPORT IEcoComponentFactory* ECOCALLMETHOD GetIEcoComponentFactoryPtr();
 #elif ECO_LIB
-extern IEcoComponentFactory* GetIEcoComponentFactoryPtr_C7ADC3D507DD4913B5C44103B24682B2;
+extern IEcoComponentFactory* GetIEcoComponentFactoryPtr_A1C53A779BCB4AD78B634F1A6EAA44B1;
 #endif
 
-#endif /* __ID_ECOGGUF1_H__ */
-
+#endif /* __ID_ECO_GGUF_1_H__ */

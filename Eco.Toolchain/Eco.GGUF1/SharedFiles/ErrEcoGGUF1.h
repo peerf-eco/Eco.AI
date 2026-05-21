@@ -1,43 +1,13 @@
-﻿/*
- * <character encoding>
- *   Cyrillic (UTF-8 with signature) - Codepage 65001
- * </character encoding>
- *
- * <summary>
- *   IdEcoGGUF1
- * </summary>
- *
- * <description>
- *   This heading describes the error codes.
- * </description>
- *
- * <reference>
- *
- * </reference>
- *
- * <author>
- *   Copyright (c) 2018 . All rights reserved.
- * </author>
- *
- */
+#ifndef __ERR_ECO_GGUF_1_H__
+#define __ERR_ECO_GGUF_1_H__
 
-#ifndef __ERR_ECOGGUF1_H__
-#define __ERR_ECOGGUF1_H__
+#define ECO_E_GGUF1_OK                    0
+#define ECO_E_GGUF1_FAIL                 -1
+#define ECO_E_GGUF1_INVALID_ARGUMENT     -2
+#define ECO_E_GGUF1_OUT_OF_MEMORY        -3
+#define ECO_E_GGUF1_INVALID_MAGIC        -4
+#define ECO_E_GGUF1_UNSUPPORTED_VERSION  -5
+#define ECO_E_GGUF1_INVALID_ALIGNMENT    -6
+#define ECO_E_GGUF1_NOT_IMPLEMENTED      -7
 
-/*
- * <error code>
- *   ERR_ECOGGUF1_REQ_COMP_LIST
- * </error code>
- *
- * <description>
- *   A component EcoList1 for working with a list is required. 
- * </description>
- *
- * <CID>
- *   CID_EcoList1 = {53884AFC-93C4-48EC-AA92-9C8D3A562281}
- * </CID>
- */
-#define ERR_ECOGGUF1_REQ_COMP_LIST 1001
-
-
-#endif /* __ERR_ECOGGUF1_H__ */
+#endif /* __ERR_ECO_GGUF_1_H__ */

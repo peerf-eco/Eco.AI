@@ -111,42 +111,72 @@ static uint32_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Release(/* in */ IEcoAII
     return pCMe->m_cRef;
 }
 
-/*
- *
- * <summary>
- *   MyFunction Function
- * </summary>
- *
- * <description>
- *   Function
- * </description>
- *
- */
-static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_MyFunction(/* in */ IEcoAIInference1Ptr_t me, /* in */ char_t* Name, /* out */ char_t** copyName) {
+
+static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Load(IEcoAIInference1Ptr_t me, char_t* path) {
     CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
-    int16_t index = 0;
 
     /* Pointer Validation */
-    if (me == 0 || Name == 0 || copyName == 0) {
+    if (me == 0) {
         return ERR_ECO_POINTER;
     }
-
-    /* Copying the string */
-    while(Name[index] != 0) {
-        index++;
-    }
-    pCMe->m_Name = (char_t*)pCMe->m_pIMem->pVTbl->Alloc(pCMe->m_pIMem, index + 1);
-    index = 0;
-    while(Name[index] != 0) {
-        pCMe->m_Name[index] = Name[index];
-        index++;
-    }
-    *copyName = pCMe->m_Name;
 
     return ERR_ECO_SUCCESES;
 }
 
+static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Init(IEcoAIInference1Ptr_t me, IEcoAIModel1* pIModel) {
+    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
 
+    /* Pointer Validation */
+    if (me == 0) {
+        return ERR_ECO_POINTER;
+    }
+
+    return ERR_ECO_SUCCESES;
+}
+
+static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Run(IEcoAIInference1Ptr_t me) {
+    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+
+    /* Pointer Validation */
+    if (me == 0) {
+        return ERR_ECO_POINTER;
+    }
+
+    return ERR_ECO_SUCCESES;
+}
+
+static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Step(IEcoAIInference1Ptr_t me, struct IEcoGraph1Node** ppCurrentNode) {
+    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+
+    /* Pointer Validation */
+    if (me == 0) {
+        return ERR_ECO_POINTER;
+    }
+
+    return ERR_ECO_SUCCESES;
+}
+
+static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Reset(IEcoAIInference1Ptr_t me) {
+    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+
+    /* Pointer Validation */
+    if (me == 0) {
+        return ERR_ECO_POINTER;
+    }
+
+    return ERR_ECO_SUCCESES;
+}
+
+static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_SetStepCallback(IEcoAIInference1Ptr_t me, void (*callback)(struct IEcoGraph1Node* pNode)) {
+    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+
+    /* Pointer Validation */
+    if (me == 0) {
+        return ERR_ECO_POINTER;
+    }
+
+    return ERR_ECO_SUCCESES;
+}
 
 
 /*
@@ -256,9 +286,13 @@ IEcoAIInference1VTbl g_x5B86C037BDDF478E839D457A6A3C0624VTbl_D82986D3 = {
     CEcoAIInference1_D82986D3_QueryInterface,
     CEcoAIInference1_D82986D3_AddRef,
     CEcoAIInference1_D82986D3_Release,
-    CEcoAIInference1_D82986D3_MyFunction
+    CEcoAIInference1_D82986D3_Load,
+    CEcoAIInference1_D82986D3_Init,
+    CEcoAIInference1_D82986D3_Run,
+    CEcoAIInference1_D82986D3_Step,
+    CEcoAIInference1_D82986D3_Reset,
+    CEcoAIInference1_D82986D3_SetStepCallback
 };
-
 
 
 /* Object Instance */

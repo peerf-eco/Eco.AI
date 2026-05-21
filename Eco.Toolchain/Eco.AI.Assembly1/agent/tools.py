@@ -28,6 +28,7 @@ OUTPUT_DIR = BASE_DIR / "output"
 ECO_CLI = REPO_ROOT / "eco.sli" / "eco-cli.exe"
 
 
+
 # ═══════════════════════════════════════════════════════════════════════════
 # TOOL: rag_query — Planner searches ChromaDB for SDK components
 # ═══════════════════════════════════════════════════════════════════════════
@@ -150,6 +151,7 @@ def eco_cli_pull(cid: str, version: str = "latest") -> str:
     logger.info(f"[TOOL eco_cli_pull] cid={cid}, version={version}")
 
     if not ECO_CLI.exists():
+
         return "ERROR: eco-cli.exe not found"
 
     env = os.environ.copy()
@@ -166,6 +168,7 @@ def eco_cli_pull(cid: str, version: str = "latest") -> str:
             timeout=120,
             cwd=str(REPO_ROOT),
             env=env,
+
         )
         output = result.stdout or result.stderr or "No output"
         logger.info(f"[TOOL eco_cli_pull] returncode={result.returncode}")
@@ -369,6 +372,7 @@ def _build_windows(project_path: Path, make_cmd: str) -> str:
 
 # ═══════════════════════════════════════════════════════════════════════════
 # BUILD NODE (non-tool version for graph node use)
+
 # ═══════════════════════════════════════════════════════════════════════════
 
 def classify_build_error(output: str) -> str:
@@ -468,6 +472,7 @@ def build_node(state: Dict[str, Any]) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════
 # TEST EXECUTOR — runs EXE with stdin and checks stdout
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 import json
 
@@ -714,6 +719,7 @@ PLANNER_TOOLS = [rag_query]
 
 # Tools for Architect (V4)
 ARCHITECT_TOOLS = [list_all_components, rag_query, download_component]
+
 
 # Tools for future use (marketplace integration)
 MARKETPLACE_TOOLS = [eco_cli_search, eco_cli_pull]
