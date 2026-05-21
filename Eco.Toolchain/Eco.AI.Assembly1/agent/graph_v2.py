@@ -39,6 +39,7 @@ from .prompts_v2 import (
 from .tools import run_tests
 from .verifier import verify_ecomain
 
+
 # V2 backward-compat: build tool reference for QA node
 # The old `build` tool was replaced by `build_makefile`
 build = build_makefile
@@ -964,6 +965,7 @@ def create_writer_node_v3(llm):
         logger.info(f"[WRITER V3] Has test results: {bool(test_results)}")
 
         # Choose prompt based on whether this is a fix or first generation
+
         if verification_errors and ecomain_content:
             # Verification fix mode — pre-build checks found issues
             logger.info("[WRITER V3] VERIFY FIX mode — correcting issues found before build")
@@ -1018,6 +1020,7 @@ def create_writer_node_v3(llm):
 
 
 def _strip_code_fences(text: str) -> str:
+
     """Extract C code from LLM output, stripping markdown fences and preamble text."""
     text = text.strip()
 
@@ -1037,6 +1040,7 @@ def _strip_code_fences(text: str) -> str:
         return include_match.group(1).strip()
 
     # Strip simple fences as fallback
+
     if text.startswith("```c"):
         text = text[4:]
     elif text.startswith("```"):
@@ -1078,6 +1082,7 @@ def route_after_build(state: AgentStateV3) -> Literal["writer", "planner", "test
     # compile or link error → fix EcoMain.c
     logger.info(f"[ROUTER V3] {error_type} error → WRITER (fix)")
     return "writer"
+
 
 
 def verifier_node(state: AgentStateV3) -> Dict[str, Any]:
@@ -1307,6 +1312,7 @@ def create_agent_graph_v3(llm):
     Create the V3 agent graph for assembly from SDK components.
 
     Architecture:
+
         START → planner → resolver → writer → verifier → build → tester → (writer | END)
                                        ↑          │        ↑                  │
                                        │          │        └──────────────────┘ (tests failed)
@@ -1322,6 +1328,7 @@ def create_agent_graph_v3(llm):
     graph_builder.add_node("resolver", resolver_node)
     graph_builder.add_node("writer", create_writer_node_v3(llm))
     graph_builder.add_node("verifier", verifier_node)
+
     graph_builder.add_node("build", build_node)
     graph_builder.add_node("tester", create_tester_node_v3(llm))
 
@@ -1329,6 +1336,7 @@ def create_agent_graph_v3(llm):
     graph_builder.add_edge(START, "planner")
     graph_builder.add_edge("planner", "resolver")
     graph_builder.add_edge("resolver", "writer")
+
     graph_builder.add_edge("writer", "verifier")
 
     # Conditional edge after verifier: errors → writer fix, ok → build

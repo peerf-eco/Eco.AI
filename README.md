@@ -12,7 +12,8 @@ Eco.AI.git/
 │ ├── Eco.AI.Trainer1/                                  # Проект для подготовки данных и обучения моделей
 │ ├── Eco.GGUF1/                                        # Формат файла LLM
 │ ├── Eco.HDF5/                                         # Формат файла BigData/Container/LLM
-│ └── Eco.ONNX1/                                        # Формат файла LLM
+│ ├── Eco.ONNX1/                                        # Формат файла LLM
+│ └── Eco.RAG.ChatBot1/                                 # RAG-ассистент по компонентам Eco платформы
 ├── Eco.Shell/                                          # Интеллектуальная оболочка управления (Smart Shell)
 └── README.md                                           # Этот файл
 ```

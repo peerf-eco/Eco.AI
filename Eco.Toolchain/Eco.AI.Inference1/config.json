@@ -1,0 +1,15 @@
+{
+  "appType": "Component",
+  "options": {
+    "postfixNamespace": true,
+    "connectionPoints": false,
+    "aggregationInner": false,
+    "aggregationOuter": false,
+    "containmentOuter": false,
+    "unitTest": true,
+    "threadSafe": true
+  },
+  "pathType": "Environment",
+  "author": "Vladimir Bashev",
+  "company": "Peerf"
+}

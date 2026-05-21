@@ -4,11 +4,11 @@
  * </character encoding>
  *
  * <summary>
- *   CEcoAIInference1_D82986D3
+ *   CEcoAIInference1Model_D82986D3
  * </summary>
  *
  * <description>
- *   This source code describes the implementation of the interfaces for CEcoAIInference1_D82986D3
+ *   This source code describes the implementation of the interfaces for CEcoAIInference1Model_D82986D3
  * </description>
  *
  * <author>
@@ -21,7 +21,7 @@
 #include "IEcoSystem1.h"
 #include "IEcoInterfaceBus1.h"
 #include "IEcoInterfaceBus1MemExt.h"
-#include "CEcoAIInference1.h"
+#include "CEcoAIInference1Model.h"
 
 /*
  *
@@ -30,12 +30,12 @@
  * </summary>
  *
  * <description>
- *   QueryInterface function for the IEcoAIInference1 interface
+ *   QueryInterface function for the IEcoAIModel1 interface
  * </description>
  *
  */
-static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_QueryInterface(/* in */ IEcoAIInference1Ptr_t me, /* in */ const UGUID* riid, /* out */ void** ppv) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+static int16_t ECOCALLMETHOD CEcoAIInference1Model_D82986D3_QueryInterface(/* in */ IEcoAIModel1Ptr_t me, /* in */ const UGUID* riid, /* out */ void** ppv) {
+    CEcoAIInference1Model_D82986D3* pCMe = (CEcoAIInference1Model_D82986D3*)me;
 
     /* Pointer Validation */
     if (me == 0 || ppv == 0) {
@@ -43,13 +43,13 @@ static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_QueryInterface(/* in */ I
     }
 
     /* Validate and retrieve requested interface */
-    if ( IsEqualUGUID(riid, &IID_IEcoAIInference1) ) {
-        *ppv = &pCMe->m_pVTblIEcoAIInference1;
-        pCMe->m_pVTblIEcoAIInference1->AddRef((IEcoAIInference1*)pCMe);
+    if ( IsEqualUGUID(riid, &IID_IEcoAIModel1) ) {
+        *ppv = &pCMe->m_pVTblIModel;
+        pCMe->m_pVTblIModel->AddRef((IEcoAIModel1*)pCMe);
     }
     else if ( IsEqualUGUID(riid, &IID_IEcoUnknown) ) {
-        *ppv = &pCMe->m_pVTblIEcoAIInference1;
-        pCMe->m_pVTblIEcoAIInference1->AddRef((IEcoAIInference1*)pCMe);
+        *ppv = &pCMe->m_pVTblIModel;
+        pCMe->m_pVTblIModel->AddRef((IEcoAIModel1*)pCMe);
     }
     else {
         *ppv = 0;
@@ -65,20 +65,19 @@ static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_QueryInterface(/* in */ I
  * </summary>
  *
  * <description>
- *   AddRef function for the IEcoAIInference1 interface
+ *   AddRef function for the IEcoAIModel1 interface
  * </description>
  *
  */
-static uint32_t ECOCALLMETHOD CEcoAIInference1_D82986D3_AddRef(/* in */ IEcoAIInference1Ptr_t me) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+static uint32_t ECOCALLMETHOD CEcoAIInference1Model_D82986D3_AddRef(/* in */ IEcoAIModel1Ptr_t me) {
+    CEcoAIInference1Model_D82986D3* pCMe = (CEcoAIInference1Model_D82986D3*)me;
 
     /* Pointer Validation */
     if (me == 0 ) {
         return -1; /* ERR_ECO_POINTER */
     }
 
-
-    return atomicincrement_int32_t(&pCMe->m_cRef);
+    return ++pCMe->m_cRef;
 }
 
 /*
@@ -88,12 +87,12 @@ static uint32_t ECOCALLMETHOD CEcoAIInference1_D82986D3_AddRef(/* in */ IEcoAIIn
  * </summary>
  *
  * <description>
- *   Release function for the IEcoAIInference1 interface
+ *   Release function for the IEcoAIModel1 interface
  * </description>
  *
  */
-static uint32_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Release(/* in */ IEcoAIInference1Ptr_t me) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+static uint32_t ECOCALLMETHOD CEcoAIInference1Model_D82986D3_Release(/* in */ IEcoAIModel1Ptr_t me) {
+    CEcoAIInference1Model_D82986D3* pCMe = (CEcoAIInference1Model_D82986D3*)me;
 
     /* Pointer Validation */
     if (me == 0 ) {
@@ -101,8 +100,7 @@ static uint32_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Release(/* in */ IEcoAII
     }
 
     /* Decrementing the component's reference count */
-
-    atomicdecrement_int32_t(&pCMe->m_cRef);
+    --pCMe->m_cRef;
     /* If the count is zero, free the instance data */
     if ( pCMe->m_cRef == 0 ) {
         pCMe->Delete(pCMe);
@@ -111,20 +109,8 @@ static uint32_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Release(/* in */ IEcoAII
     return pCMe->m_cRef;
 }
 
-
-static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Load(IEcoAIInference1Ptr_t me, char_t* path) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
-
-    /* Pointer Validation */
-    if (me == 0) {
-        return ERR_ECO_POINTER;
-    }
-
-    return ERR_ECO_SUCCESES;
-}
-
-static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Init(IEcoAIInference1Ptr_t me, IEcoAIModel1* pIModel) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+static int16_t ECOCALLMETHOD CEcoAIInference1Model_D82986D3_get_Graph(IEcoAIModel1Ptr_t me, struct IEcoGraph1** ppIGraph) {
+    CEcoAIInference1Model_D82986D3* pCMe = (CEcoAIInference1Model_D82986D3*)me;
 
     /* Pointer Validation */
     if (me == 0) {
@@ -134,8 +120,8 @@ static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Init(IEcoAIInference1Ptr_
     return ERR_ECO_SUCCESES;
 }
 
-static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Run(IEcoAIInference1Ptr_t me) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+static int16_t ECOCALLMETHOD CEcoAIInference1Model_D82986D3_get_Inputs(IEcoAIModel1Ptr_t me, struct IEcoList1** ppInTensors) {
+    CEcoAIInference1Model_D82986D3* pCMe = (CEcoAIInference1Model_D82986D3*)me;
 
     /* Pointer Validation */
     if (me == 0) {
@@ -145,8 +131,8 @@ static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Run(IEcoAIInference1Ptr_t
     return ERR_ECO_SUCCESES;
 }
 
-static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Step(IEcoAIInference1Ptr_t me, struct IEcoGraph1Node** ppCurrentNode) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+static int16_t ECOCALLMETHOD CEcoAIInference1Model_D82986D3_get_Outputs(IEcoAIModel1Ptr_t me, struct IEcoList1** ppOutTensors) {
+    CEcoAIInference1Model_D82986D3* pCMe = (CEcoAIInference1Model_D82986D3*)me;
 
     /* Pointer Validation */
     if (me == 0) {
@@ -155,29 +141,6 @@ static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Step(IEcoAIInference1Ptr_
 
     return ERR_ECO_SUCCESES;
 }
-
-static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_Reset(IEcoAIInference1Ptr_t me) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
-
-    /* Pointer Validation */
-    if (me == 0) {
-        return ERR_ECO_POINTER;
-    }
-
-    return ERR_ECO_SUCCESES;
-}
-
-static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_SetStepCallback(IEcoAIInference1Ptr_t me, void (*callback)(struct IEcoGraph1Node* pNode)) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
-
-    /* Pointer Validation */
-    if (me == 0) {
-        return ERR_ECO_POINTER;
-    }
-
-    return ERR_ECO_SUCCESES;
-}
-
 
 /*
  *
@@ -190,8 +153,8 @@ static int16_t ECOCALLMETHOD CEcoAIInference1_D82986D3_SetStepCallback(IEcoAIInf
  * </description>
  *
  */
-static int16_t ECOCALLMETHOD initCEcoAIInference1_D82986D3(/*in*/ CEcoAIInference1_D82986D3Ptr_t me, /* in */ IEcoUnknownPtr_t pIUnkSystem) {
-    CEcoAIInference1_D82986D3* pCMe = (CEcoAIInference1_D82986D3*)me;
+static int16_t ECOCALLMETHOD initCEcoAIInference1Model_D82986D3(/*in*/ CEcoAIInference1Model_D82986D3Ptr_t me, /* in */ IEcoUnknownPtr_t pIUnkSystem) {
+    CEcoAIInference1Model_D82986D3* pCMe = (CEcoAIInference1Model_D82986D3*)me;
     IEcoInterfaceBus1* pIBus = 0;
     IEcoInterfaceBus1MemExt* pIMemExt = 0;
     int16_t result = ERR_ECO_POINTER;
@@ -241,7 +204,7 @@ static int16_t ECOCALLMETHOD initCEcoAIInference1_D82986D3(/*in*/ CEcoAIInferenc
  * </description>
  *
  */
-static int16_t ECOCALLMETHOD createCEcoAIInference1_D82986D3(/* in */ CEcoAIInference1_D82986D3Ptr_t pCMe, /* in */ IEcoUnknownPtr_t pIUnkSystem, /* in */ IEcoUnknownPtr_t pIUnkOuter) {
+static int16_t ECOCALLMETHOD createCEcoAIInference1Model_D82986D3(/* in */ CEcoAIInference1Model_D82986D3Ptr_t pCMe, /* in */ IEcoUnknownPtr_t pIUnkSystem, /* in */ IEcoUnknownPtr_t pIUnkOuter) {
     int16_t result = ERR_ECO_POINTER;
 
     /* Pointer Validation */
@@ -264,7 +227,7 @@ static int16_t ECOCALLMETHOD createCEcoAIInference1_D82986D3(/* in */ CEcoAIInfe
  * </description>
  *
  */
-static void ECOCALLMETHOD deleteCEcoAIInference1_D82986D3(/* in */ CEcoAIInference1_D82986D3Ptr_t pCMe) {
+static void ECOCALLMETHOD deleteCEcoAIInference1Model_D82986D3(/* in */ CEcoAIInference1Model_D82986D3Ptr_t pCMe) {
     IEcoMemoryAllocator1* pIMem = 0;
 
     if (pCMe != 0 ) {
@@ -281,26 +244,24 @@ static void ECOCALLMETHOD deleteCEcoAIInference1_D82986D3(/* in */ CEcoAIInferen
     }
 }
 
-/* IEcoAIInference1 Virtual Table */
-IEcoAIInference1VTbl g_x5B86C037BDDF478E839D457A6A3C0624VTbl_D82986D3 = {
-    CEcoAIInference1_D82986D3_QueryInterface,
-    CEcoAIInference1_D82986D3_AddRef,
-    CEcoAIInference1_D82986D3_Release,
-    CEcoAIInference1_D82986D3_Load,
-    CEcoAIInference1_D82986D3_Init,
-    CEcoAIInference1_D82986D3_Run,
-    CEcoAIInference1_D82986D3_Step,
-    CEcoAIInference1_D82986D3_Reset,
-    CEcoAIInference1_D82986D3_SetStepCallback
+/* IEcoAIModel1 Virtual Table */
+IEcoAIModel1VTbl g_xA917977FE60345A9B340ABDC21BAC7E3VTbl_D82986D3 = {
+    CEcoAIInference1Model_D82986D3_QueryInterface,
+    CEcoAIInference1Model_D82986D3_AddRef,
+    CEcoAIInference1Model_D82986D3_Release,
+    CEcoAIInference1Model_D82986D3_get_Graph,
+    CEcoAIInference1Model_D82986D3_get_Inputs,
+    CEcoAIInference1Model_D82986D3_get_Outputs
 };
 
 
+
 /* Object Instance */
-CEcoAIInference1_D82986D3 g_xCEcoAIInference1_D82986D3 = {
-    &g_x5B86C037BDDF478E839D457A6A3C0624VTbl_D82986D3,
-    initCEcoAIInference1_D82986D3,
-    createCEcoAIInference1_D82986D3,
-    deleteCEcoAIInference1_D82986D3,
+CEcoAIInference1Model_D82986D3 g_xCEcoAIInference1Model_D82986D3 = {
+    &g_xA917977FE60345A9B340ABDC21BAC7E3VTbl_D82986D3,
+    initCEcoAIInference1Model_D82986D3,
+    createCEcoAIInference1Model_D82986D3,
+    deleteCEcoAIInference1Model_D82986D3,
     1, /* m_cRef */
     0, /* m_pISys */
     0, /* m_pISys */

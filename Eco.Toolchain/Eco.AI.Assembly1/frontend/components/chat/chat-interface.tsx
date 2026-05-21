@@ -20,6 +20,9 @@ import remarkGfm from "remark-gfm";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WS_URL = API_URL.replace(/^http/, "ws");
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const WS_URL = API_URL.replace(/^http/, "ws");
+
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -419,7 +422,7 @@ export function ChatInterface() {
                             prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
                             <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{msg.content}</ReactMarkdown>
                           </div>
-                        )}
+                        )}4
                       </div>
                     )}
 

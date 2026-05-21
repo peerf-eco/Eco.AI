@@ -777,7 +777,9 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
         - missing_components
         - build_platform
     """
+
     logger.info("[RESOLVER] Starting component resolution...")
+
 
     component_plan = state.get("component_plan", {})
     planned_components = component_plan.get("components", [])
@@ -785,9 +787,11 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
     arch = "amd64"  # Default to x64
     platform = detect_platform()
 
+
     logger.info(f"[RESOLVER] Project: {project_name}")
     logger.info(f"[RESOLVER] Platform: {platform}")
     logger.info(f"[RESOLVER] Planned components: {len(planned_components)}")
+
 
     # 1. Resolve framework components (always required)
     framework_resolved = []
@@ -798,6 +802,7 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
             logger.info(f"[RESOLVER] Framework OK: {fw_name} (CID: {result['cid'][:8]}...)")
         else:
             logger.warning(f"[RESOLVER] Framework component not found: {fw_name}")
+
 
     # 2. Resolve user-requested components
     resolved = []
@@ -843,6 +848,7 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"[RESOLVER] Written Makefile: {makefile_path}")
         logger.info(f"[RESOLVER] Written MakefileExe: {makefile_exe_path}")
 
+
     # 5. Compute include/lib paths for reference
     all_components = framework_resolved + resolved
     include_dirs = []
@@ -859,6 +865,7 @@ def resolver_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"[RESOLVER] Resolved: {len(resolved)} components, {len(framework_resolved)} framework")
     logger.info(f"[RESOLVER] Missing: {len(missing)} components: {missing}")
     logger.info(f"[RESOLVER] Project dir: {project_dir}")
+
 
     return {
         "resolved_components": resolved,
