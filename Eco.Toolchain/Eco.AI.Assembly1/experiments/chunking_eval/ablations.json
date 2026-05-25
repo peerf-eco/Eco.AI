@@ -1,0 +1,1010 @@
+{
+  "index_chunks": 1217,
+  "variants": {
+    "vector_only": {
+      "aggregate": {
+        "queries": 20,
+        "recall_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "comp_recall_at_5": 1.0,
+        "by_category": {
+          "semantic": {
+            "queries": 5,
+            "recall_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "exact_name": {
+            "queries": 5,
+            "recall_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "error_code": {
+            "queries": 5,
+            "recall_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "type_layout": {
+            "queries": 5,
+            "recall_at_5": 1.0,
+            "mrr": 1.0
+          }
+        }
+      },
+      "per_query": [
+        {
+          "id": "sem-01",
+          "category": "semantic",
+          "query": "component for calculating power and square root of a number",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Math.C89/SharedFiles/IEcoMathC89.h"
+        },
+        {
+          "id": "sem-02",
+          "category": "semantic",
+          "query": "how do I register a component on the interface bus",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.InterfaceBus1/SharedFiles/IEcoInterfaceBus1.h"
+        },
+        {
+          "id": "sem-03",
+          "category": "semantic",
+          "query": "manage threads and synchronize critical sections",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.ThreadManager1/SharedFiles/IEcoThreadManager1.h"
+        },
+        {
+          "id": "sem-04",
+          "category": "semantic",
+          "query": "read and write files on disk",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.FileSystemManagement1/SharedFiles/IEcoFile1.h"
+        },
+        {
+          "id": "sem-05",
+          "category": "semantic",
+          "query": "standard I/O like printf and scanf",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.StdIO.C89/SharedFiles/IEcoStdIOC89.h"
+        },
+        {
+          "id": "exact-01",
+          "category": "exact_name",
+          "query": "IEcoComponentFactory interface vtable layout with QueryInterface and Alloc",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.hpp"
+        },
+        {
+          "id": "exact-02",
+          "category": "exact_name",
+          "query": "IEcoSystem1 interface for getting subsystems",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoSystem1.h"
+        },
+        {
+          "id": "exact-03",
+          "category": "exact_name",
+          "query": "IEcoMemoryAllocator1 Allocate Free methods",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.MemoryManager1/SharedFiles/IEcoMemoryAllocator1.hpp"
+        },
+        {
+          "id": "exact-04",
+          "category": "exact_name",
+          "query": "IEcoList1 interface methods Insert Remove",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.List1/SharedFiles/IEcoList1.h"
+        },
+        {
+          "id": "exact-05",
+          "category": "exact_name",
+          "query": "IEcoInterfaceBus1 RegisterComponent",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.InterfaceBus1/SharedFiles/IEcoInterfaceBus1.h"
+        },
+        {
+          "id": "err-01",
+          "category": "error_code",
+          "query": "ERR_ECO_NOBUS meaning",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/ErrEcoCodes.h"
+        },
+        {
+          "id": "err-02",
+          "category": "error_code",
+          "query": "ERR_ECO_NOAGGREGATION code 0xFFEA",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/ErrEcoCodes.h"
+        },
+        {
+          "id": "err-03",
+          "category": "error_code",
+          "query": "ECOCALLMETHOD calling convention macro",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/macros.h"
+        },
+        {
+          "id": "err-04",
+          "category": "error_code",
+          "query": "ECO_EXPORT and ECOCALL function attribute macros",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/depend.h"
+        },
+        {
+          "id": "err-05",
+          "category": "error_code",
+          "query": "CID_EcoMath1 component ID GUID literal",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Math.C89/SharedFiles/IdEcoMathC89.hpp"
+        },
+        {
+          "id": "type-01",
+          "category": "type_layout",
+          "query": "UGUID struct fields Preamble Length Data",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.h"
+        },
+        {
+          "id": "type-02",
+          "category": "type_layout",
+          "query": "IEcoUnknown vtable QueryInterface AddRef Release",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.h"
+        },
+        {
+          "id": "type-03",
+          "category": "type_layout",
+          "query": "int16_t byte_t voidptr_t basic typedefs",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/depend.h"
+        },
+        {
+          "id": "type-04",
+          "category": "type_layout",
+          "query": "list iterator typedef IEcoListEnumerator",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.List1/SharedFiles/IEcoList1.h"
+        },
+        {
+          "id": "type-05",
+          "category": "type_layout",
+          "query": "vector data structure typedef",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Vector1/SharedFiles/IEcoVector1.h"
+        }
+      ]
+    },
+    "bm25_only": {
+      "aggregate": {
+        "queries": 20,
+        "recall_at_1": 0.55,
+        "recall_at_3": 0.75,
+        "recall_at_5": 0.8,
+        "recall_at_10": 0.85,
+        "mrr": 0.651,
+        "comp_recall_at_5": 0.8,
+        "by_category": {
+          "semantic": {
+            "queries": 5,
+            "recall_at_5": 0.8,
+            "mrr": 0.433
+          },
+          "exact_name": {
+            "queries": 5,
+            "recall_at_5": 1.0,
+            "mrr": 0.9
+          },
+          "error_code": {
+            "queries": 5,
+            "recall_at_5": 0.8,
+            "mrr": 0.65
+          },
+          "type_layout": {
+            "queries": 5,
+            "recall_at_5": 0.6,
+            "mrr": 0.622
+          }
+        }
+      },
+      "per_query": [
+        {
+          "id": "sem-01",
+          "category": "semantic",
+          "query": "component for calculating power and square root of a number",
+          "first_rank": null,
+          "mrr": 0.0,
+          "recall_at": {
+            "1": 0.0,
+            "3": 0.0,
+            "5": 0.0,
+            "10": 0.0
+          },
+          "comp_in_top5": false,
+          "top1": "Eco.Core1/SharedFiles/ErrEcoCodes.h"
+        },
+        {
+          "id": "sem-02",
+          "category": "semantic",
+          "query": "how do I register a component on the interface bus",
+          "first_rank": 3,
+          "mrr": 0.333,
+          "recall_at": {
+            "1": 0.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.InterfaceBus1/SharedFiles/IdEcoInterfaceBus1.h"
+        },
+        {
+          "id": "sem-03",
+          "category": "semantic",
+          "query": "manage threads and synchronize critical sections",
+          "first_rank": 2,
+          "mrr": 0.5,
+          "recall_at": {
+            "1": 0.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.ThreadManager1/SharedFiles/IdEcoThreadManager1.h"
+        },
+        {
+          "id": "sem-04",
+          "category": "semantic",
+          "query": "read and write files on disk",
+          "first_rank": 3,
+          "mrr": 0.333,
+          "recall_at": {
+            "1": 0.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.OpenGLES1/SharedFiles/IEcoOpenGLES1CommonLite.h"
+        },
+        {
+          "id": "sem-05",
+          "category": "semantic",
+          "query": "standard I/O like printf and scanf",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.StdIO.C89/SharedFiles/IEcoStdIOC89.h"
+        },
+        {
+          "id": "exact-01",
+          "category": "exact_name",
+          "query": "IEcoComponentFactory interface vtable layout with QueryInterface and Alloc",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.hpp"
+        },
+        {
+          "id": "exact-02",
+          "category": "exact_name",
+          "query": "IEcoSystem1 interface for getting subsystems",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoSystem1.hpp"
+        },
+        {
+          "id": "exact-03",
+          "category": "exact_name",
+          "query": "IEcoMemoryAllocator1 Allocate Free methods",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.MemoryManager1/SharedFiles/IEcoMemoryAllocator1.h"
+        },
+        {
+          "id": "exact-04",
+          "category": "exact_name",
+          "query": "IEcoList1 interface methods Insert Remove",
+          "first_rank": 2,
+          "mrr": 0.5,
+          "recall_at": {
+            "1": 0.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Dictionary1/SharedFiles/IEcoDictionary1.h"
+        },
+        {
+          "id": "exact-05",
+          "category": "exact_name",
+          "query": "IEcoInterfaceBus1 RegisterComponent",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.InterfaceBus1/SharedFiles/IEcoInterfaceBus1FileExt.hpp"
+        },
+        {
+          "id": "err-01",
+          "category": "error_code",
+          "query": "ERR_ECO_NOBUS meaning",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/ErrEcoCodes.h"
+        },
+        {
+          "id": "err-02",
+          "category": "error_code",
+          "query": "ERR_ECO_NOAGGREGATION code 0xFFEA",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/ErrEcoCodes.h"
+        },
+        {
+          "id": "err-03",
+          "category": "error_code",
+          "query": "ECOCALLMETHOD calling convention macro",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/macros.h"
+        },
+        {
+          "id": "err-04",
+          "category": "error_code",
+          "query": "ECO_EXPORT and ECOCALL function attribute macros",
+          "first_rank": 4,
+          "mrr": 0.25,
+          "recall_at": {
+            "1": 0.0,
+            "3": 0.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.OpenGLES1/SharedFiles/IEcoVideoCoreIV1V3DContext.h"
+        },
+        {
+          "id": "err-05",
+          "category": "error_code",
+          "query": "CID_EcoMath1 component ID GUID literal",
+          "first_rank": null,
+          "mrr": 0.0,
+          "recall_at": {
+            "1": 0.0,
+            "3": 0.0,
+            "5": 0.0,
+            "10": 0.0
+          },
+          "comp_in_top5": false,
+          "top1": "Eco.Core1/SharedFiles/ErrEcoCodes.h"
+        },
+        {
+          "id": "type-01",
+          "category": "type_layout",
+          "query": "UGUID struct fields Preamble Length Data",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.h"
+        },
+        {
+          "id": "type-02",
+          "category": "type_layout",
+          "query": "IEcoUnknown vtable QueryInterface AddRef Release",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.h"
+        },
+        {
+          "id": "type-03",
+          "category": "type_layout",
+          "query": "int16_t byte_t voidptr_t basic typedefs",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.h"
+        },
+        {
+          "id": "type-04",
+          "category": "type_layout",
+          "query": "list iterator typedef IEcoListEnumerator",
+          "first_rank": 9,
+          "mrr": 0.111,
+          "recall_at": {
+            "1": 0.0,
+            "3": 0.0,
+            "5": 0.0,
+            "10": 1.0
+          },
+          "comp_in_top5": false,
+          "top1": "Eco.StdIO.C89/SharedFiles/IEcoStdIOC89.h"
+        },
+        {
+          "id": "type-05",
+          "category": "type_layout",
+          "query": "vector data structure typedef",
+          "first_rank": null,
+          "mrr": 0.0,
+          "recall_at": {
+            "1": 0.0,
+            "3": 0.0,
+            "5": 0.0,
+            "10": 0.0
+          },
+          "comp_in_top5": false,
+          "top1": "Eco.Image.BMP3/SharedFiles/IEcoImageBMP3File.h"
+        }
+      ]
+    },
+    "hybrid_rrf": {
+      "aggregate": {
+        "queries": 20,
+        "recall_at_1": 0.9,
+        "recall_at_3": 0.95,
+        "recall_at_5": 0.95,
+        "recall_at_10": 0.95,
+        "mrr": 0.917,
+        "comp_recall_at_5": 0.95,
+        "by_category": {
+          "semantic": {
+            "queries": 5,
+            "recall_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "exact_name": {
+            "queries": 5,
+            "recall_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "error_code": {
+            "queries": 5,
+            "recall_at_5": 1.0,
+            "mrr": 0.867
+          },
+          "type_layout": {
+            "queries": 5,
+            "recall_at_5": 0.8,
+            "mrr": 0.8
+          }
+        }
+      },
+      "per_query": [
+        {
+          "id": "sem-01",
+          "category": "semantic",
+          "query": "component for calculating power and square root of a number",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Math.C89/SharedFiles/IEcoMathC89.h"
+        },
+        {
+          "id": "sem-02",
+          "category": "semantic",
+          "query": "how do I register a component on the interface bus",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.InterfaceBus1/SharedFiles/IEcoInterfaceBus1.hpp"
+        },
+        {
+          "id": "sem-03",
+          "category": "semantic",
+          "query": "manage threads and synchronize critical sections",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.ThreadManager1/SharedFiles/IEcoThreadManager1.h"
+        },
+        {
+          "id": "sem-04",
+          "category": "semantic",
+          "query": "read and write files on disk",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.FileSystemManagement1/SharedFiles/IEcoFile1.h"
+        },
+        {
+          "id": "sem-05",
+          "category": "semantic",
+          "query": "standard I/O like printf and scanf",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.StdIO.C89/SharedFiles/IEcoStdIOC89.h"
+        },
+        {
+          "id": "exact-01",
+          "category": "exact_name",
+          "query": "IEcoComponentFactory interface vtable layout with QueryInterface and Alloc",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.hpp"
+        },
+        {
+          "id": "exact-02",
+          "category": "exact_name",
+          "query": "IEcoSystem1 interface for getting subsystems",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoSystem1.h"
+        },
+        {
+          "id": "exact-03",
+          "category": "exact_name",
+          "query": "IEcoMemoryAllocator1 Allocate Free methods",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.MemoryManager1/SharedFiles/IEcoMemoryAllocator1.hpp"
+        },
+        {
+          "id": "exact-04",
+          "category": "exact_name",
+          "query": "IEcoList1 interface methods Insert Remove",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.List1/SharedFiles/IEcoList1.hpp"
+        },
+        {
+          "id": "exact-05",
+          "category": "exact_name",
+          "query": "IEcoInterfaceBus1 RegisterComponent",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.InterfaceBus1/SharedFiles/IEcoInterfaceBus1FileExt.hpp"
+        },
+        {
+          "id": "err-01",
+          "category": "error_code",
+          "query": "ERR_ECO_NOBUS meaning",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/ErrEcoCodes.h"
+        },
+        {
+          "id": "err-02",
+          "category": "error_code",
+          "query": "ERR_ECO_NOAGGREGATION code 0xFFEA",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/ErrEcoCodes.h"
+        },
+        {
+          "id": "err-03",
+          "category": "error_code",
+          "query": "ECOCALLMETHOD calling convention macro",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/macros.h"
+        },
+        {
+          "id": "err-04",
+          "category": "error_code",
+          "query": "ECO_EXPORT and ECOCALL function attribute macros",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/macros.h"
+        },
+        {
+          "id": "err-05",
+          "category": "error_code",
+          "query": "CID_EcoMath1 component ID GUID literal",
+          "first_rank": 3,
+          "mrr": 0.333,
+          "recall_at": {
+            "1": 0.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Comparator1/SharedFiles/IdEcoComparator1.h"
+        },
+        {
+          "id": "type-01",
+          "category": "type_layout",
+          "query": "UGUID struct fields Preamble Length Data",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.h"
+        },
+        {
+          "id": "type-02",
+          "category": "type_layout",
+          "query": "IEcoUnknown vtable QueryInterface AddRef Release",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/IEcoBase1.h"
+        },
+        {
+          "id": "type-03",
+          "category": "type_layout",
+          "query": "int16_t byte_t voidptr_t basic typedefs",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.Core1/SharedFiles/depend.h"
+        },
+        {
+          "id": "type-04",
+          "category": "type_layout",
+          "query": "list iterator typedef IEcoListEnumerator",
+          "first_rank": 1,
+          "mrr": 1.0,
+          "recall_at": {
+            "1": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "comp_in_top5": true,
+          "top1": "Eco.List1/SharedFiles/IEcoList1.hpp"
+        },
+        {
+          "id": "type-05",
+          "category": "type_layout",
+          "query": "vector data structure typedef",
+          "first_rank": null,
+          "mrr": 0.0,
+          "recall_at": {
+            "1": 0.0,
+            "3": 0.0,
+            "5": 0.0,
+            "10": 0.0
+          },
+          "comp_in_top5": false,
+          "top1": "Eco.OpenGLES1/SharedFiles/IEcoVideoCoreIV1V3DContext.h"
+        }
+      ]
+    }
+  }
+}

@@ -53,6 +53,30 @@ hf_cache/
 *.cache
 token_analysis.json
 
+# RAG (V7) — large generated artifacts, regenerated via
+# scripts/build_marketplace_index.py
+marketplace_index.sqlite
+marketplace_cache/
+experiments/chunking_eval/artifacts/
+experiments/chunking_eval/*.log
+e2e_demo_project/
+
+# Claude Code conversation logs (per-subdir)
+.claude-conversations/
+frontend/.claude-conversations/
+
+# Next.js / TypeScript incremental build state
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Mistyped / backup repo copies that sometimes appear at root
+_eco_ai_repo/
+_tmp_eco_ai/
+
+# Personal handoff notes for the next Claude Code session — not part
+# of the codebase. Recreate per-session as needed.
+handoff.md
+
 # Temporary files
 *.tmp
 *.bak

@@ -1,0 +1,155 @@
+{
+  "_meta": {
+    "purpose": "Evaluation harness for 4 chunking strategies. Each query has known-correct components/files/kinds; the metric Recall@k counts how many of those land in the top-k retrieved results.",
+    "categories": {
+      "semantic": "Natural-language description of capability — embeddings should shine.",
+      "exact_name": "Looks up by exact identifier (interface/type/function name). BM25 should dominate.",
+      "error_code": "Looks up macros / #defines / error constants. BM25 wins on exact tokens.",
+      "type_layout": "Asks about a struct/typedef/data layout. Mixed signal."
+    },
+    "constructed_2026-05-23": "5 queries per category × 4 categories = 20 total. Half written from outside-in (LLM-style — only knowing the UI catalog descriptions), half from inside-out (knowing the actual file structure). Same person constructed them, so cross-validation on a held-out set is still recommended before believing absolute numbers.",
+    "scoring": "A retrieved chunk counts as correct if BOTH component AND file substring match. We use SHORT substrings (e.g. 'IEcoFile' not 'IEcoFile.h') so they match real variants — EcoOS names files with trailing digits (IEcoFile1.h, IEcoFileInfo1.h, IEcoFileManager1.h). This was a real bug in the first dataset: substring 'IEcoFile.h' only matched 'IEcoFileSystemManagement1.h' but missed every IEcoFile1/Info1/Manager1.h. Kind filter is optional — never used in scoring (it's a tool-side affordance, not a relevance proxy)."
+  },
+  "queries": [
+    {
+      "id": "sem-01",
+      "category": "semantic",
+      "query": "component for calculating power and square root of a number",
+      "expected_components": ["Eco.Math.C89"],
+      "expected_files_substring": ["IEcoMathC89.h"]
+    },
+    {
+      "id": "sem-02",
+      "category": "semantic",
+      "query": "how do I register a component on the interface bus",
+      "expected_components": ["Eco.InterfaceBus1"],
+      "expected_files_substring": ["IEcoInterfaceBus1.h"]
+    },
+    {
+      "id": "sem-03",
+      "category": "semantic",
+      "query": "manage threads and synchronize critical sections",
+      "expected_components": ["Eco.ThreadManager1", "Eco.Mutex1"],
+      "expected_files_substring": ["IEcoThreadManager1.h", "IEcoMutex1.h"]
+    },
+    {
+      "id": "sem-04",
+      "category": "semantic",
+      "query": "read and write files on disk",
+      "expected_components": ["Eco.FileSystemManagement1"],
+      "expected_files_substring": ["IEcoFile", "IEcoDirectory", "IEcoDrive", "IEcoFileSystem"]
+    },
+    {
+      "id": "sem-05",
+      "category": "semantic",
+      "query": "standard I/O like printf and scanf",
+      "expected_components": ["Eco.StdIO.C89"],
+      "expected_files_substring": ["IEcoStdIO", "IEcoStandardIO"]
+    },
+    {
+      "id": "exact-01",
+      "category": "exact_name",
+      "query": "IEcoComponentFactory interface vtable layout with QueryInterface and Alloc",
+      "expected_components": ["Eco.Core1"],
+      "expected_files_substring": ["IEcoBase1.h"]
+    },
+    {
+      "id": "exact-02",
+      "category": "exact_name",
+      "query": "IEcoSystem1 interface for getting subsystems",
+      "expected_components": ["Eco.Core1", "Eco.System1"],
+      "expected_files_substring": ["IEcoSystem1.h"]
+    },
+    {
+      "id": "exact-03",
+      "category": "exact_name",
+      "query": "IEcoMemoryAllocator1 Allocate Free methods",
+      "expected_components": ["Eco.MemoryManager1"],
+      "expected_files_substring": ["IEcoMemoryAllocator", "IEcoMemoryManager"]
+    },
+    {
+      "id": "exact-04",
+      "category": "exact_name",
+      "query": "IEcoList1 interface methods Insert Remove",
+      "expected_components": ["Eco.List1"],
+      "expected_files_substring": ["IEcoList"]
+    },
+    {
+      "id": "exact-05",
+      "category": "exact_name",
+      "query": "IEcoInterfaceBus1 RegisterComponent",
+      "expected_components": ["Eco.InterfaceBus1"],
+      "expected_files_substring": ["IEcoInterfaceBus"]
+    },
+    {
+      "id": "err-01",
+      "category": "error_code",
+      "query": "ERR_ECO_NOBUS meaning",
+      "expected_components": ["Eco.Core1"],
+      "expected_files_substring": ["ErrEcoCodes.h"]
+    },
+    {
+      "id": "err-02",
+      "category": "error_code",
+      "query": "ERR_ECO_NOAGGREGATION code 0xFFEA",
+      "expected_components": ["Eco.Core1"],
+      "expected_files_substring": ["ErrEcoCodes.h"]
+    },
+    {
+      "id": "err-03",
+      "category": "error_code",
+      "query": "ECOCALLMETHOD calling convention macro",
+      "expected_components": ["Eco.Core1"],
+      "expected_files_substring": ["depend.h", "macros.h", "IEcoBase1.h"]
+    },
+    {
+      "id": "err-04",
+      "category": "error_code",
+      "query": "ECO_EXPORT and ECOCALL function attribute macros",
+      "expected_components": ["Eco.Core1"],
+      "expected_files_substring": ["depend.h", "macros.h"]
+    },
+    {
+      "id": "err-05",
+      "category": "error_code",
+      "query": "CID_EcoMath1 component ID GUID literal",
+      "expected_components": ["Eco.Math.C89"],
+      "expected_files_substring": ["IdEcoMath"]
+    },
+    {
+      "id": "type-01",
+      "category": "type_layout",
+      "query": "UGUID struct fields Preamble Length Data",
+      "expected_components": ["Eco.Core1"],
+      "expected_files_substring": ["IEcoBase1.h"]
+    },
+    {
+      "id": "type-02",
+      "category": "type_layout",
+      "query": "IEcoUnknown vtable QueryInterface AddRef Release",
+      "expected_components": ["Eco.Core1"],
+      "expected_files_substring": ["IEcoBase1.h"]
+    },
+    {
+      "id": "type-03",
+      "category": "type_layout",
+      "query": "int16_t byte_t voidptr_t basic typedefs",
+      "expected_components": ["Eco.Core1"],
+      "expected_files_substring": ["depend.h", "IEcoBase1.h"]
+    },
+    {
+      "id": "type-04",
+      "category": "type_layout",
+      "query": "list iterator typedef IEcoListEnumerator",
+      "expected_components": ["Eco.List1"],
+      "expected_files_substring": ["IEcoListEnumerator", "IEcoList"]
+    },
+    {
+      "id": "type-05",
+      "category": "type_layout",
+      "query": "vector data structure typedef",
+      "expected_components": ["Eco.Vector1"],
+      "expected_files_substring": ["IEcoVector"]
+    }
+  ]
+}

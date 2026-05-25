@@ -1,0 +1,85 @@
+# ────────────────────────────────────────────────────────────────────
+# Root .gitignore for the ai-hse-diploma-agent monorepo.
+#
+# Scope: this file governs the WHOLE repo. The deeper file at
+# Eco.Toolchain/Eco.AI.Assembly1/.gitignore narrows further inside that
+# subdirectory (e.g. marketplace_index.sqlite). Keep cross-cutting
+# rules HERE; keep app-specific rules THERE.
+# ────────────────────────────────────────────────────────────────────
+
+# === Secrets ===
+# Never commit these — even once is one too many.
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# === Claude Code local state ===
+# Per-session conversation logs are large (~80 MB+) and personal.
+# This pattern matches anywhere in the tree, not just the root.
+**/.claude-conversations/
+# Local-only Claude Code settings (CLAUDE.md / commands/ may be tracked).
+.claude/settings.local.json
+**/.claude/settings.local.json
+
+# === Eco CLI binaries ===
+# Vendored binaries — large, regenerated outside git.
+eco.sli/
+eco.sli-linux/
+.eco/
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# === Node / Next.js ===
+node_modules/
+.next/
+*.tsbuildinfo
+
+# === Local artifacts ===
+output/
+test_results/
+chroma_db/
+hf_cache/
+catalog.json
+token_analysis.json
+
+# === Legacy / vendored project copies at root ===
+# Pre-Eco.Toolchain folders dating to 2026-03 (the early V3/V4 layout
+# before the project moved under Eco.Toolchain/). Kept locally for
+# reference; not part of the active V7 build. If you want them in git
+# again, remove the explicit entry below.
+/agent/
+/agents/
+/backend/
+/frontend/
+/source/
+/_eco_ai_repo/
+/_tmp_eco_ai/
+
+# Reserved spot for an explicit archive dir if you ever decide to
+# physically move the above. Currently unused — left in for future
+# cleanup commits.
+archive/
+
+# === OS / editor ===
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
