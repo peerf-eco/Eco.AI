@@ -23,8 +23,9 @@ env/
 .coverage.*
 htmlcov/
 
-# Runtime outputs (per-repo datasets + reports)
-outputs/
+# Runtime outputs (per-repo datasets + reports); keep outputs/README.md in git
+outputs/*
+!outputs/README.md
 datasets/
 reports/
 *.jsonl
