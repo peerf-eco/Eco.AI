@@ -82,3 +82,19 @@ partial-json-parser>=0.2
 # Test dependencies for pi_ai smoke-tests
 pytest-asyncio>=0.23
 respx>=0.21
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RAG (V7 marketplace search — agent/rag/, agent/v6/tools/rag.py)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# sqlite-vec — SQLite extension for ANN vector search. Loaded at runtime
+# by RagStore. ~2 MB Python wheel including the prebuilt .so / .dll.
+sqlite-vec>=0.1.6
+
+# tree-sitter + tree-sitter-c — AST chunker for C/C++ headers in the
+# marketplace_cache corpus. The version pin matters: tree-sitter-c 0.23
+# emits ABI v15 which tree-sitter 0.23.x cannot load. The 0.21.4 release
+# emits ABI v14 which is compatible. Until tree-sitter ships a v15-aware
+# release, this pin stays.
+tree-sitter>=0.23,<0.24
+tree-sitter-c==0.21.4

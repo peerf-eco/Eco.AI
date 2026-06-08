@@ -15,6 +15,16 @@ services:
       - ./output:/app/output
       - ./traces:/app/traces
       - ./source:/app/source:ro
+      # Marketplace RAG (production, 2026-05-24):
+      #   marketplace_index.sqlite — sqlite-vec + FTS5 index, 1217 chunks
+      #     from 175 .h files across 30 components, embedded with
+      #     qwen3-embedding-8b (4096-dim). Read-only at runtime; regenerate
+      #     via scripts/build_marketplace_index.py.
+      #   marketplace_cache — pre-pulled DEVKITs (headers + .lib/.so) the
+      #     agent can read directly without another eco-cli pull. Same
+      #     content the RAG was built from, kept in sync.
+      - ./marketplace_index.sqlite:/app/marketplace_index.sqlite:ro
+      - ./marketplace_cache:/app/marketplace_cache:ro
       # Два варианта eco-cli (выбор через V6_CLI_PATH в .env):
       #   eco.sli/        — Windows .exe (запуск через wine)
       #   eco.sli-linux/  — нативный Linux ELF (предпочтительнее)
@@ -27,7 +37,7 @@ services:
       - "127.0.0.1:8100:8000"
     command: ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-  # Frontend (Next.js) — V6 only
+  # Frontend (Next.js)
   frontend:
     build:
       context: ./frontend
@@ -35,6 +45,9 @@ services:
     container_name: ecoos-frontend
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8100
+      # v7 = three-agent orchestrator (architect → coder → tester, no HITL).
+      # v6 = five-node pipeline with plan_gate/escalate HITL (legacy).
+      - NEXT_PUBLIC_PIPELINE_VERSION=v7
     ports:
       - "127.0.0.1:3100:3000"
     volumes:
