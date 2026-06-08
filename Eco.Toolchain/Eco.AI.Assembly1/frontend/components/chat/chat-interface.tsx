@@ -13,7 +13,10 @@ import { RagInitializer } from "./rag-initializer";
 import { PhaseStepper } from "./phase-stepper";
 import { StreamMessage } from "./stream-message";
 import { useV6Socket } from "./use-v6-socket";
+import { PlatformSelector, PLATFORM_OPTIONS, DEFAULT_PLATFORM, type PlatformOption } from "./platform-selector";
 import type { ChatMessage } from "./types";
+
+const PLATFORM_STORAGE_KEY = "ecov6.target_platform";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WS_BASE = API_URL.replace(/^http/, "ws");
@@ -27,6 +30,23 @@ const EXAMPLES = [
 export function ChatInterface() {
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  // Persist the user's target-platform choice across reloads so they don't
+  // have to re-pick "Linux x86_64" on every visit. Hydrate from localStorage
+  // after mount (avoids SSR mismatch).
+  const [platform, setPlatform] = useState<PlatformOption>(DEFAULT_PLATFORM);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PLATFORM_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const match = PLATFORM_OPTIONS.find(
+        (p) => p.os === parsed.os && p.arch === parsed.arch,
+      );
+      if (match) setPlatform(match);
+    } catch {
+      // ignore — corrupt storage just falls back to default
+    }
+  }, []);
   const scrollAnchorRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -49,8 +69,17 @@ export function ChatInterface() {
 
   const onSend = () => {
     if (!input.trim() || !isConnected || isProcessing) return;
-    sendUserRequest(input);
+    sendUserRequest(input, { targetOs: platform.os, targetArch: platform.arch });
     setInput("");
+  };
+
+  const handlePlatformChange = (p: PlatformOption) => {
+    setPlatform(p);
+    try {
+      window.localStorage.setItem(PLATFORM_STORAGE_KEY, JSON.stringify({ os: p.os, arch: p.arch }));
+    } catch {
+      // localStorage full / blocked — silently ignore, state still updates
+    }
   };
 
   return (
@@ -174,6 +203,11 @@ export function ChatInterface() {
         <div className="px-4 pb-4 pt-2">
           <div className="mx-auto max-w-3xl">
             <div className="flex gap-2 rounded-xl glass p-2 transition-all focus-within:glow-blue focus-within:border-blue-500/30">
+              <PlatformSelector
+                value={platform}
+                onChange={handlePlatformChange}
+                disabled={isProcessing}
+              />
               <Input
                 placeholder="Опишите приложение для сборки из SDK-компонентов EcoOS…"
                 value={input}

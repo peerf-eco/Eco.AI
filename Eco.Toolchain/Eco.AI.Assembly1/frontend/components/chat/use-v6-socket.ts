@@ -68,6 +68,45 @@ function updateBlock(
   }));
 }
 
+// Walk blocks tail-first, mutate the first match, return the new list. Same
+// reverse-scan idea as mek-ai useChatStream.ts:49-65 — works because backend
+// emits per-node events in order and we never need to update older blocks.
+function updateLastBlock(
+  prev: ChatMessage[],
+  predicate: (b: Block) => boolean,
+  updater: (b: Block) => Block,
+): { messages: ChatMessage[]; matched: boolean } {
+  let matched = false;
+  const reversed = [...prev].reverse();
+  const updated = reversed.map((msg) => {
+    if (matched) return msg;
+    const idxFromTail = [...msg.blocks].reverse().findIndex(predicate);
+    if (idxFromTail === -1) return msg;
+    const realIdx = msg.blocks.length - 1 - idxFromTail;
+    matched = true;
+    return {
+      ...msg,
+      blocks: msg.blocks.map((b, i) => (i === realIdx ? updater(b) : b)),
+    };
+  }).reverse();
+  return { messages: updated, matched };
+}
+
+// Flip every active ThinkingBlock for `node` (or all nodes when undefined)
+// to isActive=false so the UI collapses the caret/pulse without deleting
+// the history. Called on tool_call_start, phase_change, pipeline_done — any
+// boundary that semantically ends a reasoning burst.
+function finalizeActiveThinking(prev: ChatMessage[], node?: PipelineNode): ChatMessage[] {
+  return prev.map((msg) => ({
+    ...msg,
+    blocks: msg.blocks.map((b) =>
+      b.type === "thinking" && b.isActive && (node === undefined || b.node === node)
+        ? { ...b, isActive: false }
+        : b,
+    ),
+  }));
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // useV6Socket — single source of truth for the V6 chat UI.
 // ────────────────────────────────────────────────────────────────────────────
@@ -80,7 +119,10 @@ export interface UseV6SocketResult {
   completedPhases: V6Phase[];
   threadId: string | null;
 
-  sendUserRequest: (text: string, opts?: { projectDir?: string; maxRetries?: number }) => void;
+  sendUserRequest: (
+    text: string,
+    opts?: { projectDir?: string; maxRetries?: number; targetOs?: string; targetArch?: string },
+  ) => void;
   sendPlanDecision: (blockId: string, approved: boolean, opts?: { modifiedPlanMd?: string; reason?: string }) => void;
   sendEscalationDecision: (blockId: string, cont: boolean) => void;
   sendAbort: () => void;
@@ -121,27 +163,36 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
           }
           return ev.phase;
         });
-        setMessages((prev) => appendBlock(prev, {
-          id: newId("phase"),
-          type: "phase_header",
-          phase: ev.phase,
-          node: ev.node,
-        }));
+        setMessages((prev) => {
+          // Crossing a phase boundary means the previous node has stopped
+          // reasoning — collapse all active thinking blocks first, then
+          // append the phase header.
+          const collapsed = finalizeActiveThinking(prev);
+          return appendBlock(collapsed, {
+            id: newId("phase"),
+            type: "phase_header",
+            phase: ev.phase,
+            node: ev.node,
+          });
+        });
         return;
       }
 
       case "node_done": {
-        setMessages((prev) => appendBlock(prev, {
-          id: newId("nodedone"),
-          type: "node_done",
-          node: ev.node as PipelineNode,
-          projectName: ev.project_name,
-          componentsCount: ev.components_count,
-          downloadedPaths: ev.downloaded_paths,
-          summaryMd: ev.summary_md,
-          buildArtifact: ev.build_artifact,
-          reasonMd: ev.reason_md,
-        }));
+        setMessages((prev) => {
+          const collapsed = finalizeActiveThinking(prev, ev.node as PipelineNode);
+          return appendBlock(collapsed, {
+            id: newId("nodedone"),
+            type: "node_done",
+            node: ev.node as PipelineNode,
+            projectName: ev.project_name,
+            componentsCount: ev.components_count,
+            downloadedPaths: ev.downloaded_paths,
+            summaryMd: ev.summary_md,
+            buildArtifact: ev.build_artifact,
+            reasonMd: ev.reason_md,
+          });
+        });
         return;
       }
 
@@ -201,13 +252,16 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
         if (currentPhase) {
           setCompletedPhases((p) => (p.includes(currentPhase) ? p : [...p, currentPhase]));
         }
-        setMessages((prev) => appendBlock(prev, {
-          id: newId("done"),
-          type: "pipeline_done",
-          status: ev.status,
-          buildArtifact: ev.build_artifact || "",
-          testerReportMd: ev.tester_report_md || "",
-        }));
+        setMessages((prev) => {
+          const collapsed = finalizeActiveThinking(prev);
+          return appendBlock(collapsed, {
+            id: newId("done"),
+            type: "pipeline_done",
+            status: ev.status,
+            buildArtifact: ev.build_artifact || "",
+            testerReportMd: ev.tester_report_md || "",
+          });
+        });
         // Terminal state — drop the thread_id so the next user_request creates
         // a fresh thread. Backend graph would otherwise resume a "dead" thread
         // after page reload and reply with stale interrupts.
@@ -219,19 +273,52 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
       }
 
       case "node_event": {
+        if (ev.event === "thinking_delta" || ev.event === "text_delta") {
+          const delta = (ev.data.content as string | undefined) ?? "";
+          if (!delta) return;
+          // Append to the most-recent active thinking block of this node;
+          // if none, start a new one. Inactive blocks (already finalised by
+          // a previous tool/phase boundary) are NOT reused — each ReAct
+          // iteration gets its own collapsible thinking block.
+          setMessages((prev) => {
+            const { messages: appended, matched } = updateLastBlock(
+              prev,
+              (b) => b.type === "thinking" && b.isActive && b.node === ev.node,
+              (b) => b.type === "thinking"
+                ? { ...b, content: b.content + delta }
+                : b,
+            );
+            if (matched) return appended;
+            return appendBlock(prev, {
+              id: newId("think"),
+              type: "thinking",
+              node: ev.node,
+              content: delta,
+              isActive: true,
+              startedAt: typeof performance !== "undefined" ? performance.now() : Date.now(),
+            });
+          });
+          return;
+        }
+
         if (ev.event === "tool_call_start") {
           const name = (ev.data.name as string | undefined) ?? "";
           if (!name) return;
           const args = (ev.data.args as Record<string, unknown>) ?? {};
-          setMessages((prev) => appendBlock(prev, {
-            id: newId("toolcall"),
-            type: "tool_call",
-            node: ev.node,
-            toolName: name,
-            args,
-            status: "running",
-            startedAt: typeof performance !== "undefined" ? performance.now() : Date.now(),
-          }));
+          setMessages((prev) => {
+            // A tool call ends the current reasoning burst — collapse first,
+            // then append the tool card.
+            const collapsed = finalizeActiveThinking(prev, ev.node);
+            return appendBlock(collapsed, {
+              id: newId("toolcall"),
+              type: "tool_call",
+              node: ev.node,
+              toolName: name,
+              args,
+              status: "running",
+              startedAt: typeof performance !== "undefined" ? performance.now() : Date.now(),
+            });
+          });
           return;
         }
 
@@ -302,7 +389,11 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
       tid = sessionStorage.getItem(THREAD_ID_KEY);
     }
     const qs = tid ? `?thread_id=${encodeURIComponent(tid)}` : "";
-    const ws = new WebSocket(`${wsBaseUrl}/ws/v6/chat${qs}`);
+    // Pipeline version is controlled by NEXT_PUBLIC_PIPELINE_VERSION env var.
+    // Defaults to v6 for backward compatibility; set to "v7" to use the
+    // three-agent orchestrator (no HITL, no plan_gate/escalate).
+    const pipelineVersion = process.env.NEXT_PUBLIC_PIPELINE_VERSION || "v6";
+    const ws = new WebSocket(`${wsBaseUrl}/ws/${pipelineVersion}/chat${qs}`);
 
     ws.onopen = () => {
       setIsConnected(true);
@@ -359,7 +450,7 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
 
   const sendUserRequest = useCallback((
     text: string,
-    opts?: { projectDir?: string; maxRetries?: number },
+    opts?: { projectDir?: string; maxRetries?: number; targetOs?: string; targetArch?: string },
   ) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -375,6 +466,8 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
       user_request: trimmed,
       project_dir: opts?.projectDir,
       max_retries: opts?.maxRetries,
+      target_os: opts?.targetOs,
+      target_arch: opts?.targetArch,
     });
   }, [send]);
 

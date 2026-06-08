@@ -75,3 +75,25 @@
   }
 }
 
+/* Thinking-block live indicators — pattern from ai-mek HarnessUI.module.css.
+   `thinking-pulse` is the small dot in the header; `thinking-caret` appends a
+   blinking ▮ glyph to the end of the streaming text via ::after, so there's
+   zero JS animation work per token. */
+@keyframes thinking-pulse-kf {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.75); }
+}
+@keyframes thinking-blink-kf {
+  50% { opacity: 0; }
+}
+.thinking-pulse {
+  animation: thinking-pulse-kf 1.1s ease-in-out infinite;
+  box-shadow: 0 0 6px 1px rgb(96 165 250 / 0.45);
+}
+.thinking-caret::after {
+  content: "▮";
+  margin-left: 2px;
+  color: rgb(96 165 250);
+  animation: thinking-blink-kf 1.05s steps(2, end) infinite;
+}
+

@@ -957,6 +957,76 @@ _MERMAID_FENCE_RE = re.compile(
 )
 
 
+def _last_assistant_text(history: list) -> str:
+    """Extract the text content of the most recent assistant turn from a
+    pi_ai history list. Used to surface what the model said in failure
+    reports when it stops without a tool call — otherwise "no_tool_call"
+    is opaque to the user and the developer.
+    """
+    for msg in reversed(history):
+        # pi_ai AssistantMessage has a .content list mixing TextContent and ToolCall
+        content_list = getattr(msg, "content", None)
+        if content_list is None:
+            continue
+        text_parts: list[str] = []
+        for c in content_list:
+            t = getattr(c, "text", None)
+            if isinstance(t, str) and t.strip():
+                text_parts.append(t)
+        if text_parts:
+            return "\n".join(text_parts)
+    return ""
+
+
+def _workspace_header(project_dir: Path, marketplace_cache_root: Path) -> str:
+    """Prefix every agent seed with a workspace orientation block.
+
+    The block tells the model three things:
+      1. Where it's working — absolute paths for project_dir AND the
+         read-only marketplace_cache.
+      2. How to explore — grep / glob / read examples (claude-code-style
+         primitives that hide the absolute-path detail under a
+         basename-prefix anchoring rule).
+      3. That repeating an identical tool call wastes an iteration.
+
+    Without this, coder previously burned 30+ iterations on path-guessing
+    list_dir('.') / list_dir('/') — see project_v6_path_semantics.
+    """
+    return (
+        f"=== Workspace ===\n"
+        f"You are running in two locations:\n"
+        f"  project_dir (read-write, where you author code and build):\n"
+        f"    {project_dir.resolve()}\n"
+        f"  marketplace_cache (read-only, every published EcoOS component):\n"
+        f"    {marketplace_cache_root.resolve()}\n"
+        f"\n"
+        f"=== How to explore ===\n"
+        f"Use grep / glob / read — same primitives a human developer uses.\n"
+        f"Paths can be relative; if the first segment matches one of the\n"
+        f"two roots above (e.g. 'marketplace_cache/Eco.Math.C89/...'), the\n"
+        f"tool anchors there. Otherwise relative paths land in project_dir.\n"
+        f"\n"
+        f"Find a symbol across the marketplace:\n"
+        f"  grep(pattern='IEcoComponentFactory', glob='*.h',\n"
+        f"       path='marketplace_cache')\n"
+        f"\n"
+        f"List a known directory tree:\n"
+        f"  glob(pattern='**/SharedFiles/*.h',\n"
+        f"       path='marketplace_cache/Eco.Math.C89')\n"
+        f"\n"
+        f"Open a specific file:\n"
+        f"  read(path='marketplace_cache/Eco.Math.C89/SharedFiles/IEcoMathC89.h')\n"
+        f"\n"
+        f"Same primitives work over your own work in project_dir — e.g.\n"
+        f"read(path='Eco.Math.C89/SharedFiles/IEcoMathC89.h') reads the\n"
+        f"already-pulled copy (relative paths anchor at project_dir).\n"
+        f"\n"
+        f"Re-running the same call with identical arguments is wasted work —\n"
+        f"the result is already in your tool-result history above.\n"
+        f"\n"
+    )
+
+
 def _save_mermaid_blocks(plan_md: str, project_dir: Path) -> list[Path]:
     """Extract ```mermaid fenced blocks from the planner's handoff markdown
     and save each into project_dir/docs/architecture_NN.mmd. Returns the
@@ -1005,7 +1075,24 @@ async def v7_chat_endpoint(websocket: WebSocket):
     project_dir = Path(os.getenv("V7_OUTPUT_ROOT", "./output")) / f"v7-{thread_id[:8]}"
     project_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"[V7 WS] connected thread_id={thread_id} project_dir={project_dir}")
+    # Resolved once per connection so the workspace-header block and any
+    # other downstream consumer agree on which cache the agent is told
+    # about. Matches the default in agent/v6/tools/code_search.py.
+    marketplace_cache_root = Path(os.getenv(
+        "MARKETPLACE_CACHE_ROOT", "/app/marketplace_cache"
+    ))
+
+    # Per-conversation LLM trace folder. Every architect/coder/tester LLM
+    # request+response is persisted here as a numbered JSON file (see
+    # EcoAgent._stream_llm) — incrementally, so a trace exists after a single
+    # call and even if the (now unbounded) agent loop never terminates.
+    trace_dir = Path(os.getenv("V7_TRACES_DIR", "traces")) / f"v7-{thread_id[:8]}"
+    trace_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info(
+        f"[V7 WS] connected thread_id={thread_id} "
+        f"project_dir={project_dir} trace_dir={trace_dir}"
+    )
     await websocket.send_json({"type": "heartbeat", "version": "v7", "thread_id": thread_id})
 
     # v6 client expects these agent identifiers in its `node` field — translate.
@@ -1127,7 +1214,8 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 continue
 
             # ── Phase 1: plan-review loop (planner re-runs on reject + feedback) ──
-            planner_seed = user_req
+            workspace = _workspace_header(project_dir, marketplace_cache_root)
+            planner_seed = workspace + user_req
             approved_plan_md: str | None = None
             terminate_chat = False
 
@@ -1135,6 +1223,7 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 ev_queue: asyncio.Queue = asyncio.Queue()
                 planner = make_architect(
                     model=model, cli_path=cli_path, project_dir=project_dir,
+                    trace_dir=trace_dir,
                     on_event=_make_on_event(ev_queue, "architect"),
                 )
                 try:
@@ -1150,6 +1239,12 @@ async def v7_chat_endpoint(websocket: WebSocket):
 
                 # Planner couldn't reach a stop-tool — surface as pipeline_done(failed).
                 if planner_result.status != "done":
+                    last_text = _last_assistant_text(planner_result.history)
+                    text_block = (
+                        f"\n\nLast assistant text (no tool call followed it):\n"
+                        f"{last_text!r}"
+                        if last_text else ""
+                    )
                     await websocket.send_json({
                         "type": "pipeline_done",
                         "status": "failed",
@@ -1157,7 +1252,8 @@ async def v7_chat_endpoint(websocket: WebSocket):
                         "tester_report_md": (
                             f"Planner ended without handoff.\n"
                             f"status: {planner_result.status}\n"
-                            f"error: {planner_result.error or '(none)'}\n\n"
+                            f"error: {planner_result.error or '(none)'}"
+                            f"{text_block}\n\n"
                             f"(orchestrator: agent_failed, hops=0)"
                         ),
                     })
@@ -1212,9 +1308,9 @@ async def v7_chat_endpoint(websocket: WebSocket):
                         break
                     # Rejected — re-run planner with feedback appended.
                     reason = (p2.get("reason") or "").strip()
-                    planner_seed = user_req
+                    planner_seed = workspace + user_req
                     if reason:
-                        planner_seed = (
+                        planner_seed = workspace + (
                             user_req
                             + "\n\n=== Feedback on your previous plan ===\n"
                             + reason
@@ -1246,10 +1342,12 @@ async def v7_chat_endpoint(websocket: WebSocket):
             ev_queue = asyncio.Queue()
             coder = make_coder(
                 model=model, project_dir=project_dir, make_exe=make_exe,
+                trace_dir=trace_dir,
                 on_event=_make_on_event(ev_queue, "coder"),
             )
             tester = make_tester(
                 model=model, project_dir=project_dir,
+                trace_dir=trace_dir,
                 on_event=_make_on_event(ev_queue, "tester"),
             )
             # coder.to_architect edge is terminated as None — we don't restart
@@ -1266,7 +1364,8 @@ async def v7_chat_endpoint(websocket: WebSocket):
             )
 
             try:
-                result = await _run_agent(sub_orch.run, ev_queue, approved_plan_md)
+                coder_seed = workspace + approved_plan_md
+                result = await _run_agent(sub_orch.run, ev_queue, coder_seed)
             except Exception as e:
                 logger.exception(f"[V7 WS] sub_orch crashed thread_id={thread_id}")
                 await websocket.send_json({

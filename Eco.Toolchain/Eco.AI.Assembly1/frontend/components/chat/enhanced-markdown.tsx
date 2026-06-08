@@ -12,45 +12,62 @@ interface EnhancedMarkdownProps {
   className?: string;
 }
 
-// Iconography for known plan section headings — keeps long handoff cards
-// scannable. Matches the section names in ARCHITECT_SYSTEM_PROMPT.
-const HEADING_ICONS: Record<string, string> = {
-  "user objective": "🎯",
-  "selected marketplace components": "📦",
-  "to-be-written code": "📝",
-  "project layout": "🌳",
-  "architecture diagram": "🗺️",
-  "interface contracts": "🔌",
-  "acceptance criteria": "✅",
-  "do not redo": "🚫",
-  "handoff to coder": "🤝",
-  "handoff to tester": "🧪",
-  "handoff to architect": "↩️",
-  "build log highlights": "🔧",
-  "what the binary does": "📟",
-  "how to invoke": "▶️",
-  "artifact path": "📍",
-};
+// Mermaid grammar starts with a fixed set of diagram-type tokens. We treat
+// a fenced block as a mermaid diagram when EITHER the language tag is
+// "mermaid", OR the language tag is itself a mermaid diagram type, OR no
+// language tag is given but the first non-empty line begins with one of
+// these tokens. This catches LLMs that emit ```flowchart or bare ``` for
+// architecture diagrams (Kimi/GLM do this regularly).
+const MERMAID_DIAGRAM_TYPES = new Set([
+  "flowchart", "graph",
+  "sequenceDiagram", "classDiagram",
+  "stateDiagram", "stateDiagram-v2",
+  "erDiagram", "journey", "gantt", "pie",
+  "quadrantChart", "requirementDiagram",
+  "gitGraph", "gitgraph", "mindmap", "timeline",
+  "C4Context", "C4Container", "C4Component", "C4Dynamic", "C4Deployment",
+  "sankey-beta", "xychart-beta", "block-beta", "packet-beta",
+]);
 
-function headingIcon(text: string): string | null {
-  const key = text.trim().toLowerCase();
-  return HEADING_ICONS[key] ?? null;
+function looksLikeMermaid(source: string): boolean {
+  const firstLine = source.split(/\r?\n/).find((l) => l.trim().length > 0);
+  if (!firstLine) return false;
+  const firstToken = firstLine.trim().split(/\s+/)[0];
+  return MERMAID_DIAGRAM_TYPES.has(firstToken);
 }
+
+// prose-invert: dark-theme typography defaults from @tailwindcss/typography.
+// max-w-none: don't clamp to 65ch — handoffs and mermaid diagrams need width.
+// prose-pre:*: cancel prose's own <pre> styling — we render our own pre/code
+// panels in the components map below, so the two should not stack.
+const PROSE_CLASSES =
+  "prose prose-invert prose-slate max-w-none " +
+  "prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0 prose-pre:border-0 " +
+  "prose-code:bg-transparent prose-code:p-0 prose-code:font-mono " +
+  "prose-code:before:content-none prose-code:after:content-none";
 
 export function EnhancedMarkdown({ children, className }: EnhancedMarkdownProps) {
   return (
-    <div className={className}>
+    <div className={[PROSE_CLASSES, className ?? ""].join(" ").trim()}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         skipHtml
         components={{
-          // ```mermaid blocks → diagram. Other code blocks → highlight.js.
+          // Mermaid blocks → diagram. Other code blocks → highlight.js.
+          // We accept ```mermaid, ```flowchart/```graph/etc, and untagged
+          // blocks whose first line looks like a mermaid diagram type.
           code({ inline, className, children, ...props }: any) {
             const match = /language-(\w+)/.exec(className || "");
             const lang = match ? match[1] : null;
             const value = String(children ?? "").replace(/\n$/, "");
-            if (!inline && lang === "mermaid") {
+            const isMermaid =
+              !inline && (
+                lang === "mermaid" ||
+                (lang !== null && MERMAID_DIAGRAM_TYPES.has(lang)) ||
+                (lang === null && looksLikeMermaid(value))
+              );
+            if (isMermaid) {
               return <MermaidDiagram code={value} />;
             }
             return (
@@ -59,38 +76,6 @@ export function EnhancedMarkdown({ children, className }: EnhancedMarkdownProps)
               </code>
             );
           },
-          // Section headings get an emoji prefix for visual scanning.
-          h1({ children, ...props }: any) {
-            const text = String(Array.isArray(children) ? children.join("") : children ?? "");
-            const icon = headingIcon(text);
-            return (
-              <h1 {...props} className="flex items-baseline gap-2 border-b border-slate-700/50 pb-2 mt-4 mb-3 text-2xl font-semibold">
-                {icon && <span aria-hidden>{icon}</span>}
-                <span>{children}</span>
-              </h1>
-            );
-          },
-          h2({ children, ...props }: any) {
-            const text = String(Array.isArray(children) ? children.join("") : children ?? "");
-            const icon = headingIcon(text);
-            return (
-              <h2 {...props} className="flex items-baseline gap-2 mt-5 mb-2 text-lg font-semibold text-slate-200">
-                {icon && <span aria-hidden>{icon}</span>}
-                <span>{children}</span>
-              </h2>
-            );
-          },
-          h3({ children, ...props }: any) {
-            const text = String(Array.isArray(children) ? children.join("") : children ?? "");
-            const icon = headingIcon(text);
-            return (
-              <h3 {...props} className="flex items-baseline gap-2 mt-3 mb-1 text-base font-medium text-slate-300">
-                {icon && <span aria-hidden>{icon}</span>}
-                <span>{children}</span>
-              </h3>
-            );
-          },
-          // Make pre/code blocks look like proper code panels.
           pre({ children, ...props }: any) {
             return (
               <pre

@@ -100,6 +100,19 @@ export interface ToolCallBlock extends BlockBase {
   startedAt: number;      // performance.now() / Date.now()
 }
 
+// Streaming thinking/reasoning text from the LLM. One block per ReAct
+// iteration (a new tool_call_start finalises the current one). Both vendor
+// reasoning channels (additional_kwargs.reasoning_content) and visible
+// content tokens stream into this block so the user sees the model "work"
+// regardless of whether the underlying model is in thinking mode.
+export interface ThinkingBlock extends BlockBase {
+  type: "thinking";
+  node: PipelineNode;
+  content: string;
+  isActive: boolean;        // false → block collapses, caret hides
+  startedAt: number;
+}
+
 export interface FailBlock extends BlockBase {
   type: "build_fail" | "test_fail";
   message: string;       // error_md or reason_md, Markdown-ish
@@ -145,6 +158,7 @@ export type Block =
   | PhaseHeaderBlock
   | NodeDoneBlock
   | ToolCallBlock
+  | ThinkingBlock
   | FailBlock
   | PlanReviewBlock
   | EscalationBlock
@@ -217,6 +231,8 @@ export interface PlanReviewRequiredEvent extends ServerEventBase {
 
 export type NodeEventKind =
   | "start"
+  | "text_delta"
+  | "thinking_delta"
   | "tool_call_start"
   | "tool_call_end"
   | "tool_update"
@@ -244,6 +260,8 @@ export interface NodeEventEvent extends ServerEventBase {
     // stop_tool / payload (done)
     stop_tool?: string;
     payload?: Record<string, unknown>;
+    // text_delta / thinking_delta — one token-ish slice of LLM output.
+    content?: string;
   };
 }
 
@@ -292,6 +310,11 @@ export interface UserRequestMessage {
   user_request: string;
   project_dir?: string;
   max_retries?: number;
+  // Target component platform: which marketplace files to download and
+  // which BuildFiles/<OS>/<arch>/ subdir to point the build at. Defaults
+  // (Linux/x86_64) live in .env if these are omitted.
+  target_os?: string;
+  target_arch?: string;
 }
 
 export interface PlanDecisionMessage {
