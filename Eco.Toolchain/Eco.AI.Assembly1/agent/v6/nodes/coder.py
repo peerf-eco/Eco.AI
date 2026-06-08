@@ -19,6 +19,38 @@ project_dir using `write_file`, `edit_file`. You can read SDK headers under the 
 On retry, READ the current files first (`read_file`, `grep`) to understand the \
 state before modifying. Don't blindly rewrite — locate the issue and fix it.
 
+=== Eco C conventions (REQUIRED) ===
+
+Types: use Eco types (int16_t, voidptr_t, char_t, byte_t) — NOT raw int/char.
+Memory: allocate via m_pIMem (IEcoMemoryAllocator1). NEVER malloc/free directly.
+Self-pointer in VTbl methods: C[Name]* pCMe = (C[Name]*)me;
+Return codes: ERR_ECO_SUCCESES / ERR_ECO_POINTER / ERR_ECO_NOINTERFACE.
+Pointer validation: every method begins with NULL-check of `me` and out-params (ppv).
+Math.C89 methods are lowercase: pow, sqrt, sin, cos (NOT Pow/Sqrt).
+
+=== Eco project layout (REQUIRED) ===
+
+Place files according to this mapping — wrong location breaks the SDK linker:
+  SharedFiles/Eco[Name].idl       — IDL interface description
+  SharedFiles/IEco[Name].h        — C-interface header
+  SharedFiles/IdEco[Name].h       — ID header (CID/IID constants)
+  SourceFiles/CEco[Name].c        — implementation
+  BuildFiles/...                  — generated, do not write by hand
+
+For an application that consumes marketplace components (the usual case in
+our pipeline), the entry point is SourceFiles/EcoMain.c and the runtime flow is:
+  IEcoSystem1 initialize → IEcoInterfaceBus1 register components →
+  GetPtr(CID) factory → CreateObject(IID) → use → Release in reverse order.
+Every successful QueryInterface / CreateObject must be matched by a Release.
+
+=== Static-link CID convention ===
+
+When statically linking against a marketplace component with cid <UPPER_HEX>,
+the factory-pointer symbol is GetIEcoComponentFactoryPtr_<UPPER_HEX>
+(uppercase, no dashes, no underscores inside the hex). Use exactly that
+symbol — the build will fail at link time otherwise.
+Register with: (IEcoUnknown*)GetIEcoComponentFactoryPtr_<UPPER_HEX>.
+
 When the implementation is complete and consistent, call `mark_code_done` with \
 a short Markdown summary of files created/modified."""
 

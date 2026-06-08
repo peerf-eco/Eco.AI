@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Optional, Union
@@ -29,6 +30,7 @@ from agent.pi_ai import (
 from agent.pi_ai.types import (
     DoneEvent, ErrorEvent, StreamFunction, TextDeltaEvent, ThinkingDeltaEvent,
 )
+from agent.v6.call_trace import write_call_trace
 
 
 # ── Data types (public, unchanged) ────────────────────────────────────────────
@@ -166,7 +168,9 @@ class EcoAgent:
         system_prompt: str,
         tools: list[EcoTool],
         stop_tool: Union[str, list[str], None] = None,
-        max_iters: int = 25,
+        max_iters: Optional[int] = None,
+        trace_dir: Optional[Path] = None,
+        trace_label: str = "agent",
         prepare_arguments: Optional[Callable[[str, dict], dict]] = None,
         before_tool_call:  Optional[Callable[[str, BaseModel], Optional[dict]]] = None,
         after_tool_call:   Optional[Callable[[str, BaseModel, ToolResult], ToolResult]] = None,
@@ -191,7 +195,14 @@ class EcoAgent:
             else {stop_tool} if isinstance(stop_tool, str)
             else set(stop_tool)
         )
+        # max_iters=None → unlimited loop. Safe because every LLM call is
+        # traced to disk individually (see _stream_llm), so an unbounded run
+        # is still fully debuggable and produces traces incrementally.
         self.max_iters = max_iters
+        self.trace_dir = trace_dir
+        self.trace_label = trace_label
+        self._call_no = 0   # per-instance LLM-call counter (trace metadata)
+        self._iter = 0      # current run() iteration (trace metadata)
         self.prepare_arguments = prepare_arguments
         self.before_tool_call = before_tool_call
         self.after_tool_call = after_tool_call
@@ -218,20 +229,47 @@ class EcoAgent:
         This is sync — orchestrator/server invoke EcoAgent.run from
         asyncio.to_thread, so creating a fresh event loop here via
         asyncio.run() is safe.
+
+        Every call is persisted via write_call_trace (when trace_dir is set):
+        request AND response, in a finally block — so a trace exists for a
+        single call and even when the stream raises before returning.
         """
         context = self._build_context(history)
-        return asyncio.run(_drain_stream(
-            self.stream_fn, self.model, context, self.stream_options,
-            on_text_delta=lambda d: self._emit(EventType.TEXT_DELTA, {"content": d}),
-            on_thinking_delta=lambda d: self._emit(EventType.THINKING_DELTA, {"content": d}),
-        ))
+        self._call_no += 1
+        call_no = self._call_no
+        response: Optional[AssistantMessage] = None
+        error_str = ""
+        try:
+            response = asyncio.run(_drain_stream(
+                self.stream_fn, self.model, context, self.stream_options,
+                on_text_delta=lambda d: self._emit(EventType.TEXT_DELTA, {"content": d}),
+                on_thinking_delta=lambda d: self._emit(EventType.THINKING_DELTA, {"content": d}),
+            ))
+            return response
+        except Exception as e:  # noqa: BLE001 — re-raised after the trace is written
+            error_str = f"{type(e).__name__}: {e}"
+            raise
+        finally:
+            if self.trace_dir is not None:
+                write_call_trace(
+                    trace_dir=self.trace_dir,
+                    label=self.trace_label,
+                    call_no=call_no,
+                    iteration=self._iter,
+                    model_id=self.model.id,
+                    request_context=context,
+                    response=response,
+                    error=error_str,
+                )
 
     # ── main entrypoint ────────────────────────────────────────────────────
     def run(self, seed) -> EcoAgentResult:
         self._emit(EventType.START)
         history: list = list(_normalize_seed(seed))
 
-        for i in range(self.max_iters):
+        i = 0
+        while self.max_iters is None or i < self.max_iters:
+            self._iter = i
             self._emit(EventType.ITERATION, {"i": i})
 
             try:
@@ -343,6 +381,8 @@ class EcoAgent:
                     isError=result.is_error,
                     timestamp=_now_ms(),
                 ))
+
+            i += 1
 
         self._emit(EventType.MAX_ITERS)
         return EcoAgentResult(

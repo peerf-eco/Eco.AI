@@ -45,8 +45,21 @@ class V6State(TypedDict):
     last_failure_origin: Literal["", "planner", "setup", "coder", "builder", "tester"]
     last_status:         str
 
+    # Target platform for the component being built. Used by setup-node to
+    # pass -o/-a flags to eco-cli (which marketplace files to download) and
+    # by builder/tester nodes to pick the right BuildFiles/<OS>/<arch>/
+    # subdirectory. UI selects via dropdown; defaults to Linux x86_64.
+    target_os:   str
+    target_arch: str
 
-def make_initial_v6_state(user_request: str, max_retries: int = 3) -> V6State:
+
+def make_initial_v6_state(
+    user_request: str,
+    max_retries: int = 3,
+    *,
+    target_os: str = "Linux",
+    target_arch: str = "x86_64",
+) -> V6State:
     return {
         "user_request": user_request,
         "planner_messages": [{"role": "user", "content": user_request}],
@@ -68,4 +81,6 @@ def make_initial_v6_state(user_request: str, max_retries: int = 3) -> V6State:
         "max_retries": max_retries,
         "last_failure_origin": "",
         "last_status": "",
+        "target_os": target_os,
+        "target_arch": target_arch,
     }

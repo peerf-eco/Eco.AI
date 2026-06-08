@@ -30,11 +30,6 @@ A single component has multiple ID forms — they are NOT interchangeable:
   Package name       : Eco.AI.Engine1               ← stable, no version suffix
   Folder suffix      : _DK_v.1.0.1.2                ← NOT part of name
 
-Mandatory dependencies for every component (always include in plan):
-  - Eco.InterfaceBus1         uguid 42757331
-  - Eco.MemoryManger1         uguid 4D656D31   (sic: Manger, not Manager)
-  - Eco.FileSystemManagement1 uguid 46534D31
-
 Source-of-truth priority (highest first):
   1. Tool output (ecoos_pull stdout, list_components results)
   2. Downloaded SharedFiles/Id*.h (CID_* macros)

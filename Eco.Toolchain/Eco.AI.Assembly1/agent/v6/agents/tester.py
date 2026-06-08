@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from agent.v6.eco_agent import EcoAgent
 from agent.v6.tools.handoff import make_handoff_tool, make_fail_tool
@@ -75,7 +76,8 @@ def make_tester(
     *,
     model,
     project_dir: Path,
-    max_iters: int = 30,
+    max_iters: Optional[int] = None,
+    trace_dir: Optional[Path] = None,
     on_event=None,
 ) -> EcoAgent:
     """Build the tester EcoAgent — STRICTLY no write/edit/build tools.
@@ -112,5 +114,7 @@ def make_tester(
         tools=tools,
         stop_tool=["to_coder", "done", "fail"],
         max_iters=max_iters,
+        trace_dir=trace_dir,
+        trace_label="tester",
         on_event=on_event,
     )

@@ -1,9 +1,11 @@
-"""PLANNER tools — read_component, list_components, submit_plan."""
+"""PLANNER tools — search_marketplace, read_component, list_components, submit_plan."""
 from __future__ import annotations
 from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel, Field
 from agent.v6.eco_agent import EcoTool, ToolResult
 from agent.v6.tools.sdk_layout import resolve_component_root, list_component_roots
+from agent.v6.tools.rag import make_search_marketplace_tool
 
 
 class ReadComponentArgs(BaseModel):
@@ -55,8 +57,29 @@ def _list_components(_args: ListComponentsArgs, sdk_root: Path) -> ToolResult:
     return ToolResult(content="\n".join(names))
 
 
-def make_planner_tools(sdk_root: Path) -> list[EcoTool]:
+def make_planner_tools(
+    sdk_root: Path,
+    *,
+    index_path: Optional[Path] = None,
+) -> list[EcoTool]:
+    """Build the planner's tool set.
+
+    ``search_marketplace`` is included so the planner can discover WHICH
+    SDK components implement a capability before drilling into their
+    headers. Order of use in the planner prompt: search_marketplace →
+    read_component (on the candidate) → submit_plan. See
+    ``feedback_prompts_positive_procedure.md`` for why we frame this as
+    a positive linear procedure instead of a list of bans.
+
+    Args:
+        sdk_root: Local SDK mirror used by read_component / list_components.
+        index_path: Path to marketplace_index.sqlite. ``None`` lets
+                    ``make_search_marketplace_tool`` resolve from
+                    ``MARKETPLACE_INDEX_PATH`` env (production volume at
+                    /app/marketplace_index.sqlite) or its default.
+    """
     return [
+        make_search_marketplace_tool(index_path=index_path),
         EcoTool(
             name="read_component",
             description="Read the SharedFiles/*.h of an EcoOS SDK component package.",

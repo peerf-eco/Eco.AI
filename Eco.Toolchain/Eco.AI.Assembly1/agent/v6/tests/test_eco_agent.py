@@ -166,3 +166,40 @@ def test_multi_stop_tools():
     assert r.status == "done"
     assert r.stop_tool_name == "rep_fail"
     assert r.stop_payload == {"why": "it crashed"}
+
+
+# ── 10. trace persistence — one JSON file per LLM request/response ─────────
+def test_writes_call_trace_per_llm_call(tmp_path):
+    """With trace_dir set, every LLM request/response is persisted as its own
+    numbered JSON file — incrementally, before any stop tool is reached."""
+    import json
+    script = [
+        ai_tool("read", {"path": "a.c"}, "c1"),
+        ai_tool("submit", {"summary": "ok"}, "c2"),
+    ]
+    agent = _make_agent(
+        script, [READ_TOOL, SUBMIT_TOOL],
+        trace_dir=tmp_path, trace_label="architect",
+    )
+    r = agent.run("go")
+    assert r.status == "done"
+
+    files = sorted(tmp_path.glob("*.json"))
+    assert len(files) == 2  # two LLM calls → two trace files
+
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert payload["meta"]["label"] == "architect"
+    assert payload["meta"]["seq"] == 1
+    assert payload["meta"]["call_no"] == 1
+    assert "messages" in payload["request"]
+    assert payload["response"] is not None
+
+
+# ── 11. no trace_dir → no files written, agent still works ─────────────────
+def test_no_trace_dir_is_silent(tmp_path):
+    agent = _make_agent(
+        [ai_tool("submit", {"summary": "s"}, "c1")], [READ_TOOL, SUBMIT_TOOL],
+    )
+    r = agent.run("go")
+    assert r.status == "done"
+    assert not list(tmp_path.glob("*.json"))

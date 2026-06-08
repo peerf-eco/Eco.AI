@@ -30,11 +30,8 @@ def test_architect_has_research_design_pull_handoff_tools(model, project_dir):
     agent = make_architect(model=model, cli_path=Path("eco-cli.exe"),
                            project_dir=project_dir)
     names = set(agent.tools.keys())
-    # Research + design tools
-    assert "marketplace_list" in names
-    assert "marketplace_get" in names
-    # Materialization
-    assert "ecoos_pull" in names
+    # Research + design + materialization all go through one raw CLI tool.
+    assert "eco_cli" in names
     # Read-side inspection of pulled packages
     assert "read_file" in names
     assert "list_dir" in names
@@ -92,9 +89,7 @@ def test_coder_does_NOT_have_market_or_runtime_tools(model, project_dir, tmp_pat
     artifact (tester does). Capability gating keeps roles clean."""
     agent = make_coder(model=model, project_dir=project_dir, make_exe=tmp_path / "make")
     names = set(agent.tools.keys())
-    assert "marketplace_list" not in names
-    assert "marketplace_get" not in names
-    assert "ecoos_pull" not in names
+    assert "eco_cli" not in names
     assert "run_artifact" not in names
 
 
@@ -141,9 +136,7 @@ def test_tester_CANNOT_modify_anything_structural_check(model, project_dir):
         "write_file",          # would let tester rewrite source/tests
         "edit_file",
         "run_build",           # would let tester rebuild after fudging
-        "ecoos_pull",          # would let tester swap components
-        "marketplace_list",    # tester has no business shopping
-        "marketplace_get",
+        "eco_cli",             # would let tester pull/swap components
     }
     agent_tool_names = set(agent.tools.keys())
     intersection = forbidden & agent_tool_names
