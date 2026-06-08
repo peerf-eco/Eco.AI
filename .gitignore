@@ -55,6 +55,12 @@ hf_cache/
 catalog.json
 token_analysis.json
 
+# === Diploma documents (not product code) ===
+# Thesis sources: ~76 MB of .docx/.pdf drafts, figures, one-off doc
+# processing scripts, agent traces and __pycache__. Kept locally only;
+# belongs to the diploma write-up, not the agent codebase.
+diploma/
+
 # === Legacy / vendored project copies at root ===
 # Pre-Eco.Toolchain folders dating to 2026-03 (the early V3/V4 layout
 # before the project moved under Eco.Toolchain/). Kept locally for
