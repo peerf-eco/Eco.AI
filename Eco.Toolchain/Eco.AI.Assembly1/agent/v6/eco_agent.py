@@ -14,6 +14,7 @@ only need to swap their `llm: BaseChatModel` for `model: pi_ai.Model`.
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -156,6 +157,22 @@ async def _drain_stream(
     return final_message
 
 
+# ── Transient LLM-error retry policy ─────────────────────────────────────────
+_LLM_TRANSIENT_RETRIES = 3
+_LLM_RETRY_BACKOFF_S = 5  # 5s, 10s, 15s
+
+
+def _is_transient_llm_error(msg: Optional[str]) -> bool:
+    """Provider-side hiccups worth retrying: 5xx family, overload, timeouts.
+    Auth/validation errors (4xx) are NOT transient and fail immediately."""
+    text = (msg or "").lower()
+    return any(token in text for token in (
+        "520", "502", "503", "504", "529",
+        "provider returned error", "overloaded", "timeout", "timed out",
+        "connection", "temporarily",
+    ))
+
+
 # ── Main agent ────────────────────────────────────────────────────────────────
 
 class EcoAgent:
@@ -174,6 +191,7 @@ class EcoAgent:
         prepare_arguments: Optional[Callable[[str, dict], dict]] = None,
         before_tool_call:  Optional[Callable[[str, BaseModel], Optional[dict]]] = None,
         after_tool_call:   Optional[Callable[[str, BaseModel, ToolResult], ToolResult]] = None,
+        dedup_tools:       Optional[set] = None,
         on_event:          Optional[Callable[[EcoAgentEvent], None]] = None,
         stream_options:    Optional[SimpleStreamOptions] = None,
         stream_fn:         Optional[StreamFunction] = None,
@@ -206,6 +224,13 @@ class EcoAgent:
         self.prepare_arguments = prepare_arguments
         self.before_tool_call = before_tool_call
         self.after_tool_call = after_tool_call
+        # Read-only tools eligible for memo-dedup: an identical repeat call
+        # returns a one-line pointer instead of re-running the tool and adding
+        # another full-size copy of the result to the history. Any tool NOT in
+        # this set is treated as potentially mutating and clears the memo
+        # (e.g. write_file invalidates earlier reads of the same path).
+        self.dedup_tools = set(dedup_tools or ())
+        self._dedup_memo: dict = {}
         self.on_event = on_event or (lambda _e: None)
         self.stream_options = stream_options
         self.stream_fn: StreamFunction = stream_fn or stream_simple
@@ -280,6 +305,28 @@ class EcoAgent:
                     status="error", stop_tool_name="", stop_payload={},
                     history=history, error=str(e),
                 )
+
+            # Transient provider errors (5xx/520/529, timeouts) are retried in
+            # place with backoff — with a pinned provider there is no router
+            # failover, so a single upstream hiccup must not kill a long run.
+            retry = 0
+            while (resp.stopReason == "error"
+                   and retry < _LLM_TRANSIENT_RETRIES
+                   and _is_transient_llm_error(resp.errorMessage)):
+                retry += 1
+                self._emit(EventType.ITERATION, {
+                    "i": i, "llm_retry": retry,
+                    "reason": (resp.errorMessage or "")[:200],
+                })
+                time.sleep(_LLM_RETRY_BACKOFF_S * retry)
+                try:
+                    resp = self._stream_llm(history)
+                except Exception as e:
+                    self._emit(EventType.ERROR, {"reason": str(e)})
+                    return EcoAgentResult(
+                        status="error", stop_tool_name="", stop_payload={},
+                        history=history, error=str(e),
+                    )
 
             # Append the assistant turn (even if it ended in error) to history.
             history.append(resp)
@@ -357,6 +404,27 @@ class EcoAgent:
                         stop_payload=payload, history=history, error="",
                     )
 
+                # 4b. memo-dedup for read-only tools
+                dedup_key = None
+                if name in self.dedup_tools:
+                    dedup_key = (name, _json.dumps(cooked, sort_keys=True,
+                                                   ensure_ascii=False, default=str))
+                    prior_iter = self._dedup_memo.get(dedup_key)
+                    if prior_iter is not None:
+                        history.append(ToolResultMessage(
+                            toolCallId=call_id, toolName=name,
+                            content=[TextContent(text=(
+                                f"[duplicate call — identical {name} call was made "
+                                f"at iteration {prior_iter}; result unchanged, "
+                                f"see it above in this conversation]"))],
+                            isError=False, timestamp=_now_ms(),
+                        ))
+                        self._emit(EventType.TOOL_END, {
+                            "name": name, "is_error": False,
+                            "details": {"dedup": True},
+                        })
+                        continue
+
                 # 5. execute
                 try:
                     result = tool.execute(args_obj)
@@ -371,6 +439,14 @@ class EcoAgent:
                 # 6. after_tool_call hook
                 if self.after_tool_call:
                     result = self.after_tool_call(name, args_obj, result)
+
+                # 6b. memo bookkeeping: remember read-only results; any other
+                # (potentially mutating) tool conservatively drops the memo.
+                if name in self.dedup_tools:
+                    if dedup_key is not None and not result.is_error:
+                        self._dedup_memo[dedup_key] = i
+                elif self.dedup_tools:
+                    self._dedup_memo.clear()
 
                 self._emit(EventType.TOOL_END, {
                     "name": name, "is_error": result.is_error, "details": result.details,

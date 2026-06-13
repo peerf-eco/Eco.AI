@@ -93,9 +93,12 @@ def _run_build(args: _BuildArgs, project_dir: Path, make_exe: Path) -> ToolResul
             is_error=True,
             details={"rc": proc.returncode, "subdir": str(subdir)},
         )
+    # On success the model only needs the fact — the full compiler chatter
+    # would otherwise live in the history and be replayed every iteration.
+    # The log tail stays available in details (UI/debugging channel).
     return ToolResult(
-        content=f"BUILD OK in '{args.project_subdir}':\n{combined}",
-        details={"rc": 0, "subdir": str(subdir)},
+        content=f"BUILD OK in '{args.project_subdir}' (rc=0).",
+        details={"rc": 0, "subdir": str(subdir), "log_tail": combined[-2000:]},
     )
 
 

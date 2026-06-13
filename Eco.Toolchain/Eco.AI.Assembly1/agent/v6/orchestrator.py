@@ -63,6 +63,7 @@ class Orchestrator:
         edges: dict[str, dict[str, Optional[str]]],
         entry: str,
         max_hops: int = 8,
+        seed_builders: Optional[dict] = None,
     ):
         if entry not in agents:
             raise ValueError(f"entry agent {entry!r} not in agents: {list(agents)}")
@@ -79,6 +80,11 @@ class Orchestrator:
         self.edges = edges
         self.entry = entry
         self.max_hops = max_hops
+        # name -> fn(stop_message) -> seed. Lets the caller re-attach context
+        # (workspace header, approved plan, file manifest) when an agent is
+        # re-entered via an edge — otherwise it cold-starts from the previous
+        # agent's one-line stop message and re-discovers everything by tools.
+        self.seed_builders = seed_builders or {}
 
     def run(self, initial_message: str) -> OrchestratorResult:
         current = self.entry
@@ -138,6 +144,11 @@ class Orchestrator:
                 )
 
             current = next_agent
+            if current in self.seed_builders:
+                try:
+                    message = self.seed_builders[current](message)
+                except Exception:
+                    pass  # seed enrichment must never kill the run
 
         # Reached max_hops without a terminal edge — declare loop and stop.
         return OrchestratorResult(

@@ -1,6 +1,7 @@
 """Coder agent — implement source, build, fix build errors, hand off to tester."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -277,12 +278,19 @@ def make_coder(
         ),
         make_fail_tool(),
     ]
+    # Read-only tools answered from a memo on identical repeats; write_file /
+    # run_build are NOT listed — they mutate and clear the memo (so a re-read
+    # after an edit returns fresh content). Kill-switch: V7_TOOL_DEDUP=0.
+    dedup = {
+        "read", "glob", "grep", "read_file", "list_dir", "search_marketplace",
+    } if os.getenv("V7_TOOL_DEDUP", "1") == "1" else None
     return EcoAgent(
         model=model,
         system_prompt=CODER_SYSTEM_PROMPT,
         tools=tools,
         stop_tool=["to_tester", "to_architect", "fail"],
         max_iters=max_iters,
+        dedup_tools=dedup,
         trace_dir=trace_dir,
         trace_label="coder",
         on_event=on_event,

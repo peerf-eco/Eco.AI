@@ -57,7 +57,7 @@ def get_model():
     streams via pi_ai.stream_simple, which passes delta.reasoning through
     correctly (langchain_openai 1.2.1 silently drops that field).
     """
-    from agent.pi_ai import Model, ModelCost, OpenAICompletionsCompat
+    from agent.pi_ai import Model, ModelCost, OpenAICompletionsCompat, OpenRouterRouting
 
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1")
@@ -67,6 +67,19 @@ def get_model():
         print("[ERROR] OPENAI_API_KEY not set")
         print("[INFO] Set it in .env file or export OPENAI_API_KEY=your-key")
         sys.exit(1)
+
+    # Implicit prompt cache lives per upstream provider; OpenRouter's default
+    # load-balancing hops between providers and zeroes the hit-rate. Pinning
+    # one provider keeps the prefix cache warm across agent-loop iterations
+    # (measured 2026-06-12: cached=99.6%, -81% per-call cost on z-ai/glm-5.1).
+    routing = None
+    pin = os.getenv("OPENROUTER_PROVIDER_PIN", "").strip()
+    if pin:
+        routing = OpenRouterRouting(
+            order=[p.strip() for p in pin.split(",") if p.strip()],
+            allow_fallbacks=False,
+        )
+        print(f"[INFO] OpenRouter provider pin: {pin} (fallbacks off)")
 
     print(f"[INFO] Using pi_ai Model: {model_id}")
     print(f"[INFO] API URL: {base_url}")
@@ -80,7 +93,10 @@ def get_model():
         reasoning=True,
         cost=ModelCost(),
         headers={"Authorization": f"Bearer {api_key}"},
-        compat=OpenAICompletionsCompat(thinkingFormat="openrouter"),
+        compat=OpenAICompletionsCompat(
+            thinkingFormat="openrouter",
+            openRouterRouting=routing,
+        ),
     )
 
 

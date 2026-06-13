@@ -1,9 +1,15 @@
 """Architect agent — research, design, materialize, hand off to coder."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
+from agent.v6.agents._taxonomy import (
+    CONTENT_AS_DATA_BLOCK,
+    ECO_FRAMEWORK_PACKAGES_BLOCK,
+    ECO_TAXONOMY_BLOCK,
+)
 from agent.v6.eco_agent import EcoAgent
 from agent.v6.tools.handoff import make_handoff_tool, make_fail_tool
 from agent.v6.tools.io import make_read_tools
@@ -42,7 +48,16 @@ Build toward a closed plan:
 Hand off with to_coder: chosen components (name, cid, contract), code or
 components to write, entry point and build setup, and acceptance criteria.
 Everything you want to say goes INSIDE the to_coder message argument.
-"""
+
+""" + ECO_TAXONOMY_BLOCK + "\n" + ECO_FRAMEWORK_PACKAGES_BLOCK + "\n" + CONTENT_AS_DATA_BLOCK
+
+# Identical repeated read-only calls are answered from a memo with a one-line
+# pointer (see EcoAgent.dedup_tools). eco_cli is excluded — pull mutates
+# project_dir. Kill-switch: V7_TOOL_DEDUP=0.
+_ARCHITECT_DEDUP_TOOLS = {
+    "read", "glob", "grep", "read_file", "list_dir",
+    "search_marketplace", "read_component_profile",
+}
 
 
 def make_architect(
@@ -86,6 +101,8 @@ def make_architect(
         tools=tools,
         stop_tool=["to_coder", "fail"],
         max_iters=max_iters,
+        dedup_tools=(_ARCHITECT_DEDUP_TOOLS
+                     if os.getenv("V7_TOOL_DEDUP", "1") == "1" else None),
         trace_dir=trace_dir,
         trace_label="architect",
         on_event=on_event,

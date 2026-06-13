@@ -1,6 +1,7 @@
 """Tester agent — read-only. Runs the artifact, reports honestly. Cannot modify code."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -108,12 +109,16 @@ def make_tester(
                         "for normal acceptance-criteria failures — use to_coder.",
         ),
     ]
+    # run_artifact is NOT deduped — repeated runs are legitimate observations.
+    dedup = {"read_file", "list_dir"} \
+        if os.getenv("V7_TOOL_DEDUP", "1") == "1" else None
     return EcoAgent(
         model=model,
         system_prompt=TESTER_SYSTEM_PROMPT,
         tools=tools,
         stop_tool=["to_coder", "done", "fail"],
         max_iters=max_iters,
+        dedup_tools=dedup,
         trace_dir=trace_dir,
         trace_label="tester",
         on_event=on_event,

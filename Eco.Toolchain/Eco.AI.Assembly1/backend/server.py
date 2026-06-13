@@ -1047,6 +1047,109 @@ def _save_mermaid_blocks(plan_md: str, project_dir: Path) -> list[Path]:
     return written
 
 
+# Always-required framework components (memory: Eco.System1/InterfaceBus1/
+# MemoryManager1/Core1/FileSystemManagement1). Deterministic across every run,
+# so we materialize them up-front instead of letting the coder hand-copy
+# headers one write_file at a time (observed: 7-21 wasted LLM calls per run).
+_FRAMEWORK_COMPONENTS = (
+    "Eco.Core1", "Eco.InterfaceBus1", "Eco.MemoryManager1",
+    "Eco.FileSystemManagement1", "Eco.System1",
+)
+# Subtrees the Linux Makefile actually consumes: headers + the static lib.
+_FRAMEWORK_SUBDIRS = ("SharedFiles", "BuildFiles/Linux/x86_64/StaticRelease")
+
+
+def _prepull_framework(project_dir: Path, cache_root: Path) -> list[str]:
+    """V7_PREPULL_FRAMEWORK=1: copy the always-required framework components
+    from marketplace_cache into project_dir (idempotent). marketplace_cache and
+    `eco_cli pull` produce byte-identical layouts, so this is exactly what the
+    architect's pull would deposit — minus the LLM round-trips. Returns the
+    list of component names made present."""
+    import shutil
+    present: list[str] = []
+    for comp in _FRAMEWORK_COMPONENTS:
+        src_root = cache_root / comp
+        if not src_root.is_dir():
+            continue
+        for sub in _FRAMEWORK_SUBDIRS:
+            src = src_root / sub
+            if not src.is_dir():
+                continue
+            dst = project_dir / comp / sub
+            if dst.exists():
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, dst)
+        present.append(comp)
+    return present
+
+
+def _write_scaffold(project_dir: Path, cache_root: Path | None = None) -> str:
+    """V7_SCAFFOLD=1: pre-seed project_dir/src with the proven entry-point
+    skeleton + build template (backend/scaffold/*). When V7_PREPULL_FRAMEWORK=1
+    and cache_root is given, also materialize the framework deps. Returns the
+    seed note appended to the coder's context."""
+    templates = Path(__file__).parent / "scaffold"
+    dst = project_dir / "src"
+    dst.mkdir(parents=True, exist_ok=True)
+    for name in ("EcoMain.c", "Makefile"):
+        (dst / name).write_text(
+            (templates / name).read_text(encoding="utf-8"), encoding="utf-8")
+
+    # Proven win (R6): default ON. Disable with V7_PREPULL_FRAMEWORK=0.
+    framework_note = ""
+    if cache_root is not None and os.getenv("V7_PREPULL_FRAMEWORK", "1") != "0":
+        try:
+            present = _prepull_framework(project_dir, cache_root)
+            if present:
+                framework_note = (
+                    "Framework components are ALREADY in project_dir with "
+                    "headers and the Linux static lib, and the skeleton already "
+                    "wires their factory symbols:\n  "
+                    + ", ".join(present) + "\n"
+                    "Do NOT pull, glob, list, or re-copy these — read a "
+                    "framework header ONLY if you need an exact signature you "
+                    "cannot infer from the skeleton. Spend your reads on the "
+                    "TASK-SPECIFIC components named in the plan.\n"
+                )
+        except Exception:
+            logger.exception("prepull_framework failed")
+
+    return (
+        "\n=== Scaffold (pre-seeded, PROVEN — adapt, don't replace) ===\n"
+        "project_dir already contains src/EcoMain.c (entry-point skeleton) and\n"
+        "src/Makefile (build template with the correct defines and lib ordering\n"
+        "for this SDK). EcoMain(pIUnk) is the entry point — the real main() lives\n"
+        "in Eco.System1 and calls it; never write your own main(). Fill the TODOs\n"
+        "in src/EcoMain.c, pull only the TASK-SPECIFIC components named in the\n"
+        "plan, then build with run_build(project_subdir='src'); binary is src/app.\n"
+        + framework_note
+        + "\n"
+    )
+
+
+def _project_manifest(project_dir: Path, max_entries: int = 60) -> str:
+    """Short listing for warm retry seeds: pulled component dirs + own files."""
+    comps: list[str] = []
+    own: list[str] = []
+    try:
+        for p in sorted(project_dir.iterdir()):
+            if p.is_dir() and p.name.startswith("Eco."):
+                comps.append(f"{p.name}/  (pulled component)")
+        for p in sorted(project_dir.rglob("*")):
+            rel = p.relative_to(project_dir)
+            if rel.parts[0].startswith("Eco."):
+                continue
+            if p.is_file():
+                own.append(str(rel).replace("\\", "/"))
+            if len(own) >= max_entries:
+                own.append("...")
+                break
+    except OSError:
+        pass
+    return "\n".join(comps + own) or "(project_dir is empty)"
+
+
 @app.websocket("/ws/v7/chat")
 async def v7_chat_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -1339,6 +1442,36 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 logger.exception(f"[V7 WS] mermaid save failed thread_id={thread_id}")
 
             # ── Phase 2: run coder + tester sub-orchestrator with approved plan ──
+            # Experiment toggles (env-gated, default off):
+            #   V7_SCAFFOLD=1  — pre-seed src/EcoMain.c + src/Makefile (proven)
+            #   V7_WARM_SEED=1 — re-attach workspace+plan+manifest on retry hops
+            # Proven win (R2-R6): default ON. Disable with V7_SCAFFOLD=0.
+            scaffold_note = ""
+            if os.getenv("V7_SCAFFOLD", "1") != "0":
+                try:
+                    scaffold_note = _write_scaffold(project_dir, marketplace_cache_root)
+                    logger.info(f"[V7 WS] scaffold pre-seeded thread_id={thread_id}")
+                except Exception:
+                    logger.exception(f"[V7 WS] scaffold failed thread_id={thread_id}")
+
+            seed_builders: dict = {}
+            if os.getenv("V7_WARM_SEED") == "1":
+                def _coder_retry_seed(stop_message: str, _ws=workspace,
+                                      _plan=approved_plan_md,
+                                      _note=scaffold_note) -> str:
+                    manifest = _project_manifest(project_dir)
+                    return (
+                        _ws
+                        + "=== Approved plan (architect) ===\n" + _plan
+                        + "\n\n=== Project state: files already on disk "
+                          "(from your previous pass) ===\n"
+                        + manifest + "\n"
+                        + _note
+                        + "\n=== Tester report — fix exactly this ===\n"
+                        + stop_message
+                    )
+                seed_builders["coder"] = _coder_retry_seed
+
             ev_queue = asyncio.Queue()
             coder = make_coder(
                 model=model, project_dir=project_dir, make_exe=make_exe,
@@ -1361,10 +1494,11 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 },
                 entry="coder",
                 max_hops=8,
+                seed_builders=seed_builders,
             )
 
             try:
-                coder_seed = workspace + approved_plan_md
+                coder_seed = workspace + approved_plan_md + scaffold_note
                 result = await _run_agent(sub_orch.run, ev_queue, coder_seed)
             except Exception as e:
                 logger.exception(f"[V7 WS] sub_orch crashed thread_id={thread_id}")

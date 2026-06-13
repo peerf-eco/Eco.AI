@@ -22,6 +22,7 @@ from agent.v6.tools.common import ensure_inside, resolve_inside
 
 
 _READ_FILE_MAX_BYTES = 256 * 1024  # 256 KB — header files + small sources
+_LIST_DIR_MAX_ENTRIES = 200        # beyond this the model should narrow the path
 
 
 def _outside_msg(args_path: str, project_dir: Path) -> str:
@@ -74,6 +75,10 @@ def _list_dir(args: _PathArgs, project_dir: Path) -> ToolResult:
     for e in sorted(p.iterdir()):
         suffix = "/" if e.is_dir() else ""
         entries.append(f"{e.name}{suffix}")
+    if len(entries) > _LIST_DIR_MAX_ENTRIES:
+        more = len(entries) - _LIST_DIR_MAX_ENTRIES
+        entries = entries[:_LIST_DIR_MAX_ENTRIES]
+        entries.append(f"... ({more} more entries — narrow the path)")
     return ToolResult(content="\n".join(entries) if entries else "(empty)")
 
 

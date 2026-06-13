@@ -62,6 +62,7 @@ _GREP_TIMEOUT_S = 30
 
 # read() cap — calibrated for typical EcoOS headers (50-200 KB worst case).
 _READ_MAX_BYTES = 200_000
+_READ_DEFAULT_BYTES = 32_768  # default page; full files only by explicit limit
 
 # glob() cap — 30 components × ~30 files each = max ~900 files; 500 is a
 # generous ceiling for any sensible pattern.
@@ -355,8 +356,9 @@ class _ReadArgs(BaseModel):
     limit: int = Field(
         0,
         description=(
-            "Maximum bytes to return. 0 means 'read up to the internal "
-            f"cap ({_READ_MAX_BYTES} bytes)'. Use this for large files."
+            f"Maximum bytes to return. 0 means the default cap "
+            f"({_READ_DEFAULT_BYTES} bytes); pass an explicit limit (up to "
+            f"{_READ_MAX_BYTES}) or use offset to page through large files."
         ),
         ge=0,
     )
@@ -379,7 +381,10 @@ def _read(args: _ReadArgs, allowed_roots: list[Path]) -> ToolResult:
 
     try:
         size = p.stat().st_size
-        cap = args.limit if args.limit > 0 else _READ_MAX_BYTES
+        # Default to a small page: every byte returned here lives in the
+        # history and is replayed on each later iteration. Explicit limit
+        # still allows up to _READ_MAX_BYTES; truncation hints at offset.
+        cap = args.limit if args.limit > 0 else _READ_DEFAULT_BYTES
         cap = min(cap, _READ_MAX_BYTES)
         with p.open("rb") as f:
             if args.offset:

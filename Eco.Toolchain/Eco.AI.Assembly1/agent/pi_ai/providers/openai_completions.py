@@ -23,7 +23,7 @@ from agent.pi_ai.env_api_keys import get_api_key
 from agent.pi_ai.providers.simple_options import apply_reasoning
 from agent.pi_ai.providers.transform_messages import transform_messages
 from agent.pi_ai.types import (
-    AssistantMessage, AssistantMessageEvent, Context,
+    AssistantMessage, AssistantMessageEvent, Context, Cost,
     DoneEvent, ErrorEvent, Model, OpenAICompletionsCompat, SimpleStreamOptions,
     StartEvent, StreamOptions, TextContent, TextDeltaEvent, TextEndEvent,
     TextStartEvent, ThinkingContent, ThinkingDeltaEvent, ThinkingEndEvent,
@@ -69,6 +69,11 @@ def _build_request_body(
     # Usage in streaming (most providers support it; some don't)
     if compat.supportsUsageInStreaming is not False:
         body["stream_options"] = {"include_usage": True}
+
+    # OpenRouter cost accounting: adds usage.cost + cached_tokens to the
+    # final stream chunk (no-op fields for other providers, so gate on URL).
+    if "openrouter" in (model.baseUrl or ""):
+        body["usage"] = {"include": True}
 
     # Reasoning (delegates to simple_options.apply_reasoning)
     if isinstance(opts, SimpleStreamOptions):
@@ -182,14 +187,22 @@ def _normalize_usage(raw: dict) -> Usage:
     details = raw.get("prompt_tokens_details")
     if isinstance(details, dict):
         cache_read = int(details.get("cached_tokens") or 0)
+    kwargs: dict = {}
+    # OpenRouter accounting (usage:{include:true}) sends "cost" as a plain
+    # float — fold it into the structured Cost field instead of letting the
+    # raw passthrough collide with it.
+    raw_cost = raw.get("cost")
+    if isinstance(raw_cost, (int, float)):
+        kwargs["cost"] = Cost(total=float(raw_cost))
     return Usage(
         input=prompt,
         output=completion,
         totalTokens=total,
         cacheRead=cache_read,
+        **kwargs,
         **{k: v for k, v in raw.items() if k not in (
             "prompt_tokens", "completion_tokens", "total_tokens",
-            "prompt_tokens_details",
+            "prompt_tokens_details", "cost",
         )},
     )
 
@@ -379,11 +392,13 @@ async def _stream_inner(
 async def _handle_chunk(chunk: dict, state: _StreamState) -> AsyncIterator[AssistantMessageEvent]:
     """Process one SSE chunk and emit zero or more AssistantMessageEvents."""
     choices = chunk.get("choices") or []
-    # Usage chunk has empty choices
+    # Usage may arrive in a dedicated empty-choices chunk (OpenAI) OR in the
+    # final chunk together with choices (OpenRouter puts it next to the
+    # finish_reason=stop delta) — capture it wherever it shows up.
+    usage = chunk.get("usage")
+    if usage:
+        state.partial.usage = _normalize_usage(usage)
     if not choices:
-        usage = chunk.get("usage")
-        if usage:
-            state.partial.usage = _normalize_usage(usage)
         return
     choice = choices[0]
     delta = choice.get("delta") or {}
