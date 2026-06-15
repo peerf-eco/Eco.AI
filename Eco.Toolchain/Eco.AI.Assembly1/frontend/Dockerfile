@@ -1,9 +1,13 @@
-FROM node:18-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+# RUN npm install
+
+# Используем официальный реестр npm с HTTPS
+RUN npm config set registry https://registry.npmjs.org && \
+    npm install
 
 COPY . .
 
