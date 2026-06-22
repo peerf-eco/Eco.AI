@@ -5,6 +5,12 @@
 **Автор работы:** студент магистратуры ОП «Искусственный интеллект и компьютерное зрение», НИУ ВШЭ — Нижний Новгород
 **Уровень оригинальности (Антиплагиат):** ≥ 80 %
 
+> **Обновлено 2026-06-22.** Документ написан 2026-05-23, когда продакшн-архитектурой считался
+> V6 (пятиузловой LangGraph). Через два дня продом стал **V7** — кастомный `Orchestrator` +
+> pi_ai-агенты, без LangGraph/LangChain. Архитектурные пункты ниже приведены в соответствие с
+> V7; V6 описывается как rollback. Также исправлен дрейф по RAG: боевое хранилище —
+> **sqlite-vec**, а не Qdrant. См. `docs/V7_ARCHITECTURE.md` и `Eco.AI.Assembly1/docs/RAG_SETUP.md`.
+
 ---
 
 ## 1. Цель задачи
@@ -21,7 +27,7 @@
 
 ## 2. Контекст проекта
 
-Скелет описывает реальный проект `H:\ai-hse-diploma-agent` — ИИ-агента для сборочного программирования платформы Eco. Этапы эволюции (V1 → V7) и архитектурные решения зафиксированы в `memory/MEMORY.md` и связанных файлах. Финальная архитектура — `agent/v6/` с пятиузловым пайплайном LangGraph (`planner → setup → coder → tester → escalate`) и портированным harness'ом (`agent/pi_ai/`, `agent/pi_agent_core/`).
+Скелет описывает реальный проект `H:\ai-hse-diploma-agent` — ИИ-агента для сборочного программирования платформы Eco. Этапы эволюции (V1 → V7) и архитектурные решения зафиксированы в `memory/MEMORY.md` и связанных файлах. **Финальная (продакшн) архитектура — V7: кастомный `Orchestrator` (`agent/v6/orchestrator.py`), управляющий тремя агентами-циклами pi_ai (architect / coder / tester, `agent/v6/agents/*`) поверх портированного harness'а (`agent/pi_ai/`). V7 НЕ использует ни LangGraph, ни LangChain — `langchain_openai` удалён.** Пятиузловой LangGraph-пайплайн `planner → setup → coder → tester → escalate` (`agent/v6/`) сохранён только как откатной вариант (rollback, эндпоинт `/ws/v6/chat`).
 
 Источник содержательного плана: `diploma/Документ Microsoft Word.docx` — заметки научного руководителя с перечнем обязательных тем и порядком изложения.
 
@@ -50,23 +56,24 @@
 - **2.3.** Понятие ИИ-агента: ReAct (Yao et al., 2023), цикл «мысль → действие → наблюдение», tool use
 - **2.4.** Обзор фреймворков: LangChain, LangGraph, CrewAI, Pydantic-AI, AutoGen
 - **2.5.** Harness-подход: pi-mono (Mario Zechner), OpenCode, Claude Code — альтернатива тяжёлым фреймворкам
-- **2.6.** RAG для работы с кодом: dense retrieval vs graph-RAG (LightRAG), Qdrant как векторная БД
+- **2.6.** RAG для работы с кодом: dense retrieval vs graph-RAG (LightRAG); векторные хранилища (sqlite-vec, ChromaDB, Qdrant) и выбор встроенного sqlite-vec + FTS5
 
 ### 3.5. Глава 3. Проектирование архитектуры агента: эволюция решений  *(~10–12 стр.)*
 - **3.1.** Поколения V1–V2: первичные эксперименты и их ограничения
 - **3.2.** V3: жёсткий граф LangGraph с разделением ответственности по нодам
-- **3.3.** Применение RAG для чтения кода: Qdrant, обоснование отказа от LightRAG для нашего кейса
+- **3.3.** Применение RAG для чтения кода: sqlite-vec + FTS5, AST-чанкер (tree-sitter-c), эмбеддинги qwen3-embedding-8b; обоснование vector-only и отказа от LightRAG для нашего кейса
 - **3.4.** Выявленные проблемы: некорректный код, сбои сборки cl.exe, неверная структура папок
 - **3.5.** V4: HITL — «план → апрув пользователя → разработка» через `interrupt()` LangGraph
 - **3.6.** V5: трёхузловой пайплайн (Planner / Coder / Executor) с Markdown-handoff между нодами вместо `with_structured_output`
 - **3.7.** V6: пятиузловой пайплайн `planner → setup → coder → tester → escalate` с отдельным агентом-тестировщиком (read-only)
 - **3.8.** Принципиальное ограничение `langchain_openai` в инференсе на универсальных эндпоинтах OpenAI-compatible и переход к harness-подходу
+- **3.9.** V7 (продакшн): отказ от LangGraph — кастомный `Orchestrator` поверх pi_ai-harness, три агента architect / coder / tester, инструмент `search_marketplace` (sqlite-vec RAG), эндпоинт `/ws/v7/chat`. V6 оставлен как rollback
 
 ### 3.6. Глава 4. Реализация и тестирование итоговой системы  *(~12–15 стр.)*
-- **4.1.** Архитектура V6 в подробностях: пять нод, маршрутизация через `Command`, общий `EcoAgentState` — с цитированием `agent/v6/state.py`, `agent/v6/graph.py`
+- **4.1.** Архитектура V7 в подробностях: кастомный `Orchestrator`, три агента-цикла pi_ai (architect / coder / tester), per-agent tool-gating — с цитированием `agent/v6/orchestrator.py`, `agent/v6/agents/*`. (V6 LangGraph — пять нод, маршрутизация через `Command`, общий `EcoAgentState`, `agent/v6/state.py`/`graph.py` — описывается как предшествующий rollback-вариант)
 - **4.2.** Pi-AI: async-обвязка над OpenAI-compatible эндпоинтами с поддержкой `delta.reasoning` (Kimi K2.6, GLM, DeepSeek) — `agent/pi_ai/`
 - **4.3.** Pi-Agent-Core: цикл агента с инструментами поверх Pi-AI — `agent/pi_agent_core/agent_loop.py`
-- **4.4.** Гибридная схема: LangGraph-граф нод + Pi-harness внутри агентских нод (`_pi_ai_bridge.py`)
+- **4.4.** LLM-слой V7: pi_ai-мост (`_pi_ai_bridge.py`) внутри `EcoAgent._stream_llm`, проброс `delta.reasoning` (Kimi/GLM/DeepSeek), который `langchain_openai` молча терял. (В V6-rollback тот же мост работает внутри LangGraph-нод)
 - **4.5.** Каталог компонентов Eco: 19 DK-пакетов, SharedFiles, BuildFiles/Windows/amd64/StaticRelease, регистрация в InterfaceBus1
 - **4.6.** Сквозной тестовый кейс: автоматическая сборка калькулятора C89 из компонентов Eco.Math, Eco.StdIO, Eco.Core1
 - **4.7.** Результаты: качественные показатели (доходит ли пайплайн до сборки), количественные (число итераций, время, токены)
@@ -86,7 +93,7 @@
 Оформление: сквозная нумерация, порядок появления в тексте, формат «автор, название, издательство, год, страницы» для книг; «автор, название, журнал, год, том, выпуск, страницы» для статей; URL и дата обращения для электронных ресурсов.
 
 ### 3.10. Приложения
-- **Приложение А.** Граф LangGraph V6 (диаграмма + ключевой код `graph.py`)
+- **Приложение А.** Архитектура V7: схема `Orchestrator` + три агента (architect/coder/tester) и инструменты; для сравнения — граф LangGraph V6 (rollback, `agent/v6/graph.py`)
 - **Приложение Б.** Промпт-шаблоны агентов (`architect.py`, `coder.py`, `tester.py`)
 - **Приложение В.** Структура каталога SDK-компонентов Eco
 - **Приложение Г.** Скриншоты UI чата и пример трассы агента на тестовом сценарии

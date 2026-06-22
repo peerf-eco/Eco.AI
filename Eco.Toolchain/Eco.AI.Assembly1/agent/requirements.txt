@@ -14,15 +14,10 @@ python-multipart>=0.0.9
 # ═══════════════════════════════════════════════════════════════════════════
 # ОСНОВНЫЕ ЗАВИСИМОСТИ
 # ═══════════════════════════════════════════════════════════════════════════
-
-# LangGraph - фреймворк для построения графов агентов
-langgraph>=0.2.0
-
-# LangChain Core - базовые абстракции
-langchain-core>=0.3.0
-
-# LangChain OpenAI - интеграция с OpenAI/OpenRouter
-langchain-openai>=0.2.0
+#
+# LangGraph / LangChain (langgraph, langchain-core, langchain-openai) сняты
+# 2026-06-22 вместе с ретайром V1–V6. V7 использует pi_ai напрямую, без
+# langchain. См. docs/V7_ARCHITECTURE.md.
 
 # Pydantic - валидация данных
 pydantic>=2.0.0
@@ -33,33 +28,21 @@ python-dotenv>=1.0.0
 # ═══════════════════════════════════════════════════════════════════════════
 # RAG ЗАВИСИМОСТИ
 # ═══════════════════════════════════════════════════════════════════════════
-
-# ChromaDB - векторная база данных
-chromadb>=0.4.0
-
-# LangChain Chroma - интеграция с ChromaDB
-langchain-chroma>=0.1.0
-
-# LangChain Community - дополнительные инструменты
-langchain-community>=0.3.0
-
-# LangChain Text Splitters - для чанкинга
-langchain-text-splitters>=0.3.0
+#
+# Боевой RAG V7 (sqlite-vec) объявлен ниже в блоке «RAG (V7 marketplace search)».
+# Старый ChromaDB-стек (chromadb / langchain-chroma / langchain-community /
+# langchain-text-splitters) снят 2026-06-22 вместе с scripts/init_rag.py —
+# продакшн-агенты его не читали. См. docs/RAG_SETUP.md.
 
 # ═══════════════════════════════════════════════════════════════════════════
-# EMBEDDINGS
+# EMBEDDINGS / TOKENIZATION
 # ═══════════════════════════════════════════════════════════════════════════
+#
+# transformers / torch / sentencepiece сняты 2026-06-22: V7 embedder ходит в
+# OpenRouter /embeddings через httpx (agent/rag/embedder.py); локального
+# torch-fallback в коде нет.
 
-# HuggingFace Transformers - для локальных эмбеддингов
-transformers>=4.40.0
-
-# PyTorch - бэкенд для transformers
-torch>=2.0.0
-
-# SentencePiece - токенизация
-sentencepiece
-
-# Tiktoken - для подсчета токенов OpenAI
+# Tiktoken — подсчёт токенов (dev-утилита scripts/analyze_tokens.py).
 tiktoken
 
 # ═══════════════════════════════════════════════════════════════════════════

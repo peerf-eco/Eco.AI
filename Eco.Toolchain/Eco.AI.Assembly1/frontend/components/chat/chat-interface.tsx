@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { RagInitializer } from "./rag-initializer";
 import { PhaseStepper } from "./phase-stepper";
 import { StreamMessage } from "./stream-message";
 import { useV6Socket } from "./use-v6-socket";
@@ -110,7 +109,6 @@ export function ChatInterface() {
                   <X className="h-4 w-4" />
                 </Button>
               </div>
-              <RagInitializer />
               {threadId && (
                 <div className="mt-6 pt-4 border-t border-white/[0.06] text-xs text-muted-foreground">
                   <div className="uppercase tracking-wide text-[10px] mb-1">Thread</div>

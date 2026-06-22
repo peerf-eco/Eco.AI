@@ -1,78 +1,12 @@
-"""
-EcoOS Component Agent
+"""EcoOS Component Agent (V7).
 
-AI-агент на LangGraph для сборки приложений EcoOS из SDK-компонентов.
+Production pipeline: a custom ``Orchestrator`` (agent/v6/orchestrator.py) drives
+three pi_ai ``EcoAgent`` loops — architect / coder / tester (agent/v6/agents/*).
+Served at ``/ws/v7/chat`` (backend/server.py). LLM layer = agent/pi_ai/*;
+RAG = agent/rag/* (sqlite-vec) exposed via agent/v6/tools/rag.py.
 
-V4 (current):
-    from agent.chat_agent import create_chat_agent
-    agent = create_chat_agent(llm)  # delegates to Architect → Coders
-
-V3 (legacy):
-    from agent.chat_agent import create_chat_agent_v3
-    agent = create_chat_agent_v3(llm)  # rigid planner→resolver→writer→build→tester
-
-Автотест:
-    python -m agent.test_agent
+No LangGraph / LangChain. Earlier generations V1–V6 were removed 2026-06-22
+(see git history for rollback).
 """
 
-# V1 (legacy)
-from .graph import create_agent_graph, create_simple_graph
-from .state import AgentState, ComponentSpec, GeneratedFile, ValidationError
-
-# V3 (legacy) — assembly from SDK components
-from .graph_v2 import create_agent_graph_v3, run_agent_v3
-from .chat_agent import create_chat_agent, create_chat_agent_v3, ChatContext
-from .state_helpers import make_initial_v3_state
-from .tools import (
-    rag_query,
-    eco_cli_search,
-    eco_cli_pull,
-    build_makefile,
-    build_node,
-    run_tests,
-    list_all_components,
-    download_component,
-    PLANNER_TOOLS,
-    ARCHITECT_TOOLS,
-    BUILD_TOOLS,
-)
-from .state import AgentStateV3
-
-# V4 (current) — Architect + Coder sub-agents
-from .architect import create_architect_agent
-from .coder import create_coder_agent
-
-__all__ = [
-    # V1 (legacy)
-    "create_agent_graph",
-    "create_simple_graph",
-    "AgentState",
-    "ComponentSpec",
-    "GeneratedFile",
-    "ValidationError",
-    # V3 (legacy)
-    "create_agent_graph_v3",
-    "run_agent_v3",
-    "create_chat_agent_v3",
-    "make_initial_v3_state",
-    "AgentStateV3",
-    "rag_query",
-    "eco_cli_search",
-    "eco_cli_pull",
-    "build_makefile",
-    "build_node",
-    "run_tests",
-    "PLANNER_TOOLS",
-    "BUILD_TOOLS",
-    # V4 (current)
-    "create_chat_agent",
-    "ChatContext",
-    "create_architect_agent",
-    "create_coder_agent",
-    "list_all_components",
-    "download_component",
-    "ARCHITECT_TOOLS",
-]
-
-__version__ = "0.4.0"
-
+__version__ = "0.7.0"

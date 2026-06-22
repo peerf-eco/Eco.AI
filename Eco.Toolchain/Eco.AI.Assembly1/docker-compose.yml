@@ -10,8 +10,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     volumes:
-      - ./rag_storage:/app/rag_storage:ro
-      - ./chroma_db:/app/chroma_db
       - ./output:/app/output
       - ./traces:/app/traces
       - ./source:/app/source:ro
@@ -59,17 +57,6 @@ services:
     depends_on:
       - api
 
-  # Init RAG (Utility)
-  init-rag:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: ecoos-init-rag
-    env_file:
-      - .env
-    volumes:
-      - ./rag_storage:/app/rag_storage:ro
-      - ./chroma_db:/app/chroma_db
-    command: ["init-rag"]
-    profiles:
-      - init
+  # (ChromaDB init-rag utility removed 2026-06-22 — see docs/RAG_SETUP.md.
+  #  Production RAG = marketplace_index.sqlite, built via
+  #  scripts/build_marketplace_index.py, mounted RO into the api service.)
