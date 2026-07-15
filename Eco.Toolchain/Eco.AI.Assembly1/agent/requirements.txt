@@ -1,7 +1,12 @@
 # EcoOS Component Agent - Dependencies
 #
-# Установка:
+# Установка (dev, плавающие версии):
 #   pip install -r requirements.txt
+#
+# Docker-образ ставится из requirements.lock (точные версии). После правки
+# этого файла перегенерируй lock:
+#   uv pip compile requirements.txt --python-version 3.11 \
+#       --python-platform x86_64-unknown-linux-gnu -o requirements.lock
 
 # ═══════════════════════════════════════════════════════════════════════════
 # API SERVER

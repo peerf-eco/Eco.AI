@@ -1,3 +1,17 @@
+# EcoOS local dev stack (api + frontend), bound to 127.0.0.1.
+#
+# PREREQUISITES on the host before `docker compose up`. The volumes below are
+# bind-mounts of FILES/dirs — if a target is MISSING, Docker silently creates an
+# empty DIRECTORY at the mount point and the app fails cryptically at runtime:
+#   - .env                      (cp env.example .env; set OPENAI_API_KEY)
+#   - marketplace_index.sqlite  (build: python scripts/build_marketplace_index.py)
+#   - marketplace_cache/        (python scripts/fetch_marketplace.py)
+#   - ../../eco.sli-linux/      (vendored eco-cli; gitignored)
+# See docs/RAG_SETUP.md.
+#
+# This is a DEV compose: api = uvicorn --reload with ./agent + ./backend mounted;
+# frontend = `npm run dev`. For prod, drop the source bind-mounts and dev commands.
+
 services:
   # Backend API + Agent
   api:
@@ -34,6 +48,13 @@ services:
     ports:
       - "127.0.0.1:8100:8000"
     command: ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
 
   # Frontend (Next.js)
   frontend:
@@ -43,8 +64,8 @@ services:
     container_name: ecoos-frontend
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8100
-      # v7 = three-agent orchestrator (architect → coder → tester, no HITL).
-      # v6 = five-node pipeline with plan_gate/escalate HITL (legacy).
+      # v7 = three-agent orchestrator (architect → coder → tester). Only V7
+      # remains after the 2026-06-22 retirement; kept for the client to read.
       - NEXT_PUBLIC_PIPELINE_VERSION=v7
     ports:
       - "127.0.0.1:3100:3000"
@@ -55,7 +76,9 @@ services:
       - /app/.next
     command: ["npm", "run", "dev"]
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
   # (ChromaDB init-rag utility removed 2026-06-22 — see docs/RAG_SETUP.md.
   #  Production RAG = marketplace_index.sqlite, built via

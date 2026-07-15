@@ -1,16 +1,14 @@
-# EcoOS Component Agent - CodeRAG with Qwen3-Embedding-8B
-# 
-# Использует:
-# - Qwen3-Embedding-8B (4096 dimensions)
-# - ChromaDB для векторного хранилища
-# - LangChain для RAG pipeline
-# - OpenRouter для LLM
+# EcoOS Component Agent (V7) — backend API + agent
+#
+# Stack: FastAPI + custom Orchestrator + pi_ai (OpenRouter) + sqlite-vec RAG.
+# No ChromaDB / LangChain (retired 2026-06-22).
+#
+# Base image is digest-pinned for reproducibility. To refresh the pin:
+#   docker buildx imagetools inspect python:3.11-slim
+FROM python:3.11.11-slim-bookworm@sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5
 
-FROM python:3.11-slim
-
-# Метаданные
 LABEL maintainer="EcoOS Agent"
-LABEL description="CodeRAG agent with Qwen3-Embedding-8B and ChromaDB"
+LABEL description="EcoOS V7 agent — FastAPI + pi_ai + sqlite-vec RAG"
 
 # Переменные окружения (значения по умолчанию, переопределяются из .env)
 ENV PYTHONUNBUFFERED=1 \
@@ -42,12 +40,14 @@ RUN ln -sf /usr/lib/wine/wine64 /usr/bin/wine \
 # Рабочая директория
 WORKDIR /app
 
-# Копирование requirements
-COPY agent/requirements.txt /app/requirements.txt
-
-# Установка Python зависимостей из requirements.txt
+# Python deps: install from the compiled lock, not the >= ranges in
+# requirements.txt. The lock is the reproducibility guarantee; regenerate it
+# after editing requirements.txt:
+#   uv pip compile requirements.txt --python-version 3.11 \
+#       --python-platform x86_64-unknown-linux-gnu -o requirements.lock
+COPY agent/requirements.lock /app/requirements.lock
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.lock
 
 # Создание директорий для данных
 RUN mkdir -p /app/output
