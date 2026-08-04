@@ -31,6 +31,16 @@ def _language_prompt(config: HarnessConfig, language: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _mode_prompt(config: HarnessConfig, mode: str) -> str:
+    mode_spec = config.modes.get(mode)
+    if mode_spec is None:
+        raise ValueError(f"Unsupported mode: {mode}")
+    path = config.root / "config" / mode_spec.prompt
+    if not path.exists():
+        raise FileNotFoundError(f"Mode prompt was not found: {path}")
+    return path.read_text(encoding="utf-8")
+
+
 def _role_prompt(config: HarnessConfig, role: str, fallback: str) -> str:
     role_spec = config.roles.get(role)
     if role_spec and role_spec.prompt:
@@ -57,6 +67,7 @@ def _static_prompt(
     project_dir: Path,
     marketplace_cache_root: Path,
     tool_contract: str = "",
+    mode: str = "create",
 ) -> str:
     role_spec = config.roles.get(role, RoleSpec())
     language_spec = config.languages.get(language)
@@ -68,6 +79,7 @@ def _static_prompt(
         skill_versions={**language_skills, **role_spec.skill_versions},
     )
     role_prompt = (
+        f"=== MODE: {mode.upper()} ===\n{_mode_prompt(config, mode)}\n\n"
         f"{role_prompt}\n\n"
         f"{_language_prompt(config, language)}\n\n"
         f"{custom}\n\n"
@@ -93,6 +105,7 @@ def _configure_context(
     language: str,
     project_dir: Path,
     marketplace_cache_root: Path,
+    mode: str = "create",
 ) -> None:
     role_spec = config.roles.get(role, RoleSpec())
     agent.system_prompt = _static_prompt(
@@ -103,6 +116,7 @@ def _configure_context(
         project_dir=project_dir,
         marketplace_cache_root=marketplace_cache_root,
         tool_contract=_tool_contract(agent),
+        mode=mode,
     )
     agent.max_iters = role_spec.budgets.max_iters
     agent.max_tool_results = config.dynamic_tail_items
@@ -129,6 +143,7 @@ def make_role_agent(
     marketplace_cache_root: Path,
     on_event=None,
     trace_dir: Path | None = None,
+    mode: str = "create",
 ):
     role_spec = config.roles.get(role, RoleSpec())
     backend_name = _backend_name(role_spec)
@@ -155,6 +170,7 @@ def make_role_agent(
                 language=language,
                 project_dir=project_dir,
                 marketplace_cache_root=marketplace_cache_root,
+                mode=mode,
             ),
             on_event=on_event,
         )
@@ -188,6 +204,15 @@ def make_role_agent(
             trace_dir=trace_dir,
             on_event=on_event,
         )
+    elif role == "reviewer":
+        from agent.v6.agents.reviewer import make_reviewer
+        agent = make_reviewer(
+            model=model,
+            project_dir=project_dir,
+            max_iters=role_spec.budgets.max_iters,
+            trace_dir=trace_dir,
+            on_event=on_event,
+        )
     else:
         raise ValueError(f"Unsupported role: {role}")
     agent.system_prompt = _role_prompt(config, role, agent.system_prompt)
@@ -198,5 +223,6 @@ def make_role_agent(
         language=language,
         project_dir=project_dir,
         marketplace_cache_root=marketplace_cache_root,
+        mode=mode,
     )
     return agent

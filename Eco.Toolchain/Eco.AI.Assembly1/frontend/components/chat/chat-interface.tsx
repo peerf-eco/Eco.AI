@@ -17,6 +17,7 @@ import { LanguageSelector, LANGUAGE_OPTIONS, type ProgrammingLanguage } from "./
 import { AgentSettings } from "./agent-settings";
 import { RagImport } from "./rag-import";
 import type { ChatMessage } from "./types";
+import type { WorkingMode } from "./types";
 
 const PLATFORM_STORAGE_KEY = "eco_harness.target_platform";
 const LANGUAGE_STORAGE_KEY = "eco_harness.language";
@@ -36,6 +37,9 @@ export function ChatInterface() {
   // Persist target selection after mount to avoid SSR mismatch.
   const [platform, setPlatform] = useState<PlatformOption>(DEFAULT_PLATFORM);
   const [language, setLanguage] = useState<ProgrammingLanguage>("C");
+  const [mode, setMode] = useState<WorkingMode>("create");
+  const [useWorktree, setUseWorktree] = useState(false);
+  const [worktreeName, setWorktreeName] = useState("");
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(PLATFORM_STORAGE_KEY);
@@ -77,7 +81,14 @@ export function ChatInterface() {
 
   const onSend = () => {
     if (!input.trim() || !isConnected || isProcessing) return;
-    sendUserRequest(input, { targetOs: platform.os, targetArch: platform.arch, language });
+    sendUserRequest(input, {
+      targetOs: platform.os,
+      targetArch: platform.arch,
+      language,
+      mode,
+      useWorktree,
+      worktreeName: worktreeName || undefined,
+    });
     setInput("");
   };
 
@@ -154,7 +165,7 @@ export function ChatInterface() {
             </div>
             <div>
               <h1 className="text-base font-semibold tracking-tight">EcoOS Component Agent</h1>
-              <p className="text-xs text-muted-foreground">ACOM Meta-Harness · V7</p>
+              <p className="text-xs text-muted-foreground">ACOM Meta-Harness</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -235,6 +246,27 @@ export function ChatInterface() {
                 onChange={handleLanguageChange}
                 disabled={isProcessing}
               />
+              <select
+                value={mode}
+                onChange={(event) => setMode(event.target.value as WorkingMode)}
+                disabled={isProcessing}
+                aria-label="Working mode"
+                className="rounded-lg border border-white/[0.06] bg-white/[0.04] px-2 py-1.5 text-xs text-foreground/80"
+              >
+                <option value="create">Create</option>
+                <option value="migrate">Migrate</option>
+                <option value="test">Test</option>
+                <option value="review">Review</option>
+              </select>
+              <label className="flex items-center gap-1.5 whitespace-nowrap px-1 text-xs text-foreground/80">
+                <input
+                  type="checkbox"
+                  checked={useWorktree}
+                  onChange={(event) => setUseWorktree(event.target.checked)}
+                  disabled={isProcessing}
+                />
+                Worktree
+              </label>
               <Input
                 placeholder="Опишите приложение для сборки из SDK-компонентов EcoOS…"
                 value={input}

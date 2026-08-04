@@ -1,0 +1,30 @@
+modes:
+  create:
+    prompt: prompts/modes/create.md
+    roles: [architect, coder, tester]
+    capabilities:
+      - marketplace_assembly
+      - eco_wizard_generation
+      - build_and_runtime_testing
+  migrate:
+    prompt: prompts/modes/migrate.md
+    roles: [architect, coder, tester]
+    capabilities:
+      - legacy_code_analysis
+      - acom_contract_mapping
+      - incremental_migration
+      - build_and_runtime_testing
+  test:
+    prompt: prompts/modes/test.md
+    roles: [tester]
+    capabilities:
+      - read_only_code_inspection
+      - runtime_testing
+      - acceptance_report
+  review:
+    prompt: prompts/modes/review.md
+    roles: [reviewer]
+    capabilities:
+      - read_only_code_inspection
+      - acom_style_review
+      - correctness_report

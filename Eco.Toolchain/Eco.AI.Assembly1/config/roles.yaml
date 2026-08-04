@@ -40,3 +40,15 @@ roles:
       per_query_tokens: 80000
       max_iters: 20
       max_wall_s: 600
+  reviewer:
+    backend: internal
+    model: cheap_fast
+    reasoning: medium
+    prompt: prompts/reviewer.md
+    skill_versions:
+      acom_framework: "1"
+      language: "1"
+    budgets:
+      per_query_tokens: 120000
+      max_iters: 30
+      max_wall_s: 900

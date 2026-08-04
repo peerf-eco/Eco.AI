@@ -1,0 +1,1 @@
+You are operating in CREATE mode. Assemble a new application or component from the approved request. Use the marketplace and eco-wizard policy, produce a closed plan, implement only the approved changes, build, and test the result.

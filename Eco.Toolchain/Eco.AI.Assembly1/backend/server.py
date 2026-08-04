@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 from agent.config.loader import load_config, load_role_config
+from eco_harness.worktrees import WorktreeError, create_worktree
 from eco_harness.roles import make_role_agent
 
 from dotenv import load_dotenv
@@ -58,7 +59,7 @@ app.mount("/files", StaticFiles(directory="output"), name="files")
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "version": "v7"}
+    return {"status": "ok", "protocol": "chat"}
 
 
 @app.get("/config")
@@ -92,6 +93,13 @@ async def harness_config():
         "models": {
             name: profile.model_dump()
             for name, profile in HARNESS_CONFIG.models.items()
+        },
+        "modes": {
+            name: {
+                "roles": spec.roles,
+                "capabilities": spec.capabilities,
+            }
+            for name, spec in HARNESS_CONFIG.modes.items()
         },
     }
 
@@ -171,7 +179,7 @@ async def export_rag_index():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# V7 WEBSOCKET — three-agent pipeline (architect → coder → tester) with
+# CHAT WEBSOCKET — three-agent pipeline (architect → coder → tester) with
 # backward handoff edges and HITL plan review.
 #
 # Flow:
@@ -184,10 +192,10 @@ async def export_rag_index():
 #   4. If planner stops via `fail` instead of `to_coder`, pipeline ends as
 #      pipeline_done(failed).
 #
-# Reuses the v6 client event shape: plan_review_required + plan_decision are
-# exactly what the existing frontend (use-v6-socket.ts) already handles.
+# Reuses the existing client event shape: plan_review_required + plan_decision
+# are handled by the frontend streaming hook.
 #
-# Mapping (internal → v6 client event):
+# Mapping (internal → client event):
 #   architect-agent active   → phase_change phase=planning node=planner
 #   coder-agent active       → phase_change phase=coding   node=coder
 #   tester-agent active      → phase_change phase=testing  node=tester
@@ -239,7 +247,7 @@ def _workspace_header(project_dir: Path, marketplace_cache_root: Path) -> str:
       3. That repeating an identical tool call wastes an iteration.
 
     Without this, coder previously burned 30+ iterations on path-guessing
-    list_dir('.') / list_dir('/') — see project_v6_path_semantics.
+    list_dir('.') / list_dir('/') — see project path semantics.
     """
     return (
         f"=== Workspace ===\n"
@@ -309,7 +317,7 @@ _FRAMEWORK_SUBDIRS = ("SharedFiles", "BuildFiles/Linux/x86_64/StaticRelease")
 
 
 def _prepull_framework(project_dir: Path, cache_root: Path) -> list[str]:
-    """V7_PREPULL_FRAMEWORK=1: copy the always-required framework components
+    """HARNESS_PREPULL_FRAMEWORK=1: copy the always-required framework components
     from marketplace_cache into project_dir (idempotent). marketplace_cache and
     `eco_cli pull` produce byte-identical layouts, so this is exactly what the
     architect's pull would deposit — minus the LLM round-trips. Returns the
@@ -334,8 +342,8 @@ def _prepull_framework(project_dir: Path, cache_root: Path) -> list[str]:
 
 
 def _write_scaffold(project_dir: Path, cache_root: Path | None = None) -> str:
-    """V7_SCAFFOLD=1: pre-seed project_dir/src with the proven entry-point
-    skeleton + build template (backend/scaffold/*). When V7_PREPULL_FRAMEWORK=1
+    """HARNESS_SCAFFOLD=1: pre-seed project_dir/src with the proven entry-point
+    skeleton + build template (backend/scaffold/*). When HARNESS_PREPULL_FRAMEWORK=1
     and cache_root is given, also materialize the framework deps. Returns the
     seed note appended to the coder's context."""
     templates = Path(__file__).parent / "scaffold"
@@ -345,9 +353,9 @@ def _write_scaffold(project_dir: Path, cache_root: Path | None = None) -> str:
         (dst / name).write_text(
             (templates / name).read_text(encoding="utf-8"), encoding="utf-8")
 
-    # Proven win (R6): default ON. Disable with V7_PREPULL_FRAMEWORK=0.
+    # Default ON. Disable with HARNESS_PREPULL_FRAMEWORK=0.
     framework_note = ""
-    if cache_root is not None and os.getenv("V7_PREPULL_FRAMEWORK", "1") != "0":
+    if cache_root is not None and os.getenv("HARNESS_PREPULL_FRAMEWORK", "1") != "0":
         try:
             present = _prepull_framework(project_dir, cache_root)
             if present:
@@ -399,8 +407,8 @@ def _project_manifest(project_dir: Path, max_entries: int = 60) -> str:
     return "\n".join(comps + own) or "(project_dir is empty)"
 
 
-@app.websocket("/ws/v7/chat")
-async def v7_chat_endpoint(websocket: WebSocket):
+@app.websocket("/ws/chat")
+async def chat_endpoint(websocket: WebSocket):
     global HARNESS_CONFIG
     HARNESS_CONFIG = load_config(Path(__file__).resolve().parent.parent)
     await websocket.accept()
@@ -408,25 +416,25 @@ async def v7_chat_endpoint(websocket: WebSocket):
     # Lazy imports — keep startup light even if the role layer churns.
     from agent.v6.orchestrator import Orchestrator
 
-    # V7 uses pi_ai.Model directly (no langchain). This is the path where
+    # The harness uses pi_ai.Model directly (no langchain). This is the path where
     # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
     is_windows = sys.platform == "win32"
     cli_env_path = (
         os.getenv("ECO_CLI_PATH")
         or HARNESS_CONFIG.eco_cli_path
-        or os.getenv("V6_CLI_PATH")
+        or os.getenv("ECO_CLI_PATH")
     )
     cli_path: Path | None = Path(cli_env_path) if cli_env_path else None
     make_env_path = (
         os.getenv("ECO_MAKE_EXE")
-        or os.getenv("V6_MAKE_EXE")
+        or os.getenv("ECO_MAKE_EXE")
         or (r"C:/Users/gaevy/gcc/bin/make.exe" if is_windows else "make")
     )
     make_exe = Path(make_env_path)
 
     requested_thread_id = websocket.query_params.get("thread_id")
     thread_id = requested_thread_id or str(uuid.uuid4())
-    project_dir = Path(os.getenv("V7_OUTPUT_ROOT", "./output")) / f"v7-{thread_id[:8]}"
+    project_dir = Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")) / f"chat-{thread_id[:8]}"
     project_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolved once per connection so the workspace-header block and any
@@ -436,21 +444,23 @@ async def v7_chat_endpoint(websocket: WebSocket):
         "MARKETPLACE_CACHE_ROOT", "/app/marketplace_cache"
     ))
     language = "C"
+    use_worktree = False
+    worktree_path: Path | None = None
 
     # Per-conversation LLM trace folder. Every architect/coder/tester LLM
     # request+response is persisted here as a numbered JSON file (see
     # EcoAgent._stream_llm) — incrementally, so a trace exists after a single
     # call and even if the (now unbounded) agent loop never terminates.
-    trace_dir = Path(os.getenv("V7_TRACES_DIR", "traces")) / f"v7-{thread_id[:8]}"
+    trace_dir = Path(os.getenv("HARNESS_TRACES_DIR", "traces")) / f"chat-{thread_id[:8]}"
     trace_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        f"[V7 WS] connected thread_id={thread_id} "
+        f"[CHAT WS] connected thread_id={thread_id} "
         f"project_dir={project_dir} trace_dir={trace_dir}"
     )
-    await websocket.send_json({"type": "heartbeat", "version": "v7", "thread_id": thread_id})
+    await websocket.send_json({"type": "heartbeat", "protocol": "chat", "thread_id": thread_id})
 
-    # v6 client expects these agent identifiers in its `node` field — translate.
+    # Preserve stable node identifiers expected by the client.
     PHASE_OF = {"architect": "planning", "coder": "coding",  "tester": "testing"}
     NODE_OF  = {"architect": "planner",  "coder": "coder",   "tester": "tester"}
 
@@ -568,6 +578,36 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "content": "Missing user_request"})
                 continue
             language = str(payload.get("language") or HARNESS_CONFIG.default_language)
+            mode = str(payload.get("mode") or "create").lower()
+            if mode not in HARNESS_CONFIG.modes:
+                await websocket.send_json({
+                    "type": "error",
+                    "content": f"Unsupported working mode: {mode}",
+                })
+                continue
+            if payload.get("use_worktree") and not use_worktree:
+                try:
+                    worktree = create_worktree(
+                        HARNESS_CONFIG.root,
+                        thread_id,
+                        name=payload.get("worktree_name"),
+                        root=HARNESS_CONFIG.worktree_root,
+                    )
+                except WorktreeError as error:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": f"Unable to create isolated worktree: {error}",
+                    })
+                    continue
+                worktree_path = worktree.path
+                use_worktree = True
+                project_dir = worktree_path
+                project_dir.mkdir(parents=True, exist_ok=True)
+                await websocket.send_json({
+                    "type": "worktree_created",
+                    "path": str(worktree_path),
+                    "name": worktree.name,
+                })
             if language not in {"C", "CPP", "Python", "Java"}:
                 await websocket.send_json({
                     "type": "error",
@@ -576,6 +616,56 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 continue
 
             # ── Phase 1: plan-review loop (planner re-runs on reject + feedback) ──
+            if mode in {"test", "review"}:
+                one_shot_role = "tester" if mode == "test" else "reviewer"
+                _, role_spec, role_profile = load_role_config(
+                    one_shot_role, HARNESS_CONFIG.root,
+                )
+                from agent.main import get_model as _get_model
+                role_backend = role_spec.backend.removesuffix("_cli")
+                one_shot = make_role_agent(
+                    one_shot_role,
+                    config=HARNESS_CONFIG,
+                    model=(
+                        _get_model(role_profile, role=one_shot_role)
+                        if role_backend in {"internal", "builtin", "eco"}
+                        else None
+                    ),
+                    cli_path=cli_path,
+                    project_dir=project_dir,
+                    make_exe=make_exe,
+                    language=language,
+                    marketplace_cache_root=marketplace_cache_root,
+                    mode=mode,
+                    trace_dir=trace_dir,
+                )
+                ev_queue = asyncio.Queue()
+                try:
+                    result = await _run_agent(
+                        one_shot.run,
+                        ev_queue,
+                        _workspace_header(project_dir, marketplace_cache_root) + user_req,
+                    )
+                except Exception as error:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": f"{mode.title()} agent crashed: {error}",
+                    })
+                    break
+                await websocket.send_json({
+                    "type": "pipeline_done",
+                    "status": "success" if result.status == "done" else "failed",
+                    "build_artifact": "",
+                    "tester_report_md": (
+                        (result.stop_payload or {}).get("message")
+                        or result.error
+                        or ""
+                    ),
+                    "mode": mode,
+                    "worktree": str(worktree_path) if worktree_path else None,
+                })
+                continue
+
             workspace = _workspace_header(project_dir, marketplace_cache_root)
             planner_seed = workspace + user_req
             approved_plan_md: str | None = None
@@ -601,13 +691,14 @@ async def v7_chat_endpoint(websocket: WebSocket):
                     make_exe=make_exe,
                     language=language,
                     marketplace_cache_root=marketplace_cache_root,
+                    mode=mode,
                     trace_dir=trace_dir,
                     on_event=_make_on_event(ev_queue, "architect"),
                 )
                 try:
                     planner_result = await _run_agent(planner.run, ev_queue, planner_seed)
                 except Exception as e:
-                    logger.exception(f"[V7 WS] planner crashed thread_id={thread_id}")
+                    logger.exception(f"[CHAT WS] planner crashed thread_id={thread_id}")
                     await websocket.send_json({
                         "type": "error",
                         "content": f"Planner crashed: {type(e).__name__}: {e}",
@@ -710,35 +801,34 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 saved = _save_mermaid_blocks(approved_plan_md, project_dir)
                 if saved:
                     logger.info(
-                        f"[V7 WS] saved {len(saved)} mermaid diagram(s) for "
+                        f"[CHAT WS] saved {len(saved)} mermaid diagram(s) for "
                         f"thread_id={thread_id}: {[str(p) for p in saved]}"
                     )
             except Exception:
-                logger.exception(f"[V7 WS] mermaid save failed thread_id={thread_id}")
+                logger.exception(f"[CHAT WS] mermaid save failed thread_id={thread_id}")
 
             # ── Phase 2: run coder + tester sub-orchestrator with approved plan ──
             # Experiment toggles (env-gated, default off):
-            #   V7_SCAFFOLD=1  — pre-seed src/EcoMain.c + src/Makefile (proven)
-            #   V7_WARM_SEED=1 — re-attach workspace+plan+manifest on retry hops
-            # Proven win (R2-R6): default ON. Disable with V7_SCAFFOLD=0.
+            #   HARNESS_SCAFFOLD=1  — pre-seed src/EcoMain.c + src/Makefile
+            #   HARNESS_WARM_SEED=1 — re-attach workspace+plan+manifest on retry hops
             scaffold_note = ""
             wizard_configured = bool(
                 HARNESS_CONFIG.eco_wizard_path
                 or shutil.which("eco-wizard")
                 or shutil.which("eco-wizard.exe")
             )
-            fallback_scaffold_enabled = os.getenv("V7_SCAFFOLD", "0") == "1"
-            if not wizard_configured and os.getenv("V7_SCAFFOLD") is None:
+            fallback_scaffold_enabled = os.getenv("HARNESS_SCAFFOLD", "0") == "1"
+            if not wizard_configured and os.getenv("HARNESS_SCAFFOLD") is None:
                 fallback_scaffold_enabled = True
             if fallback_scaffold_enabled:
                 try:
                     scaffold_note = _write_scaffold(project_dir, marketplace_cache_root)
-                    logger.info(f"[V7 WS] scaffold pre-seeded thread_id={thread_id}")
+                    logger.info(f"[CHAT WS] scaffold pre-seeded thread_id={thread_id}")
                 except Exception:
-                    logger.exception(f"[V7 WS] scaffold failed thread_id={thread_id}")
+                    logger.exception(f"[CHAT WS] scaffold failed thread_id={thread_id}")
 
             seed_builders: dict = {}
-            if os.getenv("V7_WARM_SEED") == "1":
+            if os.getenv("HARNESS_WARM_SEED") == "1":
                 def _coder_retry_seed(stop_message: str, _ws=workspace,
                                       _plan=approved_plan_md,
                                       _note=scaffold_note) -> str:
@@ -776,6 +866,7 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 make_exe=make_exe,
                 language=language,
                 marketplace_cache_root=marketplace_cache_root,
+                mode=mode,
                 trace_dir=trace_dir,
                 on_event=_make_on_event(ev_queue, "coder"),
             )
@@ -793,6 +884,7 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 make_exe=make_exe,
                 language=language,
                 marketplace_cache_root=marketplace_cache_root,
+                mode=mode,
                 trace_dir=trace_dir,
                 on_event=_make_on_event(ev_queue, "tester"),
             )
@@ -814,7 +906,7 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 coder_seed = workspace + approved_plan_md + scaffold_note
                 result = await _run_agent(sub_orch.run, ev_queue, coder_seed)
             except Exception as e:
-                logger.exception(f"[V7 WS] sub_orch crashed thread_id={thread_id}")
+                logger.exception(f"[CHAT WS] sub_orch crashed thread_id={thread_id}")
                 await websocket.send_json({
                     "type": "error",
                     "content": f"Orchestrator error: {type(e).__name__}: {e}",
@@ -849,9 +941,9 @@ async def v7_chat_endpoint(websocket: WebSocket):
             break
 
     except WebSocketDisconnect:
-        logger.info(f"[V7 WS] disconnected thread_id={thread_id}")
+        logger.info(f"[CHAT WS] disconnected thread_id={thread_id}")
     except Exception:
-        logger.exception(f"[V7 WS] handler crashed thread_id={thread_id}")
+        logger.exception(f"[CHAT WS] handler crashed thread_id={thread_id}")
         try:
             await websocket.close()
         except Exception:

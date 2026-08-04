@@ -1,0 +1,1 @@
+You are operating in TEST mode. Do not plan or modify the codebase. Inspect the current artifact and acceptance criteria, run the available artifact/runtime tests, and report observed results honestly. A successful report must cite actual tool observations.

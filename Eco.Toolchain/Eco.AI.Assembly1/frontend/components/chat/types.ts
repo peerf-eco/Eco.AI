@@ -1,5 +1,5 @@
 // ACOM pipeline UI types.
-// Mirrors backend events from /ws/v7/chat.
+// Mirrors backend events from /ws/chat.
 //
 // Architectural idea borrowed from F:\ai-mek\repos\mek-ai-client\src\chat\types.ts:
 // each assistant message is a list of typed Blocks. A pipeline run unfolds
@@ -8,7 +8,7 @@
 // new Block.type variant — no global refactor.
 
 // ────────────────────────────────────────────────────────────────────────────
-// Pipeline phases (matches agent/v6/state.py Phase literal)
+// Chat phases emitted by the backend event contract.
 // ────────────────────────────────────────────────────────────────────────────
 
 export type HarnessPhase =
@@ -189,7 +189,7 @@ interface ServerEventBase {
 
 export interface HeartbeatEvent extends ServerEventBase {
   type: "heartbeat";
-  version: string;
+  protocol?: string;
   thread_id?: string;
 }
 
@@ -316,7 +316,12 @@ export interface UserRequestMessage {
   target_os?: string;
   target_arch?: string;
   language?: string;
+  mode?: WorkingMode;
+  use_worktree?: boolean;
+  worktree_name?: string;
 }
+
+export type WorkingMode = "create" | "migrate" | "test" | "review";
 
 export interface PlanDecisionMessage {
   type: "plan_decision";

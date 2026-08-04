@@ -11,12 +11,12 @@ be selected per role.
 The production path is:
 
 ```text
-Next.js UI → FastAPI /ws/v7/chat → architect → plan approval → coder ↔ tester
+Next.js UI → FastAPI /ws/chat → architect → plan approval → coder ↔ tester
                          └────── marketplace RAG, eco-cli, eco-wizard
 ```
 
-The WebSocket name is retained for protocol compatibility. New code should use
-the neutral `eco_harness` modules and the `/ws/v7/chat` endpoint.
+The WebSocket path is `/ws/chat`. New code should use the neutral
+`eco_harness` modules and the shared chat event contract.
 
 ## Requirements
 
@@ -47,6 +47,7 @@ cd ..
 ```
 
 Set `OPENAI_API_KEY`, `OPENROUTER_URL`, and the executable paths in `.env`.
+Set `ECO_WORKTREE_ROOT` to override the default sibling worktree directory.
 On Linux and macOS, use the equivalent virtual-environment activation command.
 
 Prepare the marketplace corpus and index:
@@ -94,9 +95,9 @@ Repository configuration is under `config/`:
 | `harness.yaml` | defaults, cache limits, hop limits, executable paths |
 | `models.yaml` | named model profiles |
 | `roles.yaml` | backend, model profile, reasoning, tools, budgets |
-| `languages.yaml` | supported languages and language skill versions |
+| `languages.yaml` | supported languages and language skill profiles |
 | `prompts/` | stable role and framework prompt fragments |
-| `skills/` | versioned ACOM, generator, and language skills |
+| `skills/` | ACOM, generator, and language skills |
 | `tools.yaml` | timeouts and output limits |
 | `marketplace.yaml` | cache/index and framework component settings |
 | `ui.yaml` | UI defaults and selector options |
@@ -136,7 +137,7 @@ optional cost ceilings.
 ## Language and platform selection
 
 The UI exposes `C`, `CPP`, `Python`, and `Java` beside the platform selector.
-Language prompt and skill versions are selected from `config/languages.yaml`
+Language prompt and skill profiles are selected from `config/languages.yaml`
 and `config/skills/languages/`. Python and Java layouts are intentionally
 delegated to the upcoming `eco-wizard` release rather than invented by the
 model.
@@ -171,7 +172,7 @@ that bypasses it. If a component is absent locally, the architect uses
 `eco-cli` to discover and pull it from the marketplace.
 
 `backend/scaffold/` remains only as an explicit compatibility fallback. It is
-not used when `eco-wizard` is available. Set `V7_SCAFFOLD=1` to force the
+not used when `eco-wizard` is available. Set `HARNESS_SCAFFOLD=1` to force the
 fallback or leave the variable unset to use the automatic compatibility rule.
 
 ## Customization
@@ -187,7 +188,7 @@ config/agents/<role>/AGENTS.md
 Reusable skills can be placed in:
 
 ```text
-config/skills/<skill>/vN.md
+config/skills/<skill>/SKILL.md
 .eco-harness/skills/<skill>/SKILL.md
 agent/skills/<skill>.md
 ```
@@ -196,12 +197,37 @@ Language skills belong in `config/skills/languages/<language>.md`. Stable
 prompt changes belong in `config/prompts/`; workspace-specific instructions
 belong in `.eco-harness/`.
 
+## Working modes
+
+The UI mode selector and CLI support:
+
+- `create` or `/create` — create an application/component from scratch
+- `migrate` or `/migrate` — analyze and migrate an existing codebase to ACOM
+- `test` or `/test` — run the read-only testing agent
+- `review` or `/review` — run the read-only ACOM style/correctness reviewer
+
+Each mode selects its own system prompt and capability set from
+`config/modes.yaml`.
+
+## Worktree isolation
+
+Enable **Worktree** beside the chat input, or pass `--worktree` to the CLI.
+The harness creates a detached Git worktree outside the primary checkout and
+uses it as the project root for all subsequent agent filesystem operations in
+that session. It never silently modifies the primary checkout. A custom
+destination can be configured through `ECO_WORKTREE_ROOT`.
+
+```cmd
+python -m eco_harness run "Migrate this project" --mode migrate --worktree
+python -m eco_harness /review "Check this code" --worktree
+```
+
 ## CLI and future MCP use
 
 The headless entrypoint is:
 
 ```cmd
-python -m eco_harness run "Build a calculator" --language C
+python -m eco_harness run "Build a calculator" --mode create --language C
 python -m eco_harness serve --api
 ```
 
@@ -220,4 +246,5 @@ npm run build
 ```
 
 See `WORKING_DOCUMENTATION.md` for the consolidated architectural decisions,
-cache contract, migration notes, and operational troubleshooting.
+cache contract, migration notes, swarm extension design, and operational
+troubleshooting.

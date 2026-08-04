@@ -49,6 +49,14 @@ class LanguageSpec(BaseModel):
     eco_wizard: str | None = None
 
 
+class ModeSpec(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    prompt: str
+    roles: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+
+
 class HarnessConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -60,6 +68,8 @@ class HarnessConfig(BaseModel):
     models: dict[str, ModelProfile] = Field(default_factory=dict)
     roles: dict[str, RoleSpec] = Field(default_factory=dict)
     languages: dict[str, LanguageSpec] = Field(default_factory=dict)
+    modes: dict[str, ModeSpec] = Field(default_factory=dict)
+    worktree_root: Path | None = None
     source_max_bytes: int = 300_000
     dynamic_tail_items: int = 5
     max_hops: int = 8
@@ -93,6 +103,7 @@ def load_config(root: Path | None = None) -> HarnessConfig:
     harness = _read_yaml(config_root / "harness.yaml")
     models = _read_yaml(config_root / "models.yaml").get("models", {})
     languages = _read_yaml(config_root / "languages.yaml").get("languages", {})
+    modes = _read_yaml(config_root / "modes.yaml").get("modes", {})
     roles = _role_files(config_root)
     workspace_path = Path(
         os.getenv(
@@ -175,11 +186,27 @@ def load_config(root: Path | None = None) -> HarnessConfig:
         for name, value in languages.items()
         if isinstance(value, dict)
     }
+    mode_specs = {
+        name: ModeSpec(**value)
+        for name, value in modes.items()
+        if isinstance(value, dict)
+    }
     return HarnessConfig(
         root=project_root,
         models=model_profiles,
         roles=role_specs,
         languages=language_specs,
+        modes=mode_specs,
+        worktree_root=(
+            Path(
+                os.getenv(
+                    "ECO_WORKTREE_ROOT",
+                    merged_harness.get("worktree_root", ""),
+                ),
+            ).resolve()
+            if os.getenv("ECO_WORKTREE_ROOT", merged_harness.get("worktree_root", ""))
+            else None
+        ),
         source_max_bytes=int(
             os.getenv("HARNESS_SOURCE_MAX_BYTES", merged_harness.get("source_max_bytes", 300_000)),
         ),

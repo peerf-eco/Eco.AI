@@ -30,16 +30,16 @@ mutual-handoff loop.
 - `tools/router.py` — domain-tool registration boundary
 - `extensions/ast_service.py` — AST extraction library endpoint
 - `extensions/cli_exec.py` — safe profile-based subprocess execution
-- `capabilities.py` — Pydantic AI v2 capability descriptions
+- `capabilities.py` — Pydantic AI capability descriptions
 
-The existing `agent/v6` directory is a historical package name for the
-working internal agent implementation. New modules must not add new versioned
-paths or dead-pipeline terminology. Compatibility names may remain until a
-separate filesystem rename is safe.
+The existing numbered agent directory is a historical package name for the
+working internal agent implementation. New modules must not add new numbered
+paths or dead-pipeline terminology. A future mechanical rename may remove the
+historical directory name after downstream imports are migrated.
 
-## 3. Pydantic AI v2 decision
+## 3. Pydantic AI decision
 
-Pydantic AI v2 capabilities are adopted as an optional composition layer.
+Pydantic AI capabilities are adopted as an optional composition layer.
 Capabilities are appropriate for stable bundles of instructions, tools,
 hooks, model settings, and language/role behavior. They are not the authority
 for the top-level workflow.
@@ -102,14 +102,15 @@ Prompt and skill resolution order is stable:
 1. framework header
 2. stable tool contract
 3. role prompt
-4. language prompt and selected skill versions
+4. language prompt and selected skill profiles
 5. project/root and role `AGENTS.md`
 6. stitched source block
 7. dynamic RAG/tool/history tail
 
 Root `AGENTS.md` applies to all roles. Role-specific rules belong in
 `config/agents/<role>/AGENTS.md` or `.eco-harness/agents/<role>/AGENTS.md`.
-Versioned reusable skills belong under `config/skills/`.
+Reusable skills belong under `config/skills/`; Git commits provide their
+version history.
 
 ## 6. Agent backends
 
@@ -140,7 +141,7 @@ adapter protocol.
 ## 7. Language support
 
 The UI and request protocol support `C`, `CPP`, `Python`, and `Java`.
-Language-specific prompt and skill versions are configured in
+Language-specific prompt and skill profiles are configured in
 `config/languages.yaml`, `config/prompts/languages/`, and
 `config/skills/languages/`.
 
@@ -150,7 +151,7 @@ invent those layouts.
 
 ## 8. Generator and CLI execution
 
-`agent/v6/tools/eco_wizard.py` exposes the generator with:
+The generator tool exposes the generator with:
 
 - executable lookup via `ECO_WIZARD_PATH` or `PATH`
 - `eco-wizard new`
@@ -158,10 +159,9 @@ invent those layouts.
 - bounded output
 - explicit missing-binary and failure results
 
-`agent/v6/tools/eco_cli.py` remains the marketplace bridge. It uses an
+The marketplace CLI tool uses an
 allowlist, `shell=False`, bounded output, timeout control, and portable
-`ECO_CLI_PATH`/`ECO_CLI_PREFIX` overrides. Legacy `V6_*` names remain only as
-compatibility fallbacks.
+`ECO_CLI_PATH`/`ECO_CLI_PREFIX` overrides.
 
 ## 9. Shared RAG lifecycle
 
@@ -192,21 +192,100 @@ remain dynamic tail data.
 ## 10. UI/API contract
 
 The UI uses `NEXT_PUBLIC_API_URL` with `http://localhost:8100` as the local
-default and `NEXT_PUBLIC_PIPELINE_VERSION=v7`. The server exposes:
+default. The server exposes:
 
 - `GET /health`
 - `GET /config`
 - `PUT /config/workspace`
 - `POST /rag/import`
 - `GET /rag/export`
-- `WS /ws/v7/chat`
+- `WS /ws/chat`
 
 The event schema remains compatible with the current streaming UI:
 heartbeats, phase changes, node events, plan review, and pipeline completion.
-The neutral `use-socket.ts` export is the preferred frontend import; the old
-hook filename remains a compatibility shim.
+The neutral `use-socket.ts` export is the preferred frontend import.
 
-## 11. Deployment
+## 11. Worktree isolation
+
+When enabled from the UI or CLI, `eco_harness.worktrees.create_worktree`
+resolves the repository root, creates a detached worktree under the configured
+worktree root, and passes that path to every role/tool in the session. The
+primary checkout is not used for generated code or agent mutations. Creation
+fails loudly if Git is unavailable or the destination exists.
+
+## 12. Working modes
+
+`config/modes.yaml` defines mode-specific prompts, role lists, and
+capabilities:
+
+- `create`: architect, coder, tester; marketplace assembly and generation
+- `migrate`: architect, coder, tester; legacy analysis and incremental ACOM migration
+- `test`: tester only; read-only runtime verification
+- `review`: reviewer only; read-only style, ABI, naming, and correctness review
+
+The CLI accepts `--mode create|migrate|test|review` and slash aliases such as
+`/create`, `/migrate`, `/test`, and `/review`.
+
+## 13. External agent swarm orchestrator extension
+
+This feature is intentionally design-only. It is a future replacement or
+optional layer above the current single-coder/single-tester graph.
+
+### Responsibilities
+
+The swarm orchestrator analyzes a task queue, decomposes work into bounded
+tasks, assigns tasks to multiple coding/review/testing workers, tracks
+dependencies and workspace claims, and merges or escalates results. It does
+not own ACOM domain rules; workers receive the same context assembler, tools,
+skills, budgets, and trust policy as current roles.
+
+### Proposed interfaces
+
+```python
+class SwarmOrchestrator(Protocol):
+    async def submit(self, request: TaskRequest) -> TaskBatch: ...
+    async def plan(self, queue: TaskQueue) -> DispatchPlan: ...
+    async def dispatch(self, plan: DispatchPlan) -> AsyncIterator[TaskEvent]: ...
+    async def reconcile(self, results: list[TaskResult]) -> SwarmReport: ...
+    async def cancel(self, batch_id: str) -> None: ...
+```
+
+Core records should include:
+
+- `TaskRequest`: user request, mode, repository/worktree, acceptance criteria
+- `TaskSpec`: task ID, role, inputs, dependencies, file/resource claims, budget
+- `DispatchPlan`: parallel waves, worker/backend assignment, merge policy
+- `TaskResult`: status, changed paths, commits/artifacts, evidence, usage
+- `TaskEvent`: queued, started, tool output, blocked, completed, failed
+- `SwarmReport`: accepted changes, conflicts, failed tasks, remaining queue
+
+### Dispatch logic
+
+1. Normalize the user request into independent and dependent tasks.
+2. Use a DAG rather than unconstrained peer-to-peer handoffs.
+3. Assign workers by capability, language, model/backend, budget, and file claims.
+4. Run non-conflicting tasks in parallel isolated worktrees.
+5. Require every coding task to produce a patch/commit and evidence.
+6. Run targeted test/review tasks after each coding wave.
+7. Detect file overlap, conflicting contracts, budget exhaustion, and failed evidence.
+8. Requeue only bounded, diagnosable failures; escalate ambiguous conflicts to HITL.
+9. Reconcile accepted commits through a merge queue or integration worktree.
+10. Emit the same event schema consumed by the CLI and UI.
+
+### Safety and quality gates
+
+- no shared mutable worktree between concurrent workers
+- per-task and aggregate budgets
+- explicit tool allowlists by worker role
+- reviewer/tester evidence required before merge
+- deterministic conflict ownership and retry limits
+- secrets and external command policy inherited from the main harness
+
+The first implementation should be an adapter behind the existing
+`AgentBackend`/event interfaces. The current graph remains the default until
+swarm scheduling is validated against deterministic integration tests.
+
+## 14. Deployment
 
 Before compose:
 
@@ -239,8 +318,8 @@ volume policy rather than exposing arbitrary write access.
 
 ## 13. Deprecated material
 
-The old V3/V4/V5 chat and verification documents are historical references,
-not production instructions. The active decisions are consolidated here.
+Old chat and verification documents are historical references, not production
+instructions. The active decisions are consolidated here.
 `agent/skills/c.md` is a reference corpus for a future `component_author`
 role, not a live default skill.
 

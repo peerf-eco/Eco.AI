@@ -14,7 +14,7 @@ interface ThinkingBlockProps {
 // Each ReAct iteration produces its own thinking block; while streaming we
 // keep it expanded with a live pulsing dot and a CSS-only blinking caret at
 // the end of the text. When the backend emits tool_call_start / phase_change
-// / pipeline_done / node_done, use-v6-socket flips `isActive` to false and a
+// / pipeline_done / node_done, the chat socket flips `isActive` to false and a
 // useEffect here collapses the block. The history is never deleted — the
 // user can re-expand any past iteration to reread the reasoning.
 export function ThinkingBlock({ block }: ThinkingBlockProps) {

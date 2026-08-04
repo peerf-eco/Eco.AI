@@ -1,5 +1,5 @@
 api_url: http://localhost:8100
-pipeline_version: v7
+websocket_path: /ws/chat
 languages:
   - C
   - CPP

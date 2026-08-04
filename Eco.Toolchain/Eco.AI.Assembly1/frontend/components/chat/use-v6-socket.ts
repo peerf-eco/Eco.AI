@@ -8,6 +8,7 @@ import type {
   PipelineNode,
   ServerEvent,
   HarnessPhase,
+  WorkingMode,
 } from "./types";
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -108,7 +109,7 @@ function finalizeActiveThinking(prev: ChatMessage[], node?: PipelineNode): ChatM
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Compatibility module for the V7 chat UI.
+// Compatibility module for the chat UI.
 // ────────────────────────────────────────────────────────────────────────────
 
 export interface UseHarnessSocketResult {
@@ -121,7 +122,16 @@ export interface UseHarnessSocketResult {
 
   sendUserRequest: (
     text: string,
-    opts?: { projectDir?: string; maxRetries?: number; targetOs?: string; targetArch?: string; language?: string },
+    opts?: {
+      projectDir?: string;
+      maxRetries?: number;
+      targetOs?: string;
+      targetArch?: string;
+      language?: string;
+      mode?: WorkingMode;
+      useWorktree?: boolean;
+      worktreeName?: string;
+    },
   ) => void;
   sendPlanDecision: (blockId: string, approved: boolean, opts?: { modifiedPlanMd?: string; reason?: string }) => void;
   sendEscalationDecision: (blockId: string, cont: boolean) => void;
@@ -389,8 +399,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
       tid = sessionStorage.getItem(THREAD_ID_KEY);
     }
     const qs = tid ? `?thread_id=${encodeURIComponent(tid)}` : "";
-    const pipelineVersion = process.env.NEXT_PUBLIC_PIPELINE_VERSION || "v7";
-    const ws = new WebSocket(`${wsBaseUrl}/ws/${pipelineVersion}/chat${qs}`);
+    const ws = new WebSocket(`${wsBaseUrl}/ws/chat${qs}`);
 
     ws.onopen = () => {
       setIsConnected(true);
@@ -419,7 +428,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
         handleEventRef.current(data);
       } catch (err) {
         // swallow malformed messages — they're a server bug, not our concern.
-        console.error("V7 WS: malformed message", err, e.data);
+        console.error("Chat WS: malformed message", err, e.data);
       }
     };
 
@@ -439,7 +448,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
   const send = useCallback((msg: ClientMessage) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.warn("V7 WS: send while not connected", msg.type);
+      console.warn("Chat WS: send while not connected", msg.type);
       return;
     }
     ws.send(JSON.stringify(msg));
@@ -447,7 +456,16 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
 
   const sendUserRequest = useCallback((
     text: string,
-    opts?: { projectDir?: string; maxRetries?: number; targetOs?: string; targetArch?: string; language?: string },
+    opts?: {
+      projectDir?: string;
+      maxRetries?: number;
+      targetOs?: string;
+      targetArch?: string;
+      language?: string;
+      mode?: WorkingMode;
+      useWorktree?: boolean;
+      worktreeName?: string;
+    },
   ) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -466,6 +484,9 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
       target_os: opts?.targetOs,
       target_arch: opts?.targetArch,
       language: opts?.language,
+      mode: opts?.mode,
+      use_worktree: opts?.useWorktree,
+      worktree_name: opts?.worktreeName,
     });
   }, [send]);
 
