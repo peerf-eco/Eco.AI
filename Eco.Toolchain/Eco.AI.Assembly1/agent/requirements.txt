@@ -20,9 +20,8 @@ python-multipart>=0.0.9
 # ОСНОВНЫЕ ЗАВИСИМОСТИ
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# LangGraph / LangChain (langgraph, langchain-core, langchain-openai) сняты
-# 2026-06-22 вместе с ретайром V1–V6. V7 использует pi_ai напрямую, без
-# langchain. См. docs/V7_ARCHITECTURE.md.
+# LangGraph / LangChain are not runtime dependencies. The active pipeline uses
+# pi_ai directly. See WORKING_DOCUMENTATION.md.
 
 # Pydantic - валидация данных
 pydantic>=2.0.0
@@ -35,7 +34,7 @@ python-dotenv>=1.0.0
 # RAG ЗАВИСИМОСТИ
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# Боевой RAG V7 (sqlite-vec) объявлен ниже в блоке «RAG (V7 marketplace search)».
+# The production RAG (sqlite-vec) is declared below in the marketplace block.
 # Старый ChromaDB-стек (chromadb / langchain-chroma / langchain-community /
 # langchain-text-splitters) снят 2026-06-22 вместе с scripts/init_rag.py —
 # продакшн-агенты его не читали. См. docs/RAG_SETUP.md.
@@ -44,7 +43,7 @@ python-dotenv>=1.0.0
 # EMBEDDINGS / TOKENIZATION
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# transformers / torch / sentencepiece сняты 2026-06-22: V7 embedder ходит в
+# transformers / torch / sentencepiece are not required: the embedder calls
 # OpenRouter /embeddings через httpx (agent/rag/embedder.py); локального
 # torch-fallback в коде нет.
 
@@ -73,7 +72,7 @@ pytest-asyncio>=0.23
 respx>=0.21
 
 # ═══════════════════════════════════════════════════════════════════════════
-# RAG (V7 marketplace search — agent/rag/, agent/v6/tools/rag.py)
+# RAG (marketplace search — agent/rag/)
 # ═══════════════════════════════════════════════════════════════════════════
 
 # sqlite-vec — SQLite extension for ANN vector search. Loaded at runtime

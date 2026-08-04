@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 from pathlib import Path
@@ -176,7 +176,7 @@ def make_role_agent(
         )
 
     if role == "architect":
-        from agent.v6.agents.architect import make_architect
+        from agent.internal.agents.architect import make_architect
         agent = make_architect(
             model=model,
             cli_path=cli_path,
@@ -186,7 +186,7 @@ def make_role_agent(
             on_event=on_event,
         )
     elif role == "coder":
-        from agent.v6.agents.coder import make_coder
+        from agent.internal.agents.coder import make_coder
         agent = make_coder(
             model=model,
             project_dir=project_dir,
@@ -196,7 +196,7 @@ def make_role_agent(
             on_event=on_event,
         )
     elif role == "tester":
-        from agent.v6.agents.tester import make_tester
+        from agent.internal.agents.tester import make_tester
         agent = make_tester(
             model=model,
             project_dir=project_dir,
@@ -205,7 +205,7 @@ def make_role_agent(
             on_event=on_event,
         )
     elif role == "reviewer":
-        from agent.v6.agents.reviewer import make_reviewer
+        from agent.internal.agents.reviewer import make_reviewer
         agent = make_reviewer(
             model=model,
             project_dir=project_dir,

@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Iterable
 
+from agent.domain import load_acom_domain, load_tool_contract
+
 
 _SOURCE_EXTENSIONS = frozenset(
     {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".idl", ".inc"},
@@ -62,6 +64,7 @@ def build_static_system_prompt(
     *,
     source_roots: Iterable[Path],
     tool_contract: str = "",
+    domain_knowledge: str = "",
     header_path: Path | None = None,
     max_source_bytes: int = 300_000,
 ) -> str:
@@ -73,9 +76,12 @@ def build_static_system_prompt(
     )
     header = header_file.read_text(encoding="utf-8") if header_file.exists() else ""
     source = stitch_source_files(source_roots, max_bytes=max_source_bytes)
+    domain = domain_knowledge or load_acom_domain()
+    stable_tools = tool_contract or load_tool_contract()
     return (
         f"{header.rstrip()}\n\n"
-        f"=== STATIC TOOL CONTRACT ===\n{tool_contract.rstrip()}\n\n"
+        f"=== STATIC ACOM DOMAIN KNOWLEDGE ===\n{domain.rstrip()}\n\n"
+        f"=== STATIC TOOL CONTRACT ===\n{stable_tools.rstrip()}\n\n"
         f"=== ROLE INSTRUCTIONS ===\n{role_prompt.rstrip()}\n\n"
         f"=== IMMUTABLE SOURCE CODEBASE ===\n{source}"
     )

@@ -40,7 +40,7 @@ eco.sli/
 test_results/
 # AI-review artifacts dumped at the app root. Leading slash anchors this to
 # Eco.AI.Assembly1/agents/ ONLY — the old bare `agents/` also matched the V7
-# source package agent/v6/agents/ and silently dropped required files
+# source package agent/internal/ and silently dropped required files
 # (architect/coder/tester/_taxonomy) from git, breaking clone→run. Fixed 2026-06-22.
 /agents/
 

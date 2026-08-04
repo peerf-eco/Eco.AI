@@ -24,7 +24,7 @@ class ChunkKind(str, Enum):
     """What kind of C declaration this chunk represents.
 
     Strings are stable identifiers used in the search tool's ``kind`` filter
-    — do not rename without coordinating with ``agent/v6/tools/rag.py``.
+    — do not rename without coordinating with the active RAG tool adapter.
     """
     INTERFACE = "interface"   # typedef struct ... + vtbl or ACOM interface
     STRUCT = "struct"         # plain typedef struct

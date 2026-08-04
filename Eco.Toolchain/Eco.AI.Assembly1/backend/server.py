@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import sys
 import json
@@ -415,7 +415,7 @@ async def chat_endpoint(websocket: WebSocket):
     await websocket.accept()
 
     # Lazy imports — keep startup light even if the role layer churns.
-    from agent.v6.orchestrator import Orchestrator
+    from agent.internal.orchestrator import Orchestrator
 
     # The harness uses pi_ai.Model directly (no langchain). This is the path where
     # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
@@ -440,7 +440,7 @@ async def chat_endpoint(websocket: WebSocket):
 
     # Resolved once per connection so the workspace-header block and any
     # other downstream consumer agree on which cache the agent is told
-    # about. Matches the default in agent/v6/tools/code_search.py.
+    # about. Matches the default in the active code-search tool.
     marketplace_cache_root = Path(os.getenv(
         "MARKETPLACE_CACHE_ROOT", "/app/marketplace_cache"
     ))

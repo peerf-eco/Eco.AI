@@ -32,10 +32,9 @@ mutual-handoff loop.
 - `extensions/cli_exec.py` — safe profile-based subprocess execution
 - `capabilities.py` — Pydantic AI capability descriptions
 
-The existing numbered agent directory is a historical package name for the
-working internal agent implementation. New modules must not add new numbered
-paths or dead-pipeline terminology. A future mechanical rename may remove the
-historical directory name after downstream imports are migrated.
+`agent/internal/` contains the active built-in agent implementation. It is not
+a versioned product generation. New modules must not add numbered agent paths
+or dead-pipeline terminology; Git history provides implementation versioning.
 
 ## 3. Pydantic AI decision
 
@@ -58,15 +57,29 @@ Pydantic AI upgrades from changing the ACOM workflow contract.
 
 ## 4. Prompt-cache contract
 
-Every internal role uses a deterministic static context assembled by
+Every role and backend uses a deterministic static context assembled by
 `agent/context/assembler.py`:
 
 ```text
-BLOCK A — immutable framework rules and stable tool contract
+BLOCK A — immutable framework rules, ACOM domain knowledge, and tool contract
 BLOCK B — one stitched source-code payload
-BLOCK C — runtime RAG and tool results
-BLOCK D — recent history and current user request
+BLOCK C — role, mode, language, skills, and AGENTS.md instructions
+BLOCK D — runtime RAG, tool results, recent history, and user request
 ```
+
+`config/prompts/acom_domain.md` is the canonical ACOM knowledge block. It
+contains the identifier taxonomy, framework package guidance, ABI and C
+conventions, project layout, static-link CID rules, and trust model. The
+stable tool policy is in `config/prompts/tool_contract.md`. `agent/domain.py`
+loads both files, and the assembler injects them before role-specific
+instructions and the stitched source payload.
+
+The internal implementation in `agent/internal/` and the external `codex`,
+`pi`, and `claude` adapters all use this same assembler path. The old Python
+taxonomy module remains only as a compatibility import surface; it no longer
+duplicates domain text in role prompts. This makes the effective static domain
+block byte-identical across supported backends and roles. Backend capabilities
+may differ, but domain policy and cache ordering do not.
 
 Configured legacy source roots are sorted by normalized path and emitted as one continuous
 payload:
@@ -303,7 +316,7 @@ The API mount is writable because UI RAG import updates the shared SQLite
 index. Production deployments should use an index-update job or a controlled
 volume policy rather than exposing arbitrary write access.
 
-## 12. Security and trust
+## 15. Security and trust
 
 - CORS defaults to local UI origins and is configurable with `CORS_ORIGINS`.
 - Secrets are environment/secret-store data only.
@@ -316,7 +329,7 @@ volume policy rather than exposing arbitrary write access.
 - WebSocket authentication remains an optional deployment extension and
   should be enabled for non-localhost exposure.
 
-## 13. Deprecated material
+## 16. Deprecated material
 
 Old chat and verification documents are historical references, not production
 instructions. The active decisions are consolidated here.
@@ -326,7 +339,7 @@ role, not a live default skill.
 Do not use old version-specific prompts, dead LangGraph instructions, or the
 old Chroma path when changing the production harness.
 
-## 14. Validation checklist
+## 17. Validation checklist
 
 ```cmd
 python -m compileall -q agent backend eco_harness scripts

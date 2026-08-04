@@ -1,12 +1,12 @@
-"""EcoOS Component Agent — model factory for the V7 pipeline.
+"""EcoOS Component Agent — model factory for the active pipeline.
 
 ``get_model()`` builds a ``pi_ai.Model`` for the configured OpenRouter endpoint.
-It is the only public entry here; the /ws/v7/chat endpoint (backend/server.py)
+It is the only public entry here; the /ws/chat endpoint (backend/server.py)
 calls it. Streaming goes through pi_ai.stream_simple, which passes
 ``delta.reasoning`` through correctly (langchain_openai 1.2.1 dropped it).
 
-No LangGraph / LangChain. The legacy CLI (``python -m agent.main``) and
-``get_llm()`` were removed 2026-06-22 with the V1–V6 retirement.
+No LangGraph / LangChain. The legacy CLI and ``get_llm()`` are not part of the
+active runtime.
 """
 
 import os
