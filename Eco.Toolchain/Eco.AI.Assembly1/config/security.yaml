@@ -1,0 +1,3 @@
+cors_origins:
+  - http://localhost:3100
+ws_auth_required: false

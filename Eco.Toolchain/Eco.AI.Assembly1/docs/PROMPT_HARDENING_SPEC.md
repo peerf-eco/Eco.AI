@@ -1,6 +1,9 @@
-# Prompt Hardening Spec — V6 Pipeline Nodes
+# Prompt Hardening Spec — ACOM Meta-Harness
 
-**Цель документа:** handoff-спека для применения правок промптов 5 LLM-нод V6-пайплайна. Документ самодостаточен — в новой сессии можно дать ссылку «применяй этот файл» и работа продолжится без потери контекста.
+> Canonical prompt and cache policy is maintained in
+> `WORKING_DOCUMENTATION.md`; this file is retained for compatibility.
+
+**Цель документа:** historical prompt notes retained for compatibility. The canonical prompt and cache policy is `WORKING_DOCUMENTATION.md`.
 
 **Создан:** 2026-05-14, ветка `feat/v6-five-node-pipeline`.
 

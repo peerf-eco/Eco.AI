@@ -1,0 +1,1 @@
+Use C89-compatible EcoOS types and preserve the C-compatible ACOM ABI.

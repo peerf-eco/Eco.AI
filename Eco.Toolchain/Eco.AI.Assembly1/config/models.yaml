@@ -1,0 +1,17 @@
+models:
+  default:
+    id: moonshotai/kimi-k2-thinking
+    provider: openrouter
+    reasoning: high
+  reasoning_heavy:
+    id: moonshotai/kimi-k2-thinking
+    provider: openrouter
+    reasoning: high
+  coding_balanced:
+    id: anthropic/claude-sonnet-4
+    provider: openrouter
+    reasoning: medium
+  cheap_fast:
+    id: openai/gpt-4o-mini
+    provider: openrouter
+    reasoning: low

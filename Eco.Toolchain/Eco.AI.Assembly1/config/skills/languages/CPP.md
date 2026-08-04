@@ -1,0 +1,1 @@
+Use C++ only where selected by the plan and preserve the C-compatible ACOM ABI at all ACOM boundaries.

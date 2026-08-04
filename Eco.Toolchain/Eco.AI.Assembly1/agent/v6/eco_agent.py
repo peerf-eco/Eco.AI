@@ -195,6 +195,7 @@ class EcoAgent:
         on_event:          Optional[Callable[[EcoAgentEvent], None]] = None,
         stream_options:    Optional[SimpleStreamOptions] = None,
         stream_fn:         Optional[StreamFunction] = None,
+        max_tool_results:  int = 5,
     ):
         """Construct the agent.
 
@@ -233,6 +234,7 @@ class EcoAgent:
         self._dedup_memo: dict = {}
         self.on_event = on_event or (lambda _e: None)
         self.stream_options = stream_options
+        self.max_tool_results = max(1, max_tool_results)
         self.stream_fn: StreamFunction = stream_fn or stream_simple
 
         self._pi_tools = _eco_tools_to_pi_tools(tools)
@@ -242,9 +244,27 @@ class EcoAgent:
         self.on_event(EcoAgentEvent(type=event_type, data=data or {}))
 
     def _build_context(self, history: list) -> Context:
+        tool_result_indexes = [
+            index
+            for index, message in enumerate(history)
+            if isinstance(message, ToolResultMessage)
+        ]
+        stale_indexes = set(tool_result_indexes[:-self.max_tool_results])
+        context_history = []
+        for index, message in enumerate(history):
+            if index not in stale_indexes:
+                context_history.append(message)
+                continue
+            context_history.append(message.model_copy(update={
+                "content": [
+                    TextContent(
+                        text="[older tool output elided; full result is retained in trace]"
+                    )
+                ],
+            }))
         return Context(
             systemPrompt=self.system_prompt,
-            messages=history,
+            messages=context_history,
             tools=self._pi_tools or None,
         )
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable, Optional
+import os
 
 from agent.pi_ai import Model
 from agent.v6.agents.architect import make_architect
@@ -61,16 +62,20 @@ def build_v7_pipeline(
             on_event({"agent": agent_name, "event": ev})
         return wrapped
 
+    configured_max_iters = int(os.getenv("AGENT_MAX_ITERATIONS", "0")) or None
     architect = make_architect(
         model=model, cli_path=cli_path, project_dir=project_dir,
+        max_iters=configured_max_iters,
         on_event=_make_wrapped("architect"),
     )
     coder = make_coder(
         model=model, project_dir=project_dir, make_exe=make_exe,
+        max_iters=configured_max_iters,
         on_event=_make_wrapped("coder"),
     )
     tester = make_tester(
         model=model, project_dir=project_dir,
+        max_iters=configured_max_iters,
         on_event=_make_wrapped("tester"),
     )
     return Orchestrator(

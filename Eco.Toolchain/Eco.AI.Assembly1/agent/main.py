@@ -17,13 +17,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def get_model():
+def get_model(profile=None, *, role: str | None = None):
     """Build a pi_ai.Model for the configured OpenRouter endpoint."""
     from agent.pi_ai import Model, ModelCost, OpenAICompletionsCompat, OpenRouterRouting
 
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1")
-    model_id = os.getenv("LLM_MODEL", "moonshotai/kimi-k2-thinking")
+    role_model = os.getenv(f"ECO_ROLE_{role.upper()}_MODEL") if role else None
+    configured_model = getattr(profile, "id", None)
+    model_id = (
+        role_model
+        or configured_model
+        or os.getenv("LLM_MODEL")
+        or "moonshotai/kimi-k2-thinking"
+    )
 
     if not api_key:
         print("[ERROR] OPENAI_API_KEY not set")
@@ -52,7 +59,7 @@ def get_model():
         api="openai-completions",
         provider="openrouter",
         baseUrl=base_url.rstrip("/"),
-        reasoning=True,
+        reasoning=getattr(profile, "reasoning", "medium") != "minimal",
         cost=ModelCost(),
         headers={"Authorization": f"Bearer {api_key}"},
         compat=OpenAICompletionsCompat(

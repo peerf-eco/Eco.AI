@@ -6,17 +6,17 @@ import { cn } from "@/lib/utils";
 import {
   PHASE_LABEL,
   STEPPER_PHASES,
-  type V6Phase,
+  type HarnessPhase,
 } from "./types";
 
 interface PhaseStepperProps {
-  currentPhase: V6Phase | null;
-  completedPhases: V6Phase[];
+  currentPhase: HarnessPhase | null;
+  completedPhases: HarnessPhase[];
 }
 
 type StepState = "pending" | "active" | "completed";
 
-function stepState(phase: V6Phase, current: V6Phase | null, completed: V6Phase[]): StepState {
+function stepState(phase: HarnessPhase, current: HarnessPhase | null, completed: HarnessPhase[]): StepState {
   if (completed.includes(phase)) return "completed";
   // awaiting_approval visually still belongs to Planning.
   if (current === phase) return "active";
@@ -42,7 +42,7 @@ export function PhaseStepper({ currentPhase, completedPhases }: PhaseStepperProp
 }
 
 interface StepDotProps {
-  phase: V6Phase;
+  phase: HarnessPhase;
   state: StepState;
   index: number;
 }

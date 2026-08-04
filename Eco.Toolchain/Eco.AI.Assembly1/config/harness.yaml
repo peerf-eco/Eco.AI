@@ -1,0 +1,12 @@
+default_language: C
+default_platform:
+  os: Linux
+  arch: x86_64
+source_max_bytes: 300000
+dynamic_tail_items: 5
+max_hops: 8
+eco_wizard_path: null
+eco_cli_path: null
+source_roots:
+  - source
+  - marketplace_cache

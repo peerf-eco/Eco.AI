@@ -26,6 +26,7 @@ python-multipart>=0.0.9
 
 # Pydantic - валидация данных
 pydantic>=2.0.0
+PyYAML>=6.0.2
 
 # Python-dotenv - загрузка переменных из .env
 python-dotenv>=1.0.0

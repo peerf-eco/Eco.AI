@@ -1,0 +1,42 @@
+roles:
+  architect:
+    backend: internal
+    model: reasoning_heavy
+    reasoning: high
+    prompt: prompts/architect.md
+    skill_versions:
+      acom_framework: "1"
+      language: "1"
+    budgets:
+      per_query_tokens: 200000
+      per_query_usd: 1.5
+      per_day_usd: 20
+      max_iters: 40
+      max_wall_s: 900
+  coder:
+    backend: internal
+    model: coding_balanced
+    reasoning: medium
+    prompt: prompts/coder.md
+    skill_versions:
+      acom_framework: "1"
+      language: "1"
+      eco_wizard: "1"
+    budgets:
+      per_query_tokens: 300000
+      per_query_usd: 3
+      per_day_usd: 40
+      max_iters: 60
+      max_wall_s: 1800
+  tester:
+    backend: internal
+    model: cheap_fast
+    reasoning: low
+    prompt: prompts/tester.md
+    skill_versions:
+      acom_framework: "1"
+      language: "1"
+    budgets:
+      per_query_tokens: 80000
+      max_iters: 20
+      max_wall_s: 600

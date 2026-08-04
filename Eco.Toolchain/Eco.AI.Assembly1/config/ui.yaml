@@ -1,0 +1,7 @@
+api_url: http://localhost:8100
+pipeline_version: v7
+languages:
+  - C
+  - CPP
+  - Python
+  - Java

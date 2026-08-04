@@ -1,0 +1,25 @@
+languages:
+  C:
+    prompt: prompts/languages/C.md
+    skill_versions:
+      acom_framework: "1"
+      language: "1"
+    eco_wizard: C
+  CPP:
+    prompt: prompts/languages/CPP.md
+    skill_versions:
+      acom_framework: "1"
+      language: "1"
+    eco_wizard: CPP
+  Python:
+    prompt: prompts/languages/Python.md
+    skill_versions:
+      acom_framework: "1"
+      language: "1"
+    eco_wizard: Python
+  Java:
+    prompt: prompts/languages/Java.md
+    skill_versions:
+      acom_framework: "1"
+      language: "1"
+    eco_wizard: Java

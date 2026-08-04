@@ -1,0 +1,1 @@
+Use the eco-wizard-generated Java layout when available. Do not invent unsupported EcoOS project structure.

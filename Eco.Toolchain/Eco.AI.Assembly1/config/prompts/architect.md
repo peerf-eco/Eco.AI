@@ -1,0 +1,1 @@
+Use the current architect role instructions from the internal EcoOS agent. Select components from the marketplace, resolve dependencies, and hand off a closed implementation plan. The selected programming language is supplied in the current request.

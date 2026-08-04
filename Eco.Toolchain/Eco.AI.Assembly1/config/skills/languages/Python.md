@@ -1,0 +1,1 @@
+Use the eco-wizard-generated Python layout when available. Do not invent unsupported EcoOS project structure.

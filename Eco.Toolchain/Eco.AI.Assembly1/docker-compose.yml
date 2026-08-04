@@ -28,16 +28,16 @@ services:
       - ./traces:/app/traces
       - ./source:/app/source:ro
       # Marketplace RAG (production, 2026-05-24):
-      #   marketplace_index.sqlite — sqlite-vec + FTS5 index, 1217 chunks
+      #   marketplace_index.sqlite — sqlite-vec + FTS5 index, updated by UI imports
       #     from 175 .h files across 30 components, embedded with
-      #     qwen3-embedding-8b (4096-dim). Read-only at runtime; regenerate
+      #     qwen3-embedding-8b (4096-dim). The UI can update this shared file;
       #     via scripts/build_marketplace_index.py.
       #   marketplace_cache — pre-pulled DEVKITs (headers + .lib/.so) the
       #     agent can read directly without another eco-cli pull. Same
       #     content the RAG was built from, kept in sync.
-      - ./marketplace_index.sqlite:/app/marketplace_index.sqlite:ro
-      - ./marketplace_cache:/app/marketplace_cache:ro
-      # Два варианта eco-cli (выбор через V6_CLI_PATH в .env):
+      - ./marketplace_index.sqlite:/app/marketplace_index.sqlite
+      - ./marketplace_cache:/app/marketplace_cache
+      # Два варианта eco-cli (выбор через ECO_CLI_PATH в .env):
       #   eco.sli/        — Windows .exe (запуск через wine)
       #   eco.sli-linux/  — нативный Linux ELF (предпочтительнее)
       - ../../eco.sli:/opt/eco:ro
@@ -45,15 +45,16 @@ services:
       # Монтируем код для разработки (hot reload)
       - ./agent:/app/agent
       - ./backend:/app/backend
+      - ./.eco-harness:/app/.eco-harness
     ports:
       - "127.0.0.1:8100:8000"
     command: ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 40s
+      start_period: 10s
     restart: unless-stopped
 
   # Frontend (Next.js)
@@ -80,6 +81,5 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # (ChromaDB init-rag utility removed 2026-06-22 — see docs/RAG_SETUP.md.
-  #  Production RAG = marketplace_index.sqlite, built via
-  #  scripts/build_marketplace_index.py, mounted RO into the api service.)
+  # (ChromaDB init-rag utility removed 2026-06-22. Production RAG is the
+  # shared marketplace_index.sqlite maintained by the import workflow.)

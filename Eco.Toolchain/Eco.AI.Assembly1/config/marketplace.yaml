@@ -1,0 +1,8 @@
+cache_root: marketplace_cache
+index_path: marketplace_index.sqlite
+framework_components:
+  - Eco.Core1
+  - Eco.InterfaceBus1
+  - Eco.MemoryManager1
+  - Eco.FileSystemManagement1
+  - Eco.System1

@@ -1,0 +1,4 @@
+name: claude
+executable: claude
+flag: -p
+supports_tools: false

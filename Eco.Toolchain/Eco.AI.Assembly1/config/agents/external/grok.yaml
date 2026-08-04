@@ -1,0 +1,4 @@
+name: grok
+executable: grok
+flag: -p
+supports_tools: false

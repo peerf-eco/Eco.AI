@@ -1,0 +1,1 @@
+Use the current coder role instructions from the internal EcoOS agent. Implement only the approved plan, use eco-wizard for generated structure, use eco-cli for missing components, build before handoff, and report structural results rather than dumping generated files.

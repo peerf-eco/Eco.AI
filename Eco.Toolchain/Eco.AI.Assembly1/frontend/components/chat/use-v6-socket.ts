@@ -7,7 +7,7 @@ import type {
   ClientMessage,
   PipelineNode,
   ServerEvent,
-  V6Phase,
+  HarnessPhase,
 } from "./types";
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -22,7 +22,7 @@ function newId(prefix: string): string {
   return `${prefix}_${_idCounter}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-const THREAD_ID_KEY = "ecov6.thread_id";
+const THREAD_ID_KEY = "eco_harness.thread_id";
 
 // Tool output preview cap — collapsible cards in the chat show only the
 // first N chars; the full payload is available in dev tools / logs.
@@ -108,20 +108,20 @@ function finalizeActiveThinking(prev: ChatMessage[], node?: PipelineNode): ChatM
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// useV6Socket — single source of truth for the V6 chat UI.
+// Compatibility module for the V7 chat UI.
 // ────────────────────────────────────────────────────────────────────────────
 
-export interface UseV6SocketResult {
+export interface UseHarnessSocketResult {
   messages: ChatMessage[];
   isConnected: boolean;
   isProcessing: boolean;
-  currentPhase: V6Phase | null;
-  completedPhases: V6Phase[];
+  currentPhase: HarnessPhase | null;
+  completedPhases: HarnessPhase[];
   threadId: string | null;
 
   sendUserRequest: (
     text: string,
-    opts?: { projectDir?: string; maxRetries?: number; targetOs?: string; targetArch?: string },
+    opts?: { projectDir?: string; maxRetries?: number; targetOs?: string; targetArch?: string; language?: string },
   ) => void;
   sendPlanDecision: (blockId: string, approved: boolean, opts?: { modifiedPlanMd?: string; reason?: string }) => void;
   sendEscalationDecision: (blockId: string, cont: boolean) => void;
@@ -129,12 +129,12 @@ export interface UseV6SocketResult {
   clearMessages: () => void;
 }
 
-export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
+export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [currentPhase, setCurrentPhase] = useState<V6Phase | null>(null);
-  const [completedPhases, setCompletedPhases] = useState<V6Phase[]>([]);
+  const [currentPhase, setCurrentPhase] = useState<HarnessPhase | null>(null);
+  const [completedPhases, setCompletedPhases] = useState<HarnessPhase[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -389,10 +389,7 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
       tid = sessionStorage.getItem(THREAD_ID_KEY);
     }
     const qs = tid ? `?thread_id=${encodeURIComponent(tid)}` : "";
-    // Pipeline version is controlled by NEXT_PUBLIC_PIPELINE_VERSION env var.
-    // Defaults to v6 for backward compatibility; set to "v7" to use the
-    // three-agent orchestrator (no HITL, no plan_gate/escalate).
-    const pipelineVersion = process.env.NEXT_PUBLIC_PIPELINE_VERSION || "v6";
+    const pipelineVersion = process.env.NEXT_PUBLIC_PIPELINE_VERSION || "v7";
     const ws = new WebSocket(`${wsBaseUrl}/ws/${pipelineVersion}/chat${qs}`);
 
     ws.onopen = () => {
@@ -422,7 +419,7 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
         handleEventRef.current(data);
       } catch (err) {
         // swallow malformed messages — they're a server bug, not our concern.
-        console.error("V6 WS: malformed message", err, e.data);
+        console.error("V7 WS: malformed message", err, e.data);
       }
     };
 
@@ -442,7 +439,7 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
   const send = useCallback((msg: ClientMessage) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.warn("V6 WS: send while not connected", msg.type);
+      console.warn("V7 WS: send while not connected", msg.type);
       return;
     }
     ws.send(JSON.stringify(msg));
@@ -450,7 +447,7 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
 
   const sendUserRequest = useCallback((
     text: string,
-    opts?: { projectDir?: string; maxRetries?: number; targetOs?: string; targetArch?: string },
+    opts?: { projectDir?: string; maxRetries?: number; targetOs?: string; targetArch?: string; language?: string },
   ) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -468,6 +465,7 @@ export function useV6Socket(wsBaseUrl: string): UseV6SocketResult {
       max_retries: opts?.maxRetries,
       target_os: opts?.targetOs,
       target_arch: opts?.targetArch,
+      language: opts?.language,
     });
   }, [send]);
 

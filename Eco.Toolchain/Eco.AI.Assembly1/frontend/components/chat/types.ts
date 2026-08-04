@@ -1,5 +1,5 @@
-// V6 pipeline UI types.
-// Mirrors backend events from /ws/v6/chat (see backend/server.py §V6 WEBSOCKET).
+// ACOM pipeline UI types.
+// Mirrors backend events from /ws/v7/chat.
 //
 // Architectural idea borrowed from F:\ai-mek\repos\mek-ai-client\src\chat\types.ts:
 // each assistant message is a list of typed Blocks. A pipeline run unfolds
@@ -11,7 +11,7 @@
 // Pipeline phases (matches agent/v6/state.py Phase literal)
 // ────────────────────────────────────────────────────────────────────────────
 
-export type V6Phase =
+export type HarnessPhase =
   | "planning"
   | "awaiting_approval"
   | "setup"
@@ -32,9 +32,9 @@ export type PipelineNode =
 
 // 5 stages visible in the top stepper. "failed_escalated" is not a stage,
 // it surfaces as an Escalation block inside the message stream.
-export const STEPPER_PHASES: V6Phase[] = ["planning", "setup", "coding", "building", "testing"];
+export const STEPPER_PHASES: HarnessPhase[] = ["planning", "setup", "coding", "building", "testing"];
 
-export const PHASE_LABEL: Record<V6Phase, string> = {
+export const PHASE_LABEL: Record<HarnessPhase, string> = {
   planning: "Planning",
   awaiting_approval: "Awaiting approval",
   setup: "Setup",
@@ -73,7 +73,7 @@ export interface TextBlock extends BlockBase {
 
 export interface PhaseHeaderBlock extends BlockBase {
   type: "phase_header";
-  phase: V6Phase;
+  phase: HarnessPhase;
   node: PipelineNode | "";
 }
 
@@ -195,7 +195,7 @@ export interface HeartbeatEvent extends ServerEventBase {
 
 export interface PhaseChangeEvent extends ServerEventBase {
   type: "phase_change";
-  phase: V6Phase;
+  phase: HarnessPhase;
   node: PipelineNode;
 }
 
@@ -315,6 +315,7 @@ export interface UserRequestMessage {
   // (Linux/x86_64) live in .env if these are omitted.
   target_os?: string;
   target_arch?: string;
+  language?: string;
 }
 
 export interface PlanDecisionMessage {

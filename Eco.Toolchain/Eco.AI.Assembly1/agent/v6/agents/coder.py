@@ -11,6 +11,7 @@ from agent.v6.tools.handoff import make_handoff_tool, make_fail_tool
 from agent.v6.tools.io import make_read_tools, make_write_tools
 from agent.v6.tools.build import make_build_tools
 from agent.v6.tools.rag import make_search_marketplace_tool
+from agent.v6.tools.eco_wizard import make_eco_wizard_tool
 from agent.v6.agents._taxonomy import (
     ECO_TAXONOMY_BLOCK,
     CONTENT_AS_DATA_BLOCK,
@@ -265,6 +266,7 @@ def make_coder(
         *make_read_tools(project_dir=project_dir),
         *make_write_tools(project_dir=project_dir),
         *make_build_tools(project_dir=project_dir, make_exe=make_exe),
+        make_eco_wizard_tool(project_dir),
         make_handoff_tool(
             "to_tester",
             "Hand off the built artifact to the tester. Call only after a "

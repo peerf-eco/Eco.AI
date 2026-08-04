@@ -5,17 +5,21 @@ import json
 import uuid
 import asyncio
 import logging
+import shutil
 from pathlib import Path
 
 # Add project root to PYTHONPATH for agent imports
+import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from typing import List, Dict, Any, AsyncGenerator, Set
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse, FileResponse
+from pydantic import BaseModel, Field
+from agent.config.loader import load_config, load_role_config
+from eco_harness.roles import make_role_agent
 
 from dotenv import load_dotenv
 
@@ -27,11 +31,20 @@ logger = logging.getLogger(__name__)
 # RAG init status
 
 app = FastAPI(title="EcoOS Agent API")
+HARNESS_CONFIG = load_config(Path(__file__).resolve().parent.parent)
 
-# CORS
+_configured_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3100,http://127.0.0.1:3100",
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_configured_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,6 +59,115 @@ app.mount("/files", StaticFiles(directory="output"), name="files")
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "version": "v7"}
+
+
+@app.get("/config")
+async def harness_config():
+    return {
+        "languages": ["C", "CPP", "Python", "Java"],
+        "platforms": [
+            {"os": "Linux", "arch": "x86_64", "label": "Linux · x86_64"},
+            {"os": "Windows", "arch": "x86_64", "label": "Windows · x86_64"},
+            {"os": "Linux", "arch": "arm64", "label": "Linux · arm64"},
+            {"os": "macOS", "arch": "arm64", "label": "macOS · arm64"},
+        ],
+        "roles": {
+            name: {
+                "backend": spec.backend,
+                "model": spec.model,
+                "reasoning": spec.reasoning,
+                "skill_versions": spec.skill_versions,
+                "budgets": spec.budgets.model_dump(),
+            }
+            for name, spec in HARNESS_CONFIG.roles.items()
+        },
+        "languages": {
+            name: {
+                "prompt": spec.prompt,
+                "skill_versions": spec.skill_versions,
+                "eco_wizard": spec.eco_wizard,
+            }
+            for name, spec in HARNESS_CONFIG.languages.items()
+        },
+        "models": {
+            name: profile.model_dump()
+            for name, profile in HARNESS_CONFIG.models.items()
+        },
+    }
+
+
+class WorkspaceConfigRequest(BaseModel):
+    roles: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    languages: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    harness: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.put("/config/workspace")
+async def update_workspace_config(request: WorkspaceConfigRequest):
+    workspace_path = HARNESS_CONFIG.workspace_override
+    if workspace_path is None:
+        raise HTTPException(status_code=500, detail="Workspace config path is unavailable")
+    workspace_path.parent.mkdir(parents=True, exist_ok=True)
+    import yaml
+    workspace_path.write_text(
+        yaml.safe_dump(request.model_dump(), sort_keys=False),
+        encoding="utf-8",
+    )
+    return {"status": "ok", "path": str(workspace_path)}
+
+
+@app.post("/rag/import")
+async def import_rag_documents(
+    files: list[UploadFile] = File(...),
+    relative_paths: str = Form(""),
+):
+    """Accept individual files or browser directory uploads and update the shared index."""
+    import tempfile
+    from scripts.import_rag import import_inputs
+
+    path_hints = json.loads(relative_paths) if relative_paths else {}
+    with tempfile.TemporaryDirectory(prefix="eco-rag-upload-") as temp_dir:
+        upload_root = Path(temp_dir)
+        input_paths: list[Path] = []
+        for index, uploaded in enumerate(files):
+            name = path_hints.get(str(index)) or uploaded.filename or f"upload-{index}"
+            safe_name = Path(name.replace("\\", "/"))
+            if safe_name.is_absolute() or ".." in safe_name.parts:
+                raise HTTPException(status_code=400, detail="Invalid upload path")
+            destination = upload_root / safe_name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(await uploaded.read())
+            input_paths.append(destination)
+        index_path = Path(os.getenv(
+            "MARKETPLACE_INDEX_PATH",
+            str(Path(__file__).resolve().parent.parent / "marketplace_index.sqlite"),
+        ))
+        try:
+            stats = await asyncio.to_thread(
+                import_inputs,
+                input_paths,
+                index_path=index_path,
+                rebuild=False,
+            )
+        except Exception as error:
+            logger.exception("RAG import failed")
+            raise HTTPException(status_code=500, detail=f"RAG import failed: {error}") from error
+    return {"status": "ok", "stats": stats}
+
+
+@app.get("/rag/export")
+async def export_rag_index():
+    index_path = Path(os.getenv(
+        "MARKETPLACE_INDEX_PATH",
+        str(Path(__file__).resolve().parent.parent / "marketplace_index.sqlite"),
+    ))
+    if not index_path.is_file():
+        raise HTTPException(status_code=404, detail="Marketplace RAG index is unavailable")
+    return FileResponse(
+        index_path,
+        media_type="application/vnd.sqlite3",
+        filename="marketplace_index.sqlite",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -279,29 +401,31 @@ def _project_manifest(project_dir: Path, max_entries: int = 60) -> str:
 
 @app.websocket("/ws/v7/chat")
 async def v7_chat_endpoint(websocket: WebSocket):
+    global HARNESS_CONFIG
+    HARNESS_CONFIG = load_config(Path(__file__).resolve().parent.parent)
     await websocket.accept()
 
-    # Lazy imports — keep startup light even if v7 layer churns.
-    from agent.v6.agents.architect import make_architect
-    from agent.v6.agents.coder import make_coder
-    from agent.v6.agents.tester import make_tester
+    # Lazy imports — keep startup light even if the role layer churns.
     from agent.v6.orchestrator import Orchestrator
 
     # V7 uses pi_ai.Model directly (no langchain). This is the path where
     # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
-    from agent.main import get_model as _get_model
-    model = _get_model()
-
     is_windows = sys.platform == "win32"
-    cli_path: Path | None = (
-        Path(os.environ["V6_CLI_PATH"]) if os.getenv("V6_CLI_PATH") else None
+    cli_env_path = (
+        os.getenv("ECO_CLI_PATH")
+        or HARNESS_CONFIG.eco_cli_path
+        or os.getenv("V6_CLI_PATH")
     )
-    make_exe = Path(os.getenv(
-        "V6_MAKE_EXE",
-        r"C:/Users/gaevy/gcc/bin/make.exe" if is_windows else "make",
-    ))
+    cli_path: Path | None = Path(cli_env_path) if cli_env_path else None
+    make_env_path = (
+        os.getenv("ECO_MAKE_EXE")
+        or os.getenv("V6_MAKE_EXE")
+        or (r"C:/Users/gaevy/gcc/bin/make.exe" if is_windows else "make")
+    )
+    make_exe = Path(make_env_path)
 
-    thread_id = str(uuid.uuid4())
+    requested_thread_id = websocket.query_params.get("thread_id")
+    thread_id = requested_thread_id or str(uuid.uuid4())
     project_dir = Path(os.getenv("V7_OUTPUT_ROOT", "./output")) / f"v7-{thread_id[:8]}"
     project_dir.mkdir(parents=True, exist_ok=True)
 
@@ -311,6 +435,7 @@ async def v7_chat_endpoint(websocket: WebSocket):
     marketplace_cache_root = Path(os.getenv(
         "MARKETPLACE_CACHE_ROOT", "/app/marketplace_cache"
     ))
+    language = "C"
 
     # Per-conversation LLM trace folder. Every architect/coder/tester LLM
     # request+response is persisted here as a numbered JSON file (see
@@ -442,6 +567,13 @@ async def v7_chat_endpoint(websocket: WebSocket):
             if not user_req:
                 await websocket.send_json({"type": "error", "content": "Missing user_request"})
                 continue
+            language = str(payload.get("language") or HARNESS_CONFIG.default_language)
+            if language not in {"C", "CPP", "Python", "Java"}:
+                await websocket.send_json({
+                    "type": "error",
+                    "content": f"Unsupported programming language: {language}",
+                })
+                continue
 
             # ── Phase 1: plan-review loop (planner re-runs on reject + feedback) ──
             workspace = _workspace_header(project_dir, marketplace_cache_root)
@@ -451,8 +583,24 @@ async def v7_chat_endpoint(websocket: WebSocket):
 
             while True:
                 ev_queue: asyncio.Queue = asyncio.Queue()
-                planner = make_architect(
-                    model=model, cli_path=cli_path, project_dir=project_dir,
+                _, architect_spec, architect_profile = load_role_config(
+                    "architect", HARNESS_CONFIG.root,
+                )
+                from agent.main import get_model as _get_model
+                architect_backend = architect_spec.backend.removesuffix("_cli")
+                planner = make_role_agent(
+                    "architect",
+                    config=HARNESS_CONFIG,
+                    model=(
+                        _get_model(architect_profile, role="architect")
+                        if architect_backend in {"internal", "builtin", "eco"}
+                        else None
+                    ),
+                    cli_path=cli_path,
+                    project_dir=project_dir,
+                    make_exe=make_exe,
+                    language=language,
+                    marketplace_cache_root=marketplace_cache_root,
                     trace_dir=trace_dir,
                     on_event=_make_on_event(ev_queue, "architect"),
                 )
@@ -574,7 +722,15 @@ async def v7_chat_endpoint(websocket: WebSocket):
             #   V7_WARM_SEED=1 — re-attach workspace+plan+manifest on retry hops
             # Proven win (R2-R6): default ON. Disable with V7_SCAFFOLD=0.
             scaffold_note = ""
-            if os.getenv("V7_SCAFFOLD", "1") != "0":
+            wizard_configured = bool(
+                HARNESS_CONFIG.eco_wizard_path
+                or shutil.which("eco-wizard")
+                or shutil.which("eco-wizard.exe")
+            )
+            fallback_scaffold_enabled = os.getenv("V7_SCAFFOLD", "0") == "1"
+            if not wizard_configured and os.getenv("V7_SCAFFOLD") is None:
+                fallback_scaffold_enabled = True
+            if fallback_scaffold_enabled:
                 try:
                     scaffold_note = _write_scaffold(project_dir, marketplace_cache_root)
                     logger.info(f"[V7 WS] scaffold pre-seeded thread_id={thread_id}")
@@ -600,13 +756,43 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 seed_builders["coder"] = _coder_retry_seed
 
             ev_queue = asyncio.Queue()
-            coder = make_coder(
-                model=model, project_dir=project_dir, make_exe=make_exe,
+            _, coder_spec, coder_profile = load_role_config(
+                "coder", HARNESS_CONFIG.root,
+            )
+            _, tester_spec, tester_profile = load_role_config(
+                "tester", HARNESS_CONFIG.root,
+            )
+            coder = make_role_agent(
+                "coder",
+                config=HARNESS_CONFIG,
+                model=(
+                    _get_model(coder_profile, role="coder")
+                    if coder_spec.backend.removesuffix("_cli")
+                    in {"internal", "builtin", "eco"}
+                    else None
+                ),
+                cli_path=cli_path,
+                project_dir=project_dir,
+                make_exe=make_exe,
+                language=language,
+                marketplace_cache_root=marketplace_cache_root,
                 trace_dir=trace_dir,
                 on_event=_make_on_event(ev_queue, "coder"),
             )
-            tester = make_tester(
-                model=model, project_dir=project_dir,
+            tester = make_role_agent(
+                "tester",
+                config=HARNESS_CONFIG,
+                model=(
+                    _get_model(tester_profile, role="tester")
+                    if tester_spec.backend.removesuffix("_cli")
+                    in {"internal", "builtin", "eco"}
+                    else None
+                ),
+                cli_path=cli_path,
+                project_dir=project_dir,
+                make_exe=make_exe,
+                language=language,
+                marketplace_cache_root=marketplace_cache_root,
                 trace_dir=trace_dir,
                 on_event=_make_on_event(ev_queue, "tester"),
             )
@@ -620,7 +806,7 @@ async def v7_chat_endpoint(websocket: WebSocket):
                     "tester": {"to_coder":  "coder",  "done":         None, "fail": None},
                 },
                 entry="coder",
-                max_hops=8,
+                max_hops=HARNESS_CONFIG.max_hops,
                 seed_builders=seed_builders,
             )
 
@@ -636,10 +822,24 @@ async def v7_chat_endpoint(websocket: WebSocket):
                 break
 
             success = (result.status == "terminal" and result.terminal_edge == "done")
+            artifact_candidates = sorted(
+                path
+                for path in project_dir.rglob("*")
+                if path.is_file()
+                and (
+                    path.name == "app"
+                    or path.suffix.lower() in {".exe", ".dll", ".so", ".out"}
+                )
+            )
+            build_artifact = (
+                str(artifact_candidates[0])
+                if artifact_candidates
+                else ""
+            )
             await websocket.send_json({
                 "type":             "pipeline_done",
                 "status":           "success" if success else "failed",
-                "build_artifact":   "",
+                "build_artifact":   build_artifact,
                 "tester_report_md": result.last_message
                                     + (f"\n\n(orchestrator: {result.status}"
                                        + (f", edge={result.terminal_edge}"

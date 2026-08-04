@@ -38,6 +38,8 @@ iniconfig==2.3.0
     # via pytest
 packaging==26.2
     # via pytest
+PyYAML==6.0.2
+    # via -r requirements.txt
 partial-json-parser==0.2.1.1.post7
     # via -r requirements.txt
 pluggy==1.6.0

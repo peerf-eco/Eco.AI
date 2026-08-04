@@ -56,6 +56,8 @@ RUN mkdir -p /app/output
 COPY agent/ /app/agent/
 COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
+COPY config/ /app/config/
+COPY eco_harness/ /app/eco_harness/
 
 # Создание entrypoint скрипта
 RUN echo '#!/bin/bash\n\
@@ -69,20 +71,11 @@ echo "========================================"\n\
 echo ""\n\
 \n\
 # Проверка переменных окружения\n\
-if [ -z "$OPENAI_API_KEY" ]; then\n\
-    echo "[ERROR] OPENAI_API_KEY not set!"\n\
-    echo "[INFO] Set it in .env file or pass as environment variable"\n\
-    exit 1\n\
-fi\n\
-\n\
 echo "[INFO] API URL: $OPENROUTER_URL"\n\
 echo ""\n\
 \n\
 # Запуск команды\n\
-if [ "$1" = "agent" ]; then\n\
-    shift\n\
-    python -m agent.main "$@"\n\
-elif [ "$1" = "shell" ]; then\n\
+if [ "$1" = "shell" ]; then\n\
     /bin/bash\n\
 else\n\
     exec "$@"\n\
@@ -92,5 +85,5 @@ fi\n\
 # Entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# По умолчанию запускаем агента с помощью
-CMD ["agent", "--help"]
+# API is the production entrypoint. Use `docker compose run api shell` for a shell.
+CMD ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -15,9 +15,9 @@ Why raw instead of wrappers:
   - One tool to maintain across CLI releases instead of three.
 
 What we keep from the old wrappers:
-  - V6_CLI_PATH env: absolute path to the binary (Linux ELF on Linux hosts,
+  - ECO_CLI_PATH env: absolute path to the binary (Linux ELF on Linux hosts,
     Windows .exe on Windows hosts; selected once at container start).
-  - V6_CLI_PREFIX env: optional wrapper command (e.g. "wine64" when running
+  - ECO_CLI_PREFIX env: optional wrapper command (e.g. "wine64" when running
     the .exe under Linux via wine).
   - Subcommand whitelist on the first arg — narrow blast radius if upstream
     adds destructive commands; update the whitelist deliberately, not by LLM.
@@ -73,7 +73,7 @@ def _eco_cli(
 ) -> ToolResult:
     if cli_path is None:
         return ToolResult(
-            content="eco_cli: V6_CLI_PATH unset — no CLI binary configured.",
+            content="eco_cli: ECO_CLI_PATH unset — no CLI binary configured.",
             is_error=True,
         )
 
@@ -98,7 +98,10 @@ def _eco_cli(
             is_error=True,
         )
 
-    prefix = os.getenv("V6_CLI_PREFIX", "").split()
+    prefix = (
+        os.getenv("ECO_CLI_PREFIX")
+        or os.getenv("V6_CLI_PREFIX", "")
+    ).split()
     cmd = [*prefix, str(cli_path), *raw_args]
     cwd = str(project_dir) if project_dir is not None else None
 
@@ -153,7 +156,7 @@ def make_eco_cli_tool(
     """Raw eco-cli passthrough. Binary path + wine prefix come from env.
 
     Args:
-        cli_path: V6_CLI_PATH resolved to a concrete file. None if unset
+        cli_path: ECO_CLI_PATH resolved to a concrete file. None if unset
                   (every call then returns is_error).
         project_dir: cwd for invocations that write artefacts (`pull` writes
                      the DEVKIT archive into cwd). Pass None for read-only

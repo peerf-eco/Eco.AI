@@ -139,6 +139,20 @@ class RagStore:
         cur = self._conn.cursor()
         rowids: list[int] = []
         for ch, vec in zip(chunks, vectors):
+            existing = cur.execute(
+                "SELECT id FROM chunks WHERE component=? AND file=? "
+                "AND line_start=? AND line_end=? AND text=? LIMIT 1",
+                (
+                    ch.component,
+                    ch.file,
+                    ch.line_start,
+                    ch.line_end,
+                    ch.text,
+                ),
+            ).fetchone()
+            if existing is not None:
+                rowids.append(int(existing[0]))
+                continue
             cur.execute(
                 "INSERT INTO chunks (component, file, kind, name, line_start, "
                 "line_end, chunker_id, text) VALUES (?,?,?,?,?,?,?,?)",

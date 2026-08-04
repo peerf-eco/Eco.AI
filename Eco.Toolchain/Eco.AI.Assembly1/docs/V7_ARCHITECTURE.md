@@ -1,5 +1,8 @@
 # V7 Architecture — three-agent orchestrator
 
+> Canonical documentation is now maintained in the repository root
+> `WORKING_DOCUMENTATION.md`. This file is retained as a compatibility note.
+
 > Current production architecture as of 2026-05-25. The frontend label
 > "V6 Five-Node Pipeline" is a hardcoded heading that hasn't been
 > updated; the actual code path is V7 (see endpoint mapping below).

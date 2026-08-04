@@ -1,0 +1,4 @@
+name: pi
+executable: pi
+flag: -e
+supports_tools: false

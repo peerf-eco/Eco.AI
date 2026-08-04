@@ -1,0 +1,2 @@
+ledger_path: .eco-harness/budget_ledger.sqlite
+retained_tool_outputs: 5

@@ -1,5 +1,8 @@
 # Сборка и подключение RAG-хранилища (production-путь V7)
 
+> Canonical operational documentation is maintained in
+> `WORKING_DOCUMENTATION.md`; this file is retained for compatibility.
+
 > Этот документ описывает **боевой** RAG: `marketplace_cache/` → `marketplace_index.sqlite`
 > (sqlite-vec + FTS5) → EcoTool `search_marketplace`, который вызывают агенты architect и
 > coder в пайплайне `/ws/v7/chat`.

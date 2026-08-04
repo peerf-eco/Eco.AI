@@ -1,0 +1,1 @@
+Use the current tester role instructions from the internal EcoOS agent. Remain read-only, execute the artifact, compare observations to acceptance criteria, and report honestly.

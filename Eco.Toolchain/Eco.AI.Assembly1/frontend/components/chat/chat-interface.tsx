@@ -11,13 +11,17 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { PhaseStepper } from "./phase-stepper";
 import { StreamMessage } from "./stream-message";
-import { useV6Socket } from "./use-v6-socket";
+import { useHarnessSocket } from "./use-socket";
 import { PlatformSelector, PLATFORM_OPTIONS, DEFAULT_PLATFORM, type PlatformOption } from "./platform-selector";
+import { LanguageSelector, LANGUAGE_OPTIONS, type ProgrammingLanguage } from "./language-selector";
+import { AgentSettings } from "./agent-settings";
+import { RagImport } from "./rag-import";
 import type { ChatMessage } from "./types";
 
-const PLATFORM_STORAGE_KEY = "ecov6.target_platform";
+const PLATFORM_STORAGE_KEY = "eco_harness.target_platform";
+const LANGUAGE_STORAGE_KEY = "eco_harness.language";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
 const WS_BASE = API_URL.replace(/^http/, "ws");
 
 const EXAMPLES = [
@@ -29,10 +33,9 @@ const EXAMPLES = [
 export function ChatInterface() {
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
-  // Persist the user's target-platform choice across reloads so they don't
-  // have to re-pick "Linux x86_64" on every visit. Hydrate from localStorage
-  // after mount (avoids SSR mismatch).
+  // Persist target selection after mount to avoid SSR mismatch.
   const [platform, setPlatform] = useState<PlatformOption>(DEFAULT_PLATFORM);
+  const [language, setLanguage] = useState<ProgrammingLanguage>("C");
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(PLATFORM_STORAGE_KEY);
@@ -44,6 +47,12 @@ export function ChatInterface() {
       if (match) setPlatform(match);
     } catch {
       // ignore — corrupt storage just falls back to default
+    }
+  }, []);
+  useEffect(() => {
+    const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (stored && LANGUAGE_OPTIONS.includes(stored as ProgrammingLanguage)) {
+      setLanguage(stored as ProgrammingLanguage);
     }
   }, []);
   const scrollAnchorRef = useRef<HTMLDivElement>(null);
@@ -60,7 +69,7 @@ export function ChatInterface() {
     sendEscalationDecision,
     sendAbort,
     clearMessages,
-  } = useV6Socket(WS_BASE);
+  } = useHarnessSocket(WS_BASE);
 
   useEffect(() => {
     scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -68,8 +77,13 @@ export function ChatInterface() {
 
   const onSend = () => {
     if (!input.trim() || !isConnected || isProcessing) return;
-    sendUserRequest(input, { targetOs: platform.os, targetArch: platform.arch });
+    sendUserRequest(input, { targetOs: platform.os, targetArch: platform.arch, language });
     setInput("");
+  };
+
+  const handleLanguageChange = (next: ProgrammingLanguage) => {
+    setLanguage(next);
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
   };
 
   const handlePlatformChange = (p: PlatformOption) => {
@@ -115,6 +129,16 @@ export function ChatInterface() {
                   <div className="font-mono text-foreground/80 break-all">{threadId}</div>
                 </div>
               )}
+              <div className="mt-6 pt-4 border-t border-white/[0.06] space-y-5">
+                <div>
+                  <div className="uppercase tracking-wide text-[10px] mb-2 text-muted-foreground">Agent configuration</div>
+                  <AgentSettings />
+                </div>
+                <div className="border-t border-white/[0.06] pt-4">
+                  <div className="uppercase tracking-wide text-[10px] mb-2 text-muted-foreground">Marketplace RAG</div>
+                  <RagImport />
+                </div>
+              </div>
             </motion.div>
           </>
         )}
@@ -130,7 +154,7 @@ export function ChatInterface() {
             </div>
             <div>
               <h1 className="text-base font-semibold tracking-tight">EcoOS Component Agent</h1>
-              <p className="text-xs text-muted-foreground">V6 Five-Node Pipeline</p>
+              <p className="text-xs text-muted-foreground">ACOM Meta-Harness · V7</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -204,6 +228,11 @@ export function ChatInterface() {
               <PlatformSelector
                 value={platform}
                 onChange={handlePlatformChange}
+                disabled={isProcessing}
+              />
+              <LanguageSelector
+                value={language}
+                onChange={handleLanguageChange}
                 disabled={isProcessing}
               />
               <Input

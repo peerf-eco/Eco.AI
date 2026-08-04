@@ -30,7 +30,10 @@ logger = logging.getLogger(__name__)
 # File extensions worth chunking. .lib / .so / .dll are binary and useless
 # to embedding models; .ipp/.tpp are rare in the EcoOS SDK but we include
 # them for completeness.
-_C_EXTS = {".h", ".hpp", ".c", ".cpp", ".inc", ".ipp", ".tpp"}
+_C_EXTS = {
+    ".h", ".hpp", ".c", ".cpp", ".inc", ".ipp", ".tpp",
+    ".md", ".markdown", ".txt",
+}
 
 
 def _iter_source_files(cache_dir: Path) -> Iterable[tuple[str, Path]]:
