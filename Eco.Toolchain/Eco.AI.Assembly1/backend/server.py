@@ -71,6 +71,7 @@ async def harness_config():
             {"os": "Windows", "arch": "x86_64", "label": "Windows · x86_64"},
             {"os": "Linux", "arch": "arm64", "label": "Linux · arm64"},
             {"os": "macOS", "arch": "arm64", "label": "macOS · arm64"},
+            {"os": "macOS", "arch": "x86_64", "label": "macOS · x86_64"},
         ],
         "roles": {
             name: {
