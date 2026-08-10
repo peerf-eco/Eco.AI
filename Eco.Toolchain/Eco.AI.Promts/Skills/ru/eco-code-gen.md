@@ -1,3 +1,9 @@
+---
+name: Eco Project Generation Skills
+description: Навыки и сценарии генерации исходного кода и компонентов в модели Eco
+version: 1.0.0
+---
+
 # SKILL: ECO PROJECT GENERATION
 При создании проекта компонента следуй строгому порядку:
 1. **IDL First**: Всегда начинай с описания интерфейсов в `.idl`.
@@ -11,4 +17,3 @@
 - **"ID/CID/IID"**: Генерируй только блок статических UGUID.
 - **"Приложение" (EcoMain)**: Полный цикл: System -> Bus -> Component -> Release.
 - **"Тест"**: Генерируй EcoMain с проверкой результатов методов (без assert).
-

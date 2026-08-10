@@ -1,7 +1,7 @@
-
 import os
 import sys
 import subprocess
+import argparse
 from datetime import datetime
 
 # --- БЛОК АВТОМАТИЧЕСКОЙ УСТАНОВКИ ЗАВИСИМОСТЕЙ ---
@@ -12,64 +12,116 @@ def install_dependencies():
         print("Библиотека 'python-frontmatter' не найдена. Установка...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "python-frontmatter"])
         print("Установка завершена. Перезапуск скрипта...")
-        # Перезапускаем текущий скрипт, чтобы подхватить новую библиотеку
         os.execv(sys.executable, ['python'] + sys.argv)
 
 install_dependencies()
 import frontmatter
 
 class EcoPromptBuilder:
-    def __init__(self, base_path="Eco.AI.Promts", output_dir="Builds"):
+    def __init__(self, base_path=".", output_dir="Builds", lang="ru"):
         self.base_path = base_path
         self.output_path = os.path.join(base_path, output_dir)
-        # Создаем директорию для сборок, если её нет
+        self.lang = lang.lower()
+        
+        # Карта маппинга расширений файлов в языки для Markdown блоков кода
+        self.lang_map = {
+            '.py': 'python',
+            '.c': 'cpp',      # По вашему требованию .c файлы оборачиваем в ```cpp
+            '.cpp': 'cpp',
+            '.h': 'cpp',
+            '.js': 'javascript',
+            '.ts': 'typescript',
+            '.go': 'go',
+            '.rs': 'rust'
+        }
+        
         if not os.path.exists(self.output_path):
             os.makedirs(self.output_path)
 
+    def _resolve_path(self, rel_path):
+        """
+        Умное разрешение путей с учетом локализации и расширения файла.
+        """
+        # Разбиваем путь на части: например, 'Common/constraints.md' -> ('Common', 'constraints.md')
+        dir_name, file_name = os.path.split(rel_path)
+        ext = os.path.splitext(file_name)[1].lower()
+
+        if ext == '.md':
+            # Для MD файлов ищем в подпапке языка: Common/ru/constraints.md
+            localized_path = os.path.join(self.base_path, dir_name, self.lang, file_name)
+            if os.path.exists(localized_path):
+                return localized_path
+            
+            # Если локализованный файл не найден, пробуем исходный путь прямой вставки
+            fallback_path = os.path.join(self.base_path, rel_path)
+            if os.path.exists(fallback_path):
+                return fallback_path
+        else:
+            # Для файлов исходного кода (и других, кроме .md) ищем напрямую по указанному пути
+            code_path = os.path.join(self.base_path, rel_path)
+            if os.path.exists(code_path):
+                return code_path
+                
+        return None
+
     def build(self, agent_file):
         """
-        Собирает агентский промпт на основе метаданных из папки Agents/
+        Собирает агентский промпт на основе метаданных
         """
         agent_full_path = os.path.join(self.base_path, "Agents", agent_file)
         
         if not os.path.exists(agent_full_path):
             raise FileNotFoundError(f"Файл агента не найден: {agent_full_path}")
 
-        # 1. Загружаем рецепт агента (Frontmatter)
         agent_recipe = frontmatter.load(agent_full_path)
         
-        # Извлекаем параметры из метаданных агента
         model = agent_recipe.get("model", "gpt-4")
         temp = agent_recipe.get("temperature", 0.2)
         assembly = agent_recipe.get("assembly", [])
 
-        # 2. Собираем содержимое всех указанных модулей
         assembled_content = []
         for rel_path in assembly:
-            full_module_path = os.path.join(self.base_path, rel_path)
+            full_path = self._resolve_path(rel_path)
             
-            if os.path.exists(full_module_path):
-                module = frontmatter.load(full_module_path)
-                # Добавляем заголовок для отладки в итоговом файле
-                header = f"/* --- MODULE: {rel_path} --- */"
-                assembled_content.append(f"{header}\n{module.content.strip()}")
-            else:
-                print(f" ПРЕДУПРЕЖДЕНИЕ: Модуль {rel_path} не найден.")
+            if not full_path:
+                print(f" ⚠️ ПРЕДУПРЕЖДЕНИЕ: Модуль {rel_path} не найден (проверена локаль '{self.lang}').")
+                continue
 
-        # 3. Формируем финальный текст
+            ext = os.path.splitext(full_path)[1].lower()
+
+            if ext == '.md':
+                # Обработка Markdown файлов
+                module = frontmatter.load(full_path)
+                header = f"<!-- --- MODULE: {rel_path} ({self.lang.upper()}) --- -->"
+                assembled_content.append(f"{header}\n{module.content.strip()}")
+            
+            elif ext in self.lang_map:
+                # Обработка файлов с кодом
+                lang_marker = self.lang_map[ext]
+                with open(full_path, "r", encoding="utf-8") as code_file:
+                    code_content = code_file.read().strip()
+                
+                header = f"<!-- --- CODE MODULE: {rel_path} --- -->"
+                formatted_code = f"```{lang_marker}\n{code_content}\n```"
+                assembled_content.append(f"{header}\n{formatted_code}")
+                
+            else:
+                # На случай других расширений файлов (например, текстовых или SVG)
+                with open(full_path, "r", encoding="utf-8") as raw_file:
+                    raw_content = raw_file.read().strip()
+                assembled_content.append(raw_content)
+
         final_prompt_text = "\n\n".join(assembled_content)
 
-        # 4. Сохраняем результат в файл
+        # Формируем имя файла (теперь .md на выходе)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         agent_name = os.path.splitext(agent_file)[0]
-        file_name = f"build_{agent_name}_{timestamp}.txt"
+        file_name = f"build_{agent_name}_{self.lang}_{timestamp}.md"
         save_path = os.path.join(self.output_path, file_name)
 
+        # Запись итогового файла
         with open(save_path, "w", encoding="utf-8") as f:
-            f.write(f"// AGENT: {agent_name}\n")
-            f.write(f"// MODEL: {model}\n")
-            f.write(f"// TEMPERATURE: {temp}\n")
-            f.write("// " + "="*50 + "\n\n")
+            f.write(f"<!--\nAGENT: {agent_name}\nLANG: {self.lang.upper()}\nMODEL: {model}\nTEMPERATURE: {temp}\n-->\n\n")
             f.write(final_prompt_text)
 
         return {
@@ -79,42 +131,40 @@ class EcoPromptBuilder:
             "save_path": save_path
         }
 
-# --- ПРИМЕР ИСПОЛЬЗОВАНИЯ ---
 if __name__ == "__main__":
-    # Инициализация сборщика (базовый путь — текущая директория)
-    builder = EcoPromptBuilder(base_path=".")
+    # Настраиваем разбор аргументов командной строки
+    parser = argparse.ArgumentParser(description="Eco AI Prompt Builder")
+    parser.add_argument("agents", nargs="*", help="Список файлов агентов (.md)")
+    parser.add_argument("--lang", default="ru", choices=["ru", "en"], help="Язык сборки (по умолчанию: ru)")
+    
+    args = parser.parse_args()
 
-    # Получаем список агентов из аргументов командной строки
-    # sys.argv[0] - это имя самого скрипта, поэтому берем со следующего
-    args = sys.argv[1:]
+    builder = EcoPromptBuilder(base_path=".", lang=args.lang)
+    agent_files = args.agents
 
-    if not args:
-        print("Использование: python3 builder.py <agent_file1.md> <agent_file2.md> ...")
-        print("Попытка сборки всех агентов по умолчанию из папки Agents/...")
-        # Автоматический поиск всех .md файлов в папке Agents
+    # Если файлы не переданы, ищем все в папке Agents/
+    if not agent_files:
+        print(f"Попытка сборки всех агентов по умолчанию из папки Agents/ (Язык: {args.lang.upper()})...")
         agents_dir = os.path.join(".", "Agents")
         if os.path.exists(agents_dir):
-            args = [f for f in os.listdir(agents_dir) if f.endswith(".md")]
+            agent_files = [f for f in os.listdir(agents_dir) if f.endswith(".md")]
         else:
             print(f"[Ошибка] Папка {agents_dir} не найдена.")
             sys.exit(1)
 
-    print(f"--- Запуск сборки Eco AI Агентов (Всего: {len(args)}) ---")
-    print("-" * 40)
+    print(f"--- Запуск сборки Eco AI Агентов (Язык: {args.lang.upper()} | Всего: {len(agent_files)}) ---")
+    print("-" * 50)
 
-    for agent_file in args:
+    for agent_file in agent_files:
         try:
-            # Сборка конкретного агента
             result = builder.build(agent_file)
-            
             print(f"[Успех] Агент: {agent_file}")
             print(f"  └─ Файл: {result['save_path']}")
             print(f"  └─ Модель: {result['model']} | Temp: {result['temp']}")
-            print("-" * 40)
-
+            print("-" * 50)
         except FileNotFoundError:
             print(f"[Пропуск] Файл Agents/{agent_file} не найден.")
         except Exception as e:
             print(f"[Ошибка] Не удалось собрать {agent_file}: {e}")
 
-    print("\nГотово. Результаты в папке ./Builds/")
+    print(f"\nГотово. Результаты сохранены в папку ./Builds/")
