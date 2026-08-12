@@ -34,6 +34,32 @@ The WebSocket path is `/ws/chat`. New code should use the neutral
 If a configured external executable is missing, the selected role fails with
 an actionable error. The harness does not silently fall back to another agent.
 
+### Executable Directory Structure
+
+The system uses a consistent directory structure for executables with Linux priority:
+
+```
+../ (relative to project root)
+├── eco-cli-linux/          # Linux ELF executable (preferred)
+│   └── eco-cli
+├── eco-cli-windows/        # Windows .exe executable (fallback via wine)
+│   └── eco-cli.exe
+├── eco-wizard-linux/       # Linux ELF executable (preferred)
+│   └── eco-wizard
+└── eco-wizard-windows/     # Windows .exe executable (fallback via wine)
+    └── eco-wizard.exe
+```
+
+**Path Resolution Priority:**
+1. Environment variables (`ECO_CLI_PATH`, `ECO_WIZARD_PATH`)
+2. Linux executables (preferred for Docker containers)
+3. Windows executables via wine (fallback)
+4. System PATH
+5. Configuration files
+
+The system automatically detects and uses the appropriate executable with
+wine prefix support for Windows executables on Linux.
+
 ## Local setup
 
 ```cmd
@@ -86,9 +112,39 @@ python scripts\dev_preflight.py
 
 The mounts are writable because the UI can update the shared index.
 
+**Volume Mounts in Docker Compose:**
+- `./marketplace_index.sqlite:/app/marketplace_index.sqlite` - RAG index
+- `./marketplace_cache:/app/marketplace_cache` - Component cache
+- `../../eco-cli-windows:/opt/eco-cli-windows:ro` - Windows eco-cli
+- `../../eco-cli-linux:/opt/eco-cli-linux:ro` - Linux eco-cli (preferred)
+- `../../eco-wizard-windows:/opt/eco-wizard-windows:ro` - Windows eco-wizard
+- `../../eco-wizard-linux:/opt/eco-wizard-linux:ro` - Linux eco-wizard (preferred)
+
 ## Configuration
 
 Repository configuration is under `config/`:
+
+### Automatic Path Resolution
+
+The system automatically resolves executable paths with Linux priority:
+
+1. **Linux executables** (`/opt/eco-cli-linux/eco-cli`, `/opt/eco-wizard-linux/eco-wizard`) are preferred in Docker containers
+2. **Windows executables** (`/opt/eco-cli-windows/eco-cli.exe`, `/opt/eco-wizard-windows/eco-wizard.exe`) are used as fallback via wine
+3. **Wine prefix** is automatically set for Windows executables on Linux
+4. **Environment variables** (`ECO_CLI_PATH`, `ECO_WIZARD_PATH`) override automatic resolution
+
+Default paths in `.env`:
+```
+# Linux paths (preferred):
+ECO_CLI_PATH=/opt/eco-cli-linux/eco-cli
+ECO_WIZARD_PATH=/opt/eco-wizard-linux/eco-wizard
+
+# Windows paths (fallback via wine):
+# ECO_CLI_PATH=/opt/eco-cli-windows/eco-cli.exe
+# ECO_WIZARD_PATH=/opt/eco-wizard-windows/eco-wizard.exe
+# ECO_CLI_PREFIX=wine64
+# ECO_WIZARD_PREFIX=wine64
+```
 
 | File | Purpose |
 | --- | --- |

@@ -57,7 +57,13 @@ def _run_wizard(args: _WizardArgs, project_dir: Path) -> ToolResult:
         out_dir.relative_to(project_dir.resolve())
     except ValueError:
         return ToolResult(content="eco_wizard out_dir is outside project_dir.", is_error=True)
+    # Support wine prefix for Windows executables on Linux
+    prefix = (
+        os.getenv("ECO_WIZARD_PREFIX")
+        or os.getenv("internal_WIZARD_PREFIX", "")
+    ).split()
     command = [
+        *prefix,
         executable,
         "new",
         "--out",

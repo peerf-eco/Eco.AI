@@ -51,10 +51,24 @@ from agent.rag.store import RagStore
 
 # Demo project — a fresh dir we pretend the agent owns.
 DEMO_PROJECT = PROJECT_ROOT / "e2e_demo_project"
-ECO_CLI = Path(os.environ.get(
-    "ECO_CLI_BIN",
-    str(PROJECT_ROOT.parent.parent / "eco.sli" / "eco-cli.exe"),
-))
+# Try to find eco-cli with Linux priority
+ECO_CLI = None
+for path in [
+    os.environ.get("ECO_CLI_BIN"),
+    str(PROJECT_ROOT.parent.parent / "eco-cli-linux" / "eco-cli"),  # Linux ELF (preferred)
+    str(PROJECT_ROOT.parent.parent / "eco-cli-windows" / "eco-cli.exe"),  # Windows .exe (fallback)
+    "eco-cli",  # System PATH
+    "eco-cli.exe",  # System PATH Windows
+]:
+    if not path:
+        continue
+    candidate = Path(path)
+    if candidate.exists():
+        ECO_CLI = candidate
+        break
+
+if ECO_CLI is None:
+    ECO_CLI = Path(str(PROJECT_ROOT.parent.parent / "eco-cli-windows" / "eco-cli.exe"))  # Default fallback
 INDEX = PROJECT_ROOT / "experiments" / "chunking_eval" / "artifacts" / "ast.sqlite"
 
 

@@ -6,7 +6,8 @@
 #   - .env                      (cp env.example .env; set OPENAI_API_KEY)
 #   - marketplace_index.sqlite  (build: python scripts/build_marketplace_index.py)
 #   - marketplace_cache/        (python scripts/fetch_marketplace.py)
-#   - ../../eco.sli-linux/      (vendored eco-cli; gitignored)
+#   - ../../eco-cli-linux/      (vendored eco-cli; gitignored)
+#   - ../../eco-wizard-linux/    (vendored eco-wizard; gitignored)
 # See docs/RAG_SETUP.md.
 #
 # This is a DEV compose: api = uvicorn --reload with ./agent + ./backend mounted;
@@ -38,10 +39,15 @@ services:
       - ./marketplace_index.sqlite:/app/marketplace_index.sqlite
       - ./marketplace_cache:/app/marketplace_cache
       # Два варианта eco-cli (выбор через ECO_CLI_PATH в .env):
-      #   eco.sli/        — Windows .exe (запуск через wine)
-      #   eco.sli-linux/  — нативный Linux ELF (предпочтительнее)
-      - ../../eco.sli:/opt/eco:ro
-      - ../../eco.sli-linux:/opt/eco-linux:ro
+      #   eco-cli-windows/ — Windows .exe (запуск через wine)
+      #   eco-cli-linux/   — нативный Linux ELF (предпочтительнее)
+      - ../../eco-cli-windows:/opt/eco-cli-windows:ro
+      - ../../eco-cli-linux:/opt/eco-cli-linux:ro
+      # Два варианта eco-wizard (выбор через ECO_WIZARD_PATH в .env):
+      #   eco-wizard-windows/ — Windows .exe (запуск через wine)
+      #   eco-wizard-linux/   — нативный Linux ELF (предпочтительнее)
+      - ../../eco-wizard-windows:/opt/eco-wizard-windows:ro
+      - ../../eco-wizard-linux:/opt/eco-wizard-linux:ro
       # Монтируем код для разработки (hot reload)
       - ./agent:/app/agent
       - ./backend:/app/backend

@@ -31,13 +31,28 @@ from datetime import datetime
 from pathlib import Path
 
 # ── Inputs ────────────────────────────────────────────────────────────────
-ECO_CLI = Path(os.environ.get(
-    "ECO_CLI_BIN",
-    "H:/ai-hse-diploma-agent/eco.sli/eco-cli.exe",
-))
+# Try to find eco-cli with Linux priority
+ECO_CLI = None
+for path in [
+    os.environ.get("ECO_CLI_BIN"),
+    "../../eco-cli-linux/eco-cli",  # Linux ELF (preferred)
+    "../../eco-cli-windows/eco-cli.exe",  # Windows .exe (fallback)
+    "eco-cli",  # System PATH
+    "eco-cli.exe",  # System PATH Windows
+]:
+    if not path:
+        continue
+    candidate = Path(path)
+    if candidate.exists():
+        ECO_CLI = candidate
+        break
+
+if ECO_CLI is None:
+    ECO_CLI = Path("../../eco-cli-windows/eco-cli.exe")  # Default fallback
+
 CACHE_DIR = Path(os.environ.get(
     "MARKETPLACE_CACHE",
-    "H:/ai-hse-diploma-agent/Eco.Toolchain/Eco.AI.Assembly1/marketplace_cache",
+    "marketplace_cache",  # Relative to project root
 ))
 TOKEN = os.environ.get("ECO_API_TOKEN") or ""
 

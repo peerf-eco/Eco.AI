@@ -420,12 +420,74 @@ async def chat_endpoint(websocket: WebSocket):
     # The harness uses pi_ai.Model directly (no langchain). This is the path where
     # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
     is_windows = sys.platform == "win32"
-    cli_env_path = (
-        os.getenv("ECO_CLI_PATH")
-        or HARNESS_CONFIG.eco_cli_path
-        or os.getenv("ECO_CLI_PATH")
+    
+    # Automatic path resolution with Linux priority
+    def resolve_executable_path(env_var_name, linux_path, windows_path, default_name):
+        """Resolve executable path with Linux priority, Windows fallback."""
+        # 1. Check explicit environment variable
+        explicit_path = os.getenv(env_var_name)
+        if explicit_path:
+            path = Path(explicit_path)
+            if path.exists():
+                return path
+            logger.warning(f"{env_var_name}={explicit_path} does not exist")
+        
+        # 2. Check Linux path (preferred)
+        linux_full = Path(linux_path) / default_name
+        if linux_full.exists():
+            logger.info(f"Using Linux executable: {linux_full}")
+            return linux_full
+        
+        # 3. Check Windows path (fallback via wine)
+        windows_full = Path(windows_path) / (default_name + ".exe")
+        if windows_full.exists():
+            logger.info(f"Using Windows executable (via wine): {windows_full}")
+            return windows_full
+        
+        # 4. Check system PATH
+        found = shutil.which(default_name)
+        if found:
+            logger.info(f"Found in system PATH: {found}")
+            return Path(found)
+        
+        # 5. Check config
+        config_path = getattr(HARNESS_CONFIG, f"{env_var_name.lower()}_path", None)
+        if config_path:
+            path = Path(config_path)
+            if path.exists():
+                return path
+        
+        return None
+    
+    # Resolve eco-cli path
+    cli_path = resolve_executable_path(
+        "ECO_CLI_PATH",
+        "/opt/eco-cli-linux",
+        "/opt/eco-cli-windows",
+        "eco-cli"
     )
-    cli_path: Path | None = Path(cli_env_path) if cli_env_path else None
+    
+    # Resolve eco-wizard path
+    wizard_path = resolve_executable_path(
+        "ECO_WIZARD_PATH",
+        "/opt/eco-wizard-linux",
+        "/opt/eco-wizard-windows",
+        "eco-wizard"
+    )
+    
+    # Set environment variables for tool resolution
+    if cli_path:
+        os.environ["ECO_CLI_PATH"] = str(cli_path)
+        # Set wine prefix for Windows executables
+        if cli_path.suffix == ".exe":
+            os.environ["ECO_CLI_PREFIX"] = "wine64"
+    
+    if wizard_path:
+        os.environ["ECO_WIZARD_PATH"] = str(wizard_path)
+        # Set wine prefix for Windows executables
+        if wizard_path.suffix == ".exe":
+            os.environ["ECO_WIZARD_PREFIX"] = "wine64"
+    
     make_env_path = (
         os.getenv("ECO_MAKE_EXE")
         or os.getenv("ECO_MAKE_EXE")
