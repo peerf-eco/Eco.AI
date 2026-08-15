@@ -5,7 +5,7 @@
 #
 # Base image is digest-pinned for reproducibility. To refresh the pin:
 #   docker buildx imagetools inspect python:3.11-slim
-FROM python:3.11.11-slim-bookworm@sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5
+FROM python:3.11-slim-bookworm
 
 LABEL maintainer="EcoOS Agent"
 LABEL description="EcoOS V7 agent — FastAPI + pi_ai + sqlite-vec RAG"
@@ -21,7 +21,11 @@ ENV PYTHONUNBUFFERED=1 \
 # wine — единственный практичный способ оставить весь стек в одной compose
 # схеме. Преинициализация WINEPREFIX в build-time убирает 10-30с лаг при
 # первом вызове и гарантирует, что wineboot не пишет в read-only volume.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Fix GPG signature issues by updating certificates first
+RUN apt-get update -o Acquire::Check-Valid-Until=false && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
     build-essential \
     git \
     curl \

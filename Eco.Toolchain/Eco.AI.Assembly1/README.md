@@ -6,6 +6,70 @@ role orchestration, human plan approval, and a shared event contract. Agent
 backends are replaceable: the built-in agent, Pi, Codex, and Claude Code can
 be selected per role.
 
+## Quick Start
+
+### Option 1: Docker Compose (Recommended)
+```bash
+# 1. Copy environment template
+cp env.example .env
+
+# 2. Edit .env with your API key and settings
+#    Set OPENAI_API_KEY, OPENROUTER_URL, etc.
+
+# 3. Prepare executables (outside container, on host)
+#    Place executables in these directories relative to project root:
+#    - ../eco-cli-linux/eco-cli          (Linux ELF, preferred)
+#    - ../eco-cli-windows/eco-cli.exe    (Windows .exe, fallback)
+#    - ../eco-wizard-linux/eco-wizard    (Linux ELF, preferred)
+#    - ../eco-wizard-windows/eco-wizard.exe (Windows .exe, fallback)
+
+# 4. Run initialization scripts (on host, before starting container)
+
+# set env variable for current machine eco-cli file. for macos use examples:
+nano ~./zshrc
+# add 
+export ECO_CLI_BIN="path to eco-cli on this PC"
+export ECO_API_TOKEN="token generated in ecoos.dev marketplace (component registry)"
+
+# when run the script
+python scripts/fetch_marketplace.py
+python scripts/build_marketplace_index.py
+
+# 5. Start the application
+docker compose up --build
+
+# Access at:
+# - UI: http://localhost:3100
+# - API: http://localhost:8100
+```
+
+### Option 2: Local Development
+```bash
+# 1. Set up Python environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r agent/requirements.txt
+
+# 2. Set up Node.js frontend
+cd frontend
+npm install
+cd ..
+
+# 3. Configure environment
+cp env.example .env
+# Edit .env with your settings
+
+# 4. Prepare executables (place in PATH or set ECO_CLI_PATH/ECO_WIZARD_PATH)
+
+# 5. Run initialization scripts
+python scripts/fetch_marketplace.py
+python scripts/build_marketplace_index.py
+
+# 6. Start services in separate terminals:
+# Terminal 1: uvicorn backend.server:app --host 0.0.0.0 --port 8000
+# Terminal 2: cd frontend && npm run dev
+```
+
 ## Current runtime
 
 The production path is:
@@ -51,7 +115,7 @@ The system uses a consistent directory structure for executables with Linux prio
 ```
 
 **Path Resolution Priority:**
-1. Environment variables (`ECO_CLI_PATH`, `ECO_WIZARD_PATH`)
+1. Environment variables (`ECO_CLI_PATH`, `ECO_WIZARD_PATH`) - **Use to override automatic detection**
 2. Linux executables (preferred for Docker containers)
 3. Windows executables via wine (fallback)
 4. System PATH
@@ -60,86 +124,147 @@ The system uses a consistent directory structure for executables with Linux prio
 The system automatically detects and uses the appropriate executable with
 wine prefix support for Windows executables on Linux.
 
-## Local setup
+**When to use `ECO_CLI_PATH`/`ECO_WIZARD_PATH`:**
+- To use a custom executable location not in the standard directories
+- To force use of Windows executable when Linux version is available
+- To specify exact path when multiple versions exist
+- For development/testing with different executable versions
 
-```cmd
-copy env.example .env
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install -r agent\requirements.txt
-cd frontend
-npm install
-cd ..
-```
+**When NOT needed:**
+- When using standard directory structure (`../eco-cli-linux/`, etc.)
+- When executables are in system PATH
+- For normal Docker Compose deployment (automatic detection works)
 
-Set `OPENAI_API_KEY`, `OPENROUTER_URL`, and the executable paths in `.env`.
-Set `ECO_WORKTREE_ROOT` to override the default sibling worktree directory.
-On Linux and macOS, use the equivalent virtual-environment activation command.
+## Setup Details
 
-Prepare the marketplace corpus and index:
+### Environment Configuration
 
-```cmd
-python scripts\fetch_marketplace.py
-python scripts\build_marketplace_index.py
-```
+1. **Copy environment template:**
+   ```bash
+   cp env.example .env
+   ```
 
-Run the API:
+2. **Edit `.env` file:** Set at minimum:
+   - `OPENAI_API_KEY` - Your OpenRouter API key
+   - `OPENROUTER_URL` - OpenRouter API URL (default: `https://openrouter.ai/api/v1`)
+   - `ECO_API_TOKEN` - Eco marketplace token (for `fetch_marketplace.py`)
 
-```cmd
-uvicorn backend.server:app --host 0.0.0.0 --port 8000
-```
+3. **Optional environment variables:**
+   - `ECO_CLI_PATH` - Override eco-cli executable path
+   - `ECO_WIZARD_PATH` - Override eco-wizard executable path
+   - `ECO_WORKTREE_ROOT` - Custom worktree directory
+   - `ECO_CLI_PREFIX`/`ECO_WIZARD_PREFIX` - Wine prefix for Windows executables (e.g., `wine64`)
 
-Run the UI in a second terminal:
+### Initialization Scripts (Run on Host Machine)
 
-```cmd
-cd frontend
-npm run dev
-```
+**These scripts MUST run on the host machine BEFORE starting Docker containers:**
 
-The compose deployment publishes the API on `http://localhost:8100` and the
-UI on `http://localhost:3100`:
+1. **Fetch marketplace components:**
+   ```bash
+   # Requires: ECO_API_TOKEN in .env
+   # Downloads components to ./marketplace_cache/
+   python scripts/fetch_marketplace.py
+   ```
 
-```cmd
+2. **Build RAG index:**
+   ```bash
+   # Requires: OPENAI_API_KEY in .env
+   # Creates marketplace_index.sqlite from marketplace_cache/
+   python scripts/build_marketplace_index.py
+   ```
+
+3. **Preflight check (optional but recommended):**
+   ```bash
+   # Validates setup before starting containers
+   python scripts/dev_preflight.py
+   ```
+
+**Note:** These scripts interact with external APIs and download files to the host filesystem. They cannot run inside containers because:
+- Need access to host filesystem for `marketplace_cache/`
+- May need to download executables or large files
+- Some require API tokens that shouldn't be in container images
+
+### Executable Preparation
+
+Place executables in these locations **relative to project root on host**:
+- `../eco-cli-linux/eco-cli` - Linux ELF (preferred)
+- `../eco-cli-windows/eco-cli.exe` - Windows .exe (fallback via wine)
+- `../eco-wizard-linux/eco-wizard` - Linux ELF (preferred)
+- `../eco-wizard-windows/eco-wizard.exe` - Windows .exe (fallback via wine)
+
+Docker Compose will mount these directories into the container at `/opt/eco-*-linux/` and `/opt/eco-*-windows/`.
+
+### Docker Compose Deployment
+
+**Prerequisites (on host):**
+1. `.env` file configured
+2. `marketplace_index.sqlite` created (via `build_marketplace_index.py`)
+3. `marketplace_cache/` directory populated (via `fetch_marketplace.py`)
+4. Executables placed in `../eco-*-linux/` and `../eco-*-windows/` directories
+
+**Start the application:**
+```bash
 docker compose up --build
 ```
 
-Create `marketplace_index.sqlite` and `marketplace_cache` before starting
-compose. Run the preflight check first:
-
-```cmd
-python scripts\dev_preflight.py
-```
-
-The mounts are writable because the UI can update the shared index.
+**Access endpoints:**
+- Web UI: http://localhost:3100
+- API: http://localhost:8100
+- WebSocket: ws://localhost:8100/ws/chat
 
 **Volume Mounts in Docker Compose:**
-- `./marketplace_index.sqlite:/app/marketplace_index.sqlite` - RAG index
-- `./marketplace_cache:/app/marketplace_cache` - Component cache
-- `../../eco-cli-windows:/opt/eco-cli-windows:ro` - Windows eco-cli
-- `../../eco-cli-linux:/opt/eco-cli-linux:ro` - Linux eco-cli (preferred)
-- `../../eco-wizard-windows:/opt/eco-wizard-windows:ro` - Windows eco-wizard
-- `../../eco-wizard-linux:/opt/eco-wizard-linux:ro` - Linux eco-wizard (preferred)
+- `./marketplace_index.sqlite:/app/marketplace_index.sqlite` - RAG index (read-write)
+- `./marketplace_cache:/app/marketplace_cache` - Component cache (read-only)
+- `../../eco-cli-windows:/opt/eco-cli-windows:ro` - Windows eco-cli executable
+- `../../eco-cli-linux:/opt/eco-cli-linux:ro` - Linux eco-cli executable (preferred)
+- `../../eco-wizard-windows:/opt/eco-wizard-windows:ro` - Windows eco-wizard executable
+- `../../eco-wizard-linux:/opt/eco-wizard-linux:ro` - Linux eco-wizard executable (preferred)
+
+**Important:** The RAG index (`marketplace_index.sqlite`) is mounted read-write because the UI can update it through import functionality. The component cache (`marketplace_cache/`) is read-only as it contains pre-downloaded components.
 
 ## Configuration
 
 Repository configuration is under `config/`:
 
-### Automatic Path Resolution
+### Path Resolution System
 
-The system automatically resolves executable paths with Linux priority:
+The system uses intelligent path resolution with the following logic:
 
-1. **Linux executables** (`/opt/eco-cli-linux/eco-cli`, `/opt/eco-wizard-linux/eco-wizard`) are preferred in Docker containers
-2. **Windows executables** (`/opt/eco-cli-windows/eco-cli.exe`, `/opt/eco-wizard-windows/eco-wizard.exe`) are used as fallback via wine
-3. **Wine prefix** is automatically set for Windows executables on Linux
-4. **Environment variables** (`ECO_CLI_PATH`, `ECO_WIZARD_PATH`) override automatic resolution
+**For Docker containers:**
+1. Checks `/opt/eco-cli-linux/eco-cli` (Linux ELF, preferred)
+2. Falls back to `/opt/eco-cli-windows/eco-cli.exe` (Windows .exe via wine)
+3. Same logic for eco-wizard
 
-Default paths in `.env`:
+**For local development:**
+1. Checks `ECO_CLI_PATH` environment variable (if set)
+2. Checks `../eco-cli-linux/eco-cli` (relative to project)
+3. Checks `../eco-cli-windows/eco-cli.exe` (relative to project)
+4. Checks system PATH for `eco-cli` or `eco-cli.exe`
+
+**Environment Variable Examples:**
+```bash
+# Use Linux executable (default in Docker)
+export ECO_CLI_PATH=/opt/eco-cli-linux/eco-cli
+export ECO_WIZARD_PATH=/opt/eco-wizard-linux/eco-wizard
+
+# Use Windows executable via wine (fallback)
+export ECO_CLI_PATH=/opt/eco-cli-windows/eco-cli.exe
+export ECO_WIZARD_PATH=/opt/eco-wizard-windows/eco-wizard.exe
+export ECO_CLI_PREFIX=wine64
+export ECO_WIZARD_PREFIX=wine64
+
+# Custom path (development)
+export ECO_CLI_PATH=/usr/local/bin/eco-cli
+export ECO_WIZARD_PATH=/home/user/tools/eco-wizard
 ```
-# Linux paths (preferred):
+
+**Default `.env` configuration:**
+```
+# Linux paths (preferred, work in Docker):
 ECO_CLI_PATH=/opt/eco-cli-linux/eco-cli
 ECO_WIZARD_PATH=/opt/eco-wizard-linux/eco-wizard
 
-# Windows paths (fallback via wine):
+# Windows paths (fallback via wine, comment out unless needed):
 # ECO_CLI_PATH=/opt/eco-cli-windows/eco-cli.exe
 # ECO_WIZARD_PATH=/opt/eco-wizard-windows/eco-wizard.exe
 # ECO_CLI_PREFIX=wine64
@@ -212,8 +337,8 @@ The API endpoints are:
 For CLI use:
 
 ```cmd
-python scripts\import_rag.py path\to\docs path\to\dump.sqlite
-python scripts\export_rag.py --index marketplace_index.sqlite --out marketplace_index.team.sqlite
+python scripts/import_rag.py path/to/docs path/to/dump.sqlite
+python scripts/export_rag.py --index marketplace_index.sqlite --out marketplace_index.team.sqlite
 ```
 
 The current design keeps one shared marketplace index for team exchange.
@@ -293,9 +418,45 @@ boundaries for future CLI products, MCP servers, AST endpoints, and UI
 panels. The current FastAPI server is an optional interface over those
 boundaries, not the domain core.
 
+## Troubleshooting
+
+### Common Issues
+
+1. **"eco-cli not found" error:**
+   - Ensure executables are in `../eco-cli-linux/` or `../eco-cli-windows/`
+   - Check Docker volume mounts in `docker-compose.yml`
+   - Verify `ECO_CLI_PATH` in `.env` if using custom location
+
+2. **GPG signature errors during Docker build:**
+   - Update Dockerfile base image
+   - Clear Docker build cache: `docker builder prune -a`
+   - Rebuild: `docker compose build --no-cache`
+
+3. **RAG index not found:**
+   - Run `python scripts/build_marketplace_index.py` on host
+   - Ensure `marketplace_index.sqlite` exists in project root
+   - Check file permissions
+
+4. **Marketplace components missing:**
+   - Run `python scripts/fetch_marketplace.py` on host
+   - Verify `ECO_API_TOKEN` in `.env`
+   - Check network connectivity
+
+5. **Windows executables not working in Linux container:**
+   - Ensure `wine64` is installed in Docker image
+   - Set `ECO_CLI_PREFIX=wine64` in `.env` for Windows executables
+   - Consider using Linux executables instead
+
+### Debugging
+
+- Check container logs: `docker compose logs api`
+- Enter container shell: `docker compose exec api bash`
+- Test eco-cli in container: `docker compose exec api eco-cli --version`
+- Verify volume mounts: `docker compose exec api ls -la /opt/`
+
 ## Validation
 
-```cmd
+```bash
 python -m compileall -q agent backend eco_harness scripts
 cd frontend
 npm run build
