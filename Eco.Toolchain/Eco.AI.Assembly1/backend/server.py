@@ -462,7 +462,7 @@ async def chat_endpoint(websocket: WebSocket):
     # Resolve eco-cli path
     cli_path = resolve_executable_path(
         "ECO_CLI_PATH",
-        "/opt/eco-cli-linux",
+        "/opt/eco-cli",
         "/opt/eco-cli-windows",
         "eco-cli"
     )
@@ -470,7 +470,7 @@ async def chat_endpoint(websocket: WebSocket):
     # Resolve eco-wizard path
     wizard_path = resolve_executable_path(
         "ECO_WIZARD_PATH",
-        "/opt/eco-wizard-linux",
+        "/opt/eco-wizard",
         "/opt/eco-wizard-windows",
         "eco-wizard"
     )

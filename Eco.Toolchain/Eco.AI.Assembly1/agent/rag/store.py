@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import sqlite3
 import struct
 from dataclasses import asdict
@@ -82,7 +83,10 @@ class RagStore:
     def create(cls, db_path: Path, embed_dim: int, *, reset: bool = False) -> "RagStore":
         db_path = Path(db_path)
         if reset and db_path.exists():
-            db_path.unlink()
+            if db_path.is_dir():
+                shutil.rmtree(db_path)
+            else:
+                db_path.unlink()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         s = cls(db_path, embed_dim)
         s._init_schema()

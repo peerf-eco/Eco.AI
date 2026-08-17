@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Download every component listed on the EcoOS Marketplace UI into a local cache.
 
-Why a dedicated script instead of `eco find -p`:
-    The CLI's `find -p` listing returns only 8 of the ~33 components visible
-    in the web Marketplace — verified empirically 2026-05-23. Looking up by
-    name (`find -p -n <Name>`) returns the full profile for any component,
+Why a dedicated script instead of `eco find -n`:
+    Looking up by
+    name (`find -n <Name>`) returns the full profile for any component,
     so we walk a hard-coded name list (taken from the UI) and pull each one.
 
 Output layout (matches eco-cli's own pull behaviour):
@@ -14,7 +13,7 @@ Output layout (matches eco-cli's own pull behaviour):
         DesignFiles/...
       ecoPackage.json              # accumulates as eco-cli appends
       .eco/                        # eco-cli bookkeeping
-      _profiles/<name>.json        # raw `find -p -n` profile we parsed
+      _profiles/<name>.json        # raw `find -n` profile we parsed
       _fetch_summary.json          # one-line outcome per component
 
 Re-run is idempotent: components already extracted are skipped (presence of
@@ -27,7 +26,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ── Inputs ────────────────────────────────────────────────────────────────
@@ -48,7 +47,7 @@ for path in [
         break
 
 if ECO_CLI is None:
-    ECO_CLI = Path("../../eco-cli-windows/eco-cli.exe")  # Default fallback
+    ECO_CLI = Path("../../../../Dist/eco-cli/eco-cli")  # Default fallback for Linux
 
 CACHE_DIR = Path(os.environ.get(
     "MARKETPLACE_CACHE",
@@ -166,9 +165,9 @@ def main() -> int:
             summary.append(record)
             continue
 
-        # 1) Resolve uguid + latest DEVKIT fileId via `find -p -n <name>`.
+        # 1) Resolve uguid + latest DEVKIT fileId via `find -n <name>`.
         print(f"[{i:2}/{len(COMPONENTS)}] {name}: resolving...", end=" ", flush=True)
-        find = _run("find", "-p", "-n", name)
+        find = _run("find", "-n", name)
         if find.returncode != 0:
             print(f"FIND-FAIL rc={find.returncode}")
             record.update(status="find_fail",
@@ -224,7 +223,7 @@ def main() -> int:
     summary_path.write_text(
         json.dumps(
             {
-                "generated": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "generated": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
                 "cli": str(ECO_CLI),
                 "cache_dir": str(CACHE_DIR),
                 "total": len(COMPONENTS),

@@ -1,3 +1,20 @@
+# EcoOS components binary libraries
+*.dll
+*.a
+*.so
+*.lib
+# eco_framework/
+eco_framework/*/BuildFiles/
+eco_framework/*/BuildFiles/*
+BuildFiles/
+*.vcxproj
+*.vcxproj.filters
+*.xcscheme
+*.pbxproj
+*.xcworkspace
+*.xcuserdata/
+*.sln
+
 # Python
 __pycache__/
 *.py[cod]
@@ -33,14 +50,14 @@ output/
 traces/
 
 # EcoOS CLI (193MB binary)
-eco.sli/
+eco.cli/
 .eco/
 
 # Auto-generated
 test_results/
 # AI-review artifacts dumped at the app root. Leading slash anchors this to
 # Eco.AI.Assembly1/agents/ ONLY — the old bare `agents/` also matched the V7
-# source package agent/internal/ and silently dropped required files
+# eco_framework package agent/internal/ and silently dropped required files
 # (architect/coder/tester/_taxonomy) from git, breaking clone→run. Fixed 2026-06-22.
 /agents/
 

@@ -186,7 +186,7 @@ wine prefix support for Windows executables on Linux.
 
 ### Executable Preparation
 
-Place executables in these locations **relative to project root on host**:
+Place executables in these locations **relative to project root on host** depending on your OS and files locations, example:
 - `../eco-cli-linux/eco-cli` - Linux ELF (preferred)
 - `../eco-cli-windows/eco-cli.exe` - Windows .exe (fallback via wine)
 - `../eco-wizard-linux/eco-wizard` - Linux ELF (preferred)
@@ -215,10 +215,11 @@ docker compose up --build
 **Volume Mounts in Docker Compose:**
 - `./marketplace_index.sqlite:/app/marketplace_index.sqlite` - RAG index (read-write)
 - `./marketplace_cache:/app/marketplace_cache` - Component cache (read-only)
-- `../../eco-cli-windows:/opt/eco-cli-windows:ro` - Windows eco-cli executable
-- `../../eco-cli-linux:/opt/eco-cli-linux:ro` - Linux eco-cli executable (preferred)
-- `../../eco-wizard-windows:/opt/eco-wizard-windows:ro` - Windows eco-wizard executable
-- `../../eco-wizard-linux:/opt/eco-wizard-linux:ro` - Linux eco-wizard executable (preferred)
+- `../../../../Dist/eco-cli/eco-cli-windows/eco-cli.exe:/opt/eco-cli-windows:ro` - Windows eco-cli executable
+- `../../../../Dist/eco-cli/eco-cli:/opt/eco-cli:ro` - Linux eco-cli executable (preferred)
+- `../../../../Dist/eco-cli/libaws-crt-jni.so :/opt/libaws-crt-jni.so:ro` - Linux eco-cli executable (preferred)
+- `../../../../Dist/eco-cli/eco-wizard-windows/eco-wizard.exe:/opt/eco-wizard-windows:ro` - Windows eco-wizard executable
+- `../../../../Dist/eco-wizard/eco-wizard:/opt/eco-wizard:ro` - Linux eco-wizard executable (preferred)
 
 **Important:** The RAG index (`marketplace_index.sqlite`) is mounted read-write because the UI can update it through import functionality. The component cache (`marketplace_cache/`) is read-only as it contains pre-downloaded components.
 

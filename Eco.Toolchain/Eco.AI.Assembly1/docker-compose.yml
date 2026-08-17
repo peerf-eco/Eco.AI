@@ -11,7 +11,7 @@
 # See docs/RAG_SETUP.md.
 #
 # This is a DEV compose: api = uvicorn --reload with ./agent + ./backend mounted;
-# frontend = `npm run dev`. For prod, drop the source bind-mounts and dev commands.
+# frontend = `npm run dev`. For prod, drop the eco_framework bind-mounts and dev commands.
 
 services:
   # Backend API + Agent
@@ -27,7 +27,7 @@ services:
     volumes:
       - ./output:/app/output
       - ./traces:/app/traces
-      - ./source:/app/source:ro
+      - ./eco_framework:/app/eco_framework:ro
       # Marketplace RAG (production, 2026-05-24):
       #   marketplace_index.sqlite — sqlite-vec + FTS5 index, updated by UI imports
       #     from 175 .h files across 30 components, embedded with
@@ -41,13 +41,14 @@ services:
       # Два варианта eco-cli (выбор через ECO_CLI_PATH в .env):
       #   eco-cli-windows/ — Windows .exe (запуск через wine)
       #   eco-cli-linux/   — нативный Linux ELF (предпочтительнее)
-      - ../../../../eco-cli-windows:/opt/eco-cli-windows:ro
-      - ../../../../eco-cli-linux:/opt/eco-cli-linux:ro
+      # - ../../../../eco-cli-windows:/opt/eco-cli-windows:ro
+      - ../../../../Dist/eco-cli/eco-cli:/opt/eco-cli:ro
+      - ../../../../Dist/eco-cli/libaws-crt-jni.so :/opt/libaws-crt-jni.so:ro
       # Два варианта eco-wizard (выбор через ECO_WIZARD_PATH в .env):
       #   eco-wizard-windows/ — Windows .exe (запуск через wine)
       #   eco-wizard-linux/   — нативный Linux ELF (предпочтительнее)
-      - ../../../../eco-wizard-windows:/opt/eco-wizard-windows:ro
-      - ../../../../eco-wizard-linux:/opt/eco-wizard-linux:ro
+      # - ../../../../eco-wizard-windows:/opt/eco-wizard-windows:ro
+      - ../../../../Dist/eco-wizard/eco-wizard:/opt/eco-wizard:ro
       # Монтируем код для разработки (hot reload)
       - ./agent:/app/agent
       - ./backend:/app/backend

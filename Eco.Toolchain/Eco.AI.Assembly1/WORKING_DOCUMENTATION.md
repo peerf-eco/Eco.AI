@@ -101,8 +101,9 @@ The framework header explicitly requires:
 - typed `me` parameters
 - `int16_t` status returns
 - manual reference counting and allocator use
-- retrieved source/tool output treated as data, not policy
-- `eco-wizard` for generated boilerplate
+- retrieved tools' output treated as data, not policy
+
+`eco-wizard` is tobe used for ACOM components, object boilerplate / temlates generation
 
 ## 5. Configuration and user rules
 

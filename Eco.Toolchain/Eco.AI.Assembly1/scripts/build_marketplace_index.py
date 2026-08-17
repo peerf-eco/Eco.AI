@@ -76,7 +76,27 @@ def main() -> int:
             f"Pull components first via scripts/fetch_marketplace.py."
         )
 
-    if INDEX_PATH.exists() and not args.rebuild:
+    cache_files = [p for p in CACHE_DIR.rglob("*") if p.is_file()]
+    if not cache_files:
+        sys.exit(
+            f"marketplace_cache at {CACHE_DIR} is empty — nothing to index. "
+            f"Pull components first via scripts/fetch_marketplace.py."
+        )
+
+    if INDEX_PATH.exists() and not INDEX_PATH.is_file():
+        # Stale directory (or other non-file) where the index should live —
+        # remove it so --rebuild (and RagStore.create) can proceed.
+        logger.warning(
+            "%s exists but is not a file; removing it before rebuild.",
+            INDEX_PATH,
+        )
+        import shutil as _shutil
+        if INDEX_PATH.is_dir():
+            _shutil.rmtree(INDEX_PATH)
+        else:
+            INDEX_PATH.unlink()
+
+    if INDEX_PATH.is_file() and not args.rebuild:
         logger.info(
             "Index exists at %s. Re-run with --rebuild to wipe + re-embed.",
             INDEX_PATH,
