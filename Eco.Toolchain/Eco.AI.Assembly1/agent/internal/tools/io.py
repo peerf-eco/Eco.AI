@@ -13,12 +13,13 @@ distinction that prevents the test-fudging anti-pattern.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from agent.internal.eco_agent import EcoTool, ToolResult
-from agent.internal.tools.common import ensure_inside, resolve_inside
+from agent.internal.tools.common import ensure_inside, resolve_inside, decode_text
 
 
 _READ_FILE_MAX_BYTES = 256 * 1024  # 256 KB — header files + small sources
@@ -63,9 +64,10 @@ class _WriteArgs(BaseModel):
 
 
 # ── Read-side tools ────────────────────────────────────────────────────────
-def _list_dir(args: _PathArgs, project_dir: Path) -> ToolResult:
+def _list_dir(args: _PathArgs, project_dir: Path, extra_roots: Optional[list[Path]] = None) -> ToolResult:
+    roots = [project_dir, *(extra_roots or [])]
     p = resolve_inside(project_dir, args.path)
-    if not ensure_inside(project_dir, p):
+    if not ensure_inside_any(roots, p):
         return ToolResult(content=_outside_msg(args.path, project_dir), is_error=True)
     if not p.exists():
         return ToolResult(content=_missing_msg(args.path, p, project_dir, "does not exist"), is_error=True)
@@ -82,9 +84,10 @@ def _list_dir(args: _PathArgs, project_dir: Path) -> ToolResult:
     return ToolResult(content="\n".join(entries) if entries else "(empty)")
 
 
-def _read_file(args: _PathArgs, project_dir: Path) -> ToolResult:
+def _read_file(args: _PathArgs, project_dir: Path, extra_roots: Optional[list[Path]] = None) -> ToolResult:
+    roots = [project_dir, *(extra_roots or [])]
     p = resolve_inside(project_dir, args.path)
-    if not ensure_inside(project_dir, p):
+    if not ensure_inside_any(roots, p):
         return ToolResult(content=_outside_msg(args.path, project_dir), is_error=True)
     if not p.exists():
         return ToolResult(content=_missing_msg(args.path, p, project_dir, "does not exist"), is_error=True)
@@ -101,7 +104,7 @@ def _read_file(args: _PathArgs, project_dir: Path) -> ToolResult:
             is_error=True,
         )
     try:
-        return ToolResult(content=p.read_text(errors="replace"))
+        return ToolResult(content=decode_text(p.read_bytes()))
     except OSError as e:
         # Catch read errors symmetrically with stat above — otherwise an
         # IO error would surface as an EcoAgent ToolMessage(error) without
@@ -136,26 +139,34 @@ _PATH_HINT = (
 
 
 def make_read_tools(project_dir: Path) -> list[EcoTool]:
-    """Read-only fs tools (read_file, list_dir). Safe for any agent including tester."""
+    """Read-only fs tools (read_file, list_dir). Safe for any agent including tester.
+
+    Read access is also granted to the marketplace_cache mount (read-only) so
+    agents can inspect component headers there without falling back to the
+    project_dir-only sandbox error. Write access stays strictly project_dir.
+    """
+    cache_root = Path(os.environ.get("MARKETPLACE_CACHE_ROOT", "/app/marketplace_cache"))
+    extra_roots = [cache_root] if cache_root.exists() else []
     return [
         EcoTool(
             name="read_file",
             description=(
-                "Read a UTF-8 file inside project_dir. "
+                "Read a UTF-8 file inside project_dir OR marketplace_cache. "
                 f"Refuses files larger than {_READ_FILE_MAX_BYTES // 1024} KB. "
                 + _PATH_HINT
             ),
             args_schema=_PathArgs,
-            execute=lambda a: _read_file(a, project_dir),
+            execute=lambda a: _read_file(a, project_dir, extra_roots),
         ),
         EcoTool(
             name="list_dir",
             description=(
-                "List the contents of a directory inside project_dir. "
-                "Directories are marked with a trailing slash. " + _PATH_HINT
+                "List the contents of a directory inside project_dir OR "
+                "marketplace_cache. Directories are marked with a trailing "
+                "slash. " + _PATH_HINT
             ),
             args_schema=_PathArgs,
-            execute=lambda a: _list_dir(a, project_dir),
+            execute=lambda a: _list_dir(a, project_dir, extra_roots),
         ),
     ]
 

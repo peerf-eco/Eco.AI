@@ -306,10 +306,27 @@ ECO_WIZARD_PATH=/opt/eco-wizard-linux/eco-wizard
 
 Model selection (important): the working chat model is `tencent/hy3` — the older
 `tencent/hy3-preview` slug was removed from OpenRouter's standard routing (it now
-only exists on Tencent's own TokenHub endpoint). `OPENROUTER_PROVIDER_PIN=tencent`
-is set with `allow_fallbacks=False`, so **every role's `models.yaml` profile must
-resolve to a `tencent`-provider model**; pinning a non-tencent model (e.g.
-`deepseek/...`) makes OpenRouter 404. Each role's `per_query_tokens` budget is sent
+only exists on Tencent's own TokenHub endpoint). The provider **pin** is resolved
+per model, with this precedence:
+
+```text
+model profile's provider_pin (config/models.yaml)  >  OPENROUTER_PROVIDER_PIN (.env)
+```
+
+So each role's model carries its own `provider_pin` (see `config/models.yaml`,
+e.g. `reasoning_heavy.provider_pin: tencent`), keeping the pin matched to that
+model's provider and avoiding mismatched-pin 404s when different roles use
+different models. A profile that omits `provider_pin` (the `default` profile)
+falls back to the global `OPENROUTER_PROVIDER_PIN` env — that is the
+`LLM_MODEL` + `OPENROUTER_PROVIDER_PIN` "default combination" for roles with no
+specific model set. `allow_fallbacks` defaults to **True**, so a
+missing/unavailable pinned endpoint routes to the other providers that also
+serve the model (Tencent Cloud, DeepInfra, NovitaAI, …) instead of failing with
+HTTP 404 "No endpoints found". Set `OPENROUTER_ALLOW_FALLBACKS=false` only if you
+want strict single-provider pinning (availability traded for cache warmth).
+**Every model's pin must resolve to a real OpenRouter provider for that model** —
+pinning a model no provider serves (e.g. `deepseek/...` under a `tencent` pin)
+makes OpenRouter 404. Each role's `per_query_tokens` budget is sent
 as `max_tokens`; a context-window-aware clamp in
 `agent/pi_ai/providers/openai_completions.py` caps it to fit the model context once
 the system prompt is included, preventing HTTP 400 overflow. `harness.yaml:
@@ -392,6 +409,27 @@ that bypasses it. If a component is absent locally, the architect uses
 not used when `eco-wizard` is available. Set `HARNESS_SCAFFOLD=1` to force the
 fallback or leave the variable unset to use the automatic compatibility rule.
 
+### marketplace_cache layout
+
+`marketplace_cache/` (mounted read-only into the container at
+`/app/marketplace_cache`) has two distinct parts the agents use differently:
+
+- `<Component>/SharedFiles/*.h` — the **interface/source headers** (e.g.
+  `Eco.Core1/SharedFiles/IEcoSystem1.h`). This is the readable corpus explored
+  with `grep` / `glob` / `read`. Headers are UTF-8 (sometimes with a BOM) and
+  may contain Cyrillic comments; the `read`/`read_file` tools decode them
+  lossy-but-safe.
+- `_profiles/<Name>.json` — one **metadata profile per component** (30 in the
+  current snapshot), written by `scripts/fetch_marketplace.py`. Each holds the
+  raw `find -n` profile: CID, available versions, DEVKIT file manifest, and
+  dependencies. It answers "given this component name, what do I `pull`?" and
+  is consumed by the `read_component_profile` tool. It is **excluded from the
+  RAG index** (the directory begins with `_`), so `search_marketplace` never
+  embeds it.
+
+The buildable implementation (`.c` / `.lib` / `.so`) is **not** in the cache —
+it is fetched on demand via `eco-cli pull` into `project_dir`.
+
 ## Customization
 
 Project-wide rules go in the root `AGENTS.md`. Role-specific rules can be
@@ -466,6 +504,47 @@ destination can be configured through `ECO_WORKTREE_ROOT`.
 python -m eco_harness run "Migrate this project" --mode migrate --worktree
 python -m eco_harness /review "Check this code" --worktree
 ```
+
+## Workspace and per-agent limits
+
+### How the working folder is chosen
+
+The harness has **no UI "open folder" picker** — the workspace
+(`project_dir`) is derived automatically per chat session:
+
+- **Default:** `HARNESS_OUTPUT_ROOT` (default `./output`) + `chat-<thread8>`,
+  i.e. `./output/chat-<thread8>`. In the container this is `/app/output/...`
+  (the `./output` volume mount). A fresh sub-directory is created for each
+  WebSocket session/thread, so concurrent chats never share a tree.
+- **Worktree (isolated):** enable **Worktree** in the UI (or `--worktree` on
+  the CLI). The harness then creates a detached Git worktree outside the
+  primary checkout — under `ECO_WORKTREE_ROOT` — and uses that as
+  `project_dir`. It never modifies the primary checkout.
+
+All file tools are **sandboxed to `project_dir`** for writes: the coder's
+`write_file` / `build` / `runtime` can only touch `project_dir`, while
+`read` / `glob` / `grep` / `read_file` / `list_dir` may also read the
+read-only `marketplace_cache`. UI role/model/language selections are persisted
+in `.eco-harness/workspace.yaml`.
+
+### Per-agent space limits (budgets)
+
+Each role's limits come from `config/roles.yaml` →
+`roles.<role>.budgets` and are applied identically to every sub-agent
+(architect, coder, tester, reviewer):
+
+| Budget | Effect |
+| --- | --- |
+| `per_query_tokens` | Sent as the model `max_tokens`; a context-window-aware clamp in `agent/pi_ai/providers/openai_completions.py` caps it so the system prompt fits (prevents HTTP 400). |
+| `per_query_usd` / `per_day_usd` | Cost ceilings for a single query / per day. |
+| `max_iters` | Hard cap on the agent's tool-call loop iterations. |
+| `max_wall_s` | Wall-clock timeout for the agent. |
+
+Global guards: `HARNESS_MAX_HOPS` (default `8`) bounds orchestrator
+handoffs, and `AGENT_MAX_ITERATIONS` (env; `0`/`unset` = role default) can
+override `max_iters` for every role at once. File-tool results are also
+size-capped (`read` 32 KB default / 200 KB max, `read_file` 256 KB, `grep` 100
+matches, `glob` 500 entries) so a single call can't blow the context budget.
 
 ## CLI and future MCP use
 

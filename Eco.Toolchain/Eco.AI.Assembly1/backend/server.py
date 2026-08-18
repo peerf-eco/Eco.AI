@@ -432,8 +432,14 @@ async def chat_endpoint(websocket: WebSocket):
                 return path
             logger.warning(f"{env_var_name}={explicit_path} does not exist")
         
-        # 2. Check Linux path (preferred)
-        linux_full = Path(linux_path) / default_name
+        # 2. Check Linux path (preferred). Supports both a directory that
+        #    contains `default_name` AND a direct binary mount (e.g.
+        #    /opt/eco-cli bound straight to the ELF in docker-compose.yml).
+        linux_dir = Path(linux_path)
+        if linux_dir.is_file():
+            logger.info(f"Using Linux executable: {linux_dir}")
+            return linux_dir
+        linux_full = linux_dir / default_name
         if linux_full.exists():
             logger.info(f"Using Linux executable: {linux_full}")
             return linux_full

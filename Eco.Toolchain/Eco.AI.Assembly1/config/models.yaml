@@ -3,15 +3,20 @@ models:
     id: tencent/hy3
     provider: openrouter
     reasoning: high
+    # No provider_pin -> falls back to OPENROUTER_PROVIDER_PIN in .env (the
+    # default LLM_MODEL + pin combination for roles without a specific model).
   reasoning_heavy:
     id: tencent/hy3
     provider: openrouter
     reasoning: high
+    provider_pin: tencent
   coding_balanced:
     id: tencent/hy3
     provider: openrouter
     reasoning: medium
+    provider_pin: tencent
   cheap_fast:
     id: tencent/hy3
     provider: openrouter
     reasoning: low
+    provider_pin: tencent

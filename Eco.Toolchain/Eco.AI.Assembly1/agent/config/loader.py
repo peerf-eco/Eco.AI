@@ -17,6 +17,11 @@ class ModelProfile(BaseModel):
     reasoning: str = "medium"
     temperature: float | None = None
     max_tokens: int | None = None
+    # Optional OpenRouter provider pin for this specific model (e.g. "tencent").
+    # When set it overrides the global OPENROUTER_PROVIDER_PIN env; when omitted
+    # the env default is used. Keeps a model's pin matched to its provider so
+    # different roles using different models don't get mismatched pin 404s.
+    provider_pin: str | None = None
 
 
 class BudgetSpec(BaseModel):

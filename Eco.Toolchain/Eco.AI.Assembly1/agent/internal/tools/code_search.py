@@ -49,6 +49,7 @@ from typing import Iterable, Optional
 from pydantic import BaseModel, Field
 
 from agent.internal.eco_agent import EcoTool, ToolResult
+from agent.internal.tools.common import decode_text
 
 logger = logging.getLogger(__name__)
 
@@ -395,7 +396,7 @@ def _read(args: _ReadArgs, allowed_roots: list[Path]) -> ToolResult:
             content=f"read: failed to read {p}: {e}", is_error=True,
         )
 
-    text = data.decode("utf-8", errors="replace")
+    text = decode_text(data)
     truncated = (args.offset + len(data)) < size
     header = (
         f"=== {p} ({size} bytes"

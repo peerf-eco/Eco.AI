@@ -48,3 +48,26 @@ def resolve_inside(project_dir: Path, args_path: str) -> Path:
     except ValueError:
         return project_dir / p
 
+
+def ensure_inside_any(roots: list[Path], child: Path) -> bool:
+    """True if `child` resolves inside ANY of `roots`."""
+    return any(ensure_inside(r, child) for r in roots)
+
+
+def decode_text(data: bytes) -> str:
+    """Decode file bytes to text lossy-but-safe for mixed encodings.
+
+    Cache headers can be UTF-8 (sometimes with a BOM) or legacy Cyrillic
+    CP1251. Strip a leading UTF-8 BOM so the model never sees a stray U+FEFF,
+    then try UTF-8, CP1251 (Cyrillic Windows), and finally latin-1 — this never
+    raises, so a stray non-UTF-8 byte can't break a tool call.
+    """
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    for enc in ("utf-8", "cp1251", "latin-1"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+

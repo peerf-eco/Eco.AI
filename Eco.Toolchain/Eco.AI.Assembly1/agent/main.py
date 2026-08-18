@@ -42,13 +42,26 @@ def get_model(profile=None, *, role: str | None = None):
     # one provider keeps the prefix cache warm across agent-loop iterations
     # (measured 2026-06-12: cached=99.6%, -81% per-call cost on z-ai/glm-5.1).
     routing = None
-    pin = os.getenv("OPENROUTER_PROVIDER_PIN", "").strip()
+    # Per-model provider pin (from config/models.yaml) takes precedence over the
+    # global OPENROUTER_PROVIDER_PIN env. Roles whose model profile omits
+    # provider_pin fall back to the env default (the LLM_MODEL + pin "default
+    # combination"). If neither is set, no pin is applied and OpenRouter
+    # load-balances across the model's serving providers.
+    profile_pin = (getattr(profile, "provider_pin", None) or "").strip()
+    pin = profile_pin or os.getenv("OPENROUTER_PROVIDER_PIN", "").strip()
+    # Default to allow_fallbacks=True: the pinned provider is only the *preferred*
+    # order. If its endpoint is briefly unavailable (or an aliased snapshot like
+    # tencent/hy3 -> tencent/hy3-20260706 has no live pinned endpoint), OpenRouter
+    # routes to the other providers serving the same model instead of failing with
+    # HTTP 404 "No endpoints found". Set OPENROUTER_ALLOW_FALLBACKS=false to restore
+    # strict single-provider pinning (availability traded for cache warmth).
+    allow_fallbacks = os.getenv("OPENROUTER_ALLOW_FALLBACKS", "true").strip().lower() != "false"
     if pin:
         routing = OpenRouterRouting(
             order=[p.strip() for p in pin.split(",") if p.strip()],
-            allow_fallbacks=False,
+            allow_fallbacks=allow_fallbacks,
         )
-        print(f"[INFO] OpenRouter provider pin: {pin} (fallbacks off)")
+        print(f"[INFO] OpenRouter provider pin: {pin} (allow_fallbacks={allow_fallbacks})")
 
     print(f"[INFO] Using pi_ai Model: {model_id}")
     print(f"[INFO] API URL: {base_url}")
