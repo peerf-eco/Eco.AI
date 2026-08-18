@@ -54,7 +54,7 @@ DEMO_PROJECT = PROJECT_ROOT / "e2e_demo_project"
 # Try to find eco-cli with Linux priority
 ECO_CLI = None
 for path in [
-    os.environ.get("ECO_CLI_BIN"),
+    os.environ.get("ECO_CLI_PATH"),
     str(PROJECT_ROOT.parent.parent / "eco-cli-linux" / "eco-cli"),  # Linux ELF (preferred)
     str(PROJECT_ROOT.parent.parent / "eco-cli-windows" / "eco-cli.exe"),  # Windows .exe (fallback)
     "eco-cli",  # System PATH

@@ -33,7 +33,7 @@ from pathlib import Path
 # Try to find eco-cli with Linux priority
 ECO_CLI = None
 for path in [
-    os.environ.get("ECO_CLI_BIN"),
+    os.environ.get("ECO_CLI_PATH"),
     "../../eco-cli-linux/eco-cli",  # Linux ELF (preferred)
     "../../eco-cli-windows/eco-cli.exe",  # Windows .exe (fallback)
     "eco-cli",  # System PATH

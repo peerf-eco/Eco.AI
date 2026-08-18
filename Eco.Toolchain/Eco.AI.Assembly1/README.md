@@ -10,32 +10,51 @@ be selected per role.
 
 ### Option 1: Docker Compose (Recommended)
 ```bash
+# Prerequisites on the host (these run on the host, NOT inside the container):
+#   - Python 3.11+
+#   - Docker Engine / Docker Desktop
+#   - eco-cli and eco-wizard executables (see step 3)
+# Note: the frontend is built inside the container by `docker compose build`,
+# so a host `npm install` is NOT required for this option.
+
 # 1. Copy environment template
 cp env.example .env
 
-# 2. Edit .env with your API key and settings
-#    Set OPENAI_API_KEY, OPENROUTER_URL, etc.
+# 2. Edit .env with your settings. At minimum set:
+#      OPENAI_API_KEY  - OpenRouter API key (used by build_marketplace_index.py embeddings)
+#      ECO_API_TOKEN   - Eco marketplace token (used by fetch_marketplace.py)
+#      ECO_CLI_PATH    - absolute path to the eco-cli binary (or put eco-cli on PATH)
+#      ECO_WIZARD_PATH - absolute path to the eco-wizard binary (or put eco-wizard on PATH)
+#    OPENROUTER_URL defaults to https://openrouter.ai/api/v1 if unset.
 
-# 3. Prepare executables (outside container, on host)
+# 3. Prepare executables (on host, outside container)
 #    Place executables in these directories relative to project root:
-#    - ../eco-cli-linux/eco-cli          (Linux ELF, preferred)
-#    - ../eco-cli-windows/eco-cli.exe    (Windows .exe, fallback)
-#    - ../eco-wizard-linux/eco-wizard    (Linux ELF, preferred)
-#    - ../eco-wizard-windows/eco-wizard.exe (Windows .exe, fallback)
+#    - ../eco-cli-linux/eco-cli            (Linux ELF, preferred)
+#    - ../eco-cli-windows/eco-cli.exe      (Windows .exe, fallback via wine)
+#    - ../eco-wizard-linux/eco-wizard      (Linux ELF, preferred)
+#    - ../eco-wizard-windows/eco-wizard.exe (Windows .exe, fallback via wine)
+#    Or skip this and set ECO_CLI_PATH / ECO_WIZARD_PATH in .env (see step 2).
 
-# 4. Run initialization scripts (on host, before starting container)
+# 4. Set up the host Python environment for the initialization scripts
+#    build_marketplace_index.py imports agent.rag.* (sqlite-vec, tree-sitter,
+#    httpx, openai, python-dotenv), so the agents' dependencies must be installed.
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r agent/requirements.txt
 
-# set env variable for current machine eco-cli file. for macos use examples:
-nano ~./zshrc
-# add 
-export ECO_CLI_BIN="path to eco-cli on this PC"
+# 5. Export the variables the host scripts read from the shell, then run them
+#    (fetch_marketplace.py reads ECO_API_TOKEN/ECO_CLI_PATH from the shell env,
+#     so export them; build_marketplace_index.py loads .env itself via dotenv)
 export ECO_API_TOKEN="token generated in ecoos.dev marketplace (component registry)"
+export ECO_CLI_PATH="path to eco-cli on this PC"
 
-# when run the script
 python scripts/fetch_marketplace.py
 python scripts/build_marketplace_index.py
 
-# 5. Start the application
+# 6. (Optional but recommended) Preflight check validates .env, index, cache, executables
+python scripts/dev_preflight.py
+
+# 7. Start the application (builds api + frontend images, mounts the index/cache/executables)
 docker compose up --build
 
 # Access at:
