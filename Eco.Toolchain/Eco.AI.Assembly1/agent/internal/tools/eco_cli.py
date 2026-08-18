@@ -26,6 +26,7 @@ What we keep from the old wrappers:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -66,6 +67,34 @@ def _truncate(text: str, label: str) -> str:
     return f"{head}\n\n... ({label} truncated, {elided} bytes elided) ...\n\n{tail}"
 
 
+def _resolve_cli_path(cli_path: Optional[Path]) -> Optional[Path]:
+    """Resolve a usable eco-cli binary.
+
+    Order: explicit arg → ECO_CLI_PATH env → repo-relative linux/windows
+    builds → eco-cli on PATH. Returns None only if nothing is found, in which
+    case the tool still returns an actionable error (the marketplace_cache
+    already holds the DEVKITs read-only, so a pull is often unnecessary).
+    """
+    candidates: list[Path] = []
+    if cli_path is not None:
+        candidates.append(Path(cli_path))
+    env_path = os.getenv("ECO_CLI_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
+    repo_root = Path(__file__).resolve().parents[3]
+    candidates.extend([
+        repo_root / "eco-cli-linux" / "eco-cli",
+        repo_root / "eco-cli-windows" / "eco-cli.exe",
+    ])
+    for c in candidates:
+        if c and c.is_file():
+            return c
+    on_path = shutil.which("eco-cli") or shutil.which("eco-cli.exe")
+    if on_path:
+        return Path(on_path)
+    return None
+
+
 def _eco_cli(
     args: _EcoCliArgs,
     cli_path: Optional[Path],
@@ -73,7 +102,16 @@ def _eco_cli(
 ) -> ToolResult:
     if cli_path is None:
         return ToolResult(
-            content="eco_cli: ECO_CLI_PATH unset — no CLI binary configured.",
+            content=(
+                "eco_cli: no CLI binary configured (ECO_CLI_PATH unset and no "
+                "eco-cli found at the repo-relative linux/windows build or on "
+                "PATH). Set ECO_CLI_PATH to the binary, or run "
+                "scripts/fetch_marketplace.py to populate marketplace_cache. "
+                "Note: the full DEVKIT headers for every published component "
+                "are ALREADY present read-only under marketplace_cache/<Name>/"
+                "SharedFiles/ — you can read them directly via grep/glob/read "
+                "without pulling."
+            ),
             is_error=True,
         )
 
@@ -156,12 +194,15 @@ def make_eco_cli_tool(
     """Raw eco-cli passthrough. Binary path + wine prefix come from env.
 
     Args:
-        cli_path: ECO_CLI_PATH resolved to a concrete file. None if unset
-                  (every call then returns is_error).
+        cli_path: ECO_CLI_PATH resolved to a concrete file. If None/unset,
+                  we still try repo-relative and PATH fallbacks; only if all
+                  fail does every call return is_error (with an actionable
+                  message pointing at the read-only marketplace_cache).
         project_dir: cwd for invocations that write artefacts (`pull` writes
                      the DEVKIT archive into cwd). Pass None for read-only
                      callers (find / help / version).
     """
+    resolved = _resolve_cli_path(cli_path)
     return EcoTool(
         name="eco_cli",
         description=(
@@ -177,7 +218,7 @@ def make_eco_cli_tool(
             "raw stdout/stderr/rc — you parse the JSON yourself."
         ),
         args_schema=_EcoCliArgs,
-        execute=lambda a: _eco_cli(a, cli_path, project_dir),
+        execute=lambda a: _eco_cli(a, resolved, project_dir),
     )
 
 

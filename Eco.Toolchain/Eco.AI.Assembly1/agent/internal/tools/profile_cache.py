@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -48,6 +49,61 @@ _DEFAULT_CACHE_ROOT = Path(os.environ.get(
     "MARKETPLACE_CACHE_ROOT",
     "/app/marketplace_cache",
 ))
+
+
+_RE_IID = re.compile(r"(IID_[A-Za-z0-9_]+)\s*(?:=)")
+_RE_FACTORY = re.compile(r"GetIEcoComponentFactoryPtr_[A-Fa-f0-9]{32}")
+_RE_VMETHOD = re.compile(r"ECOCALLMETHOD\s+\*?\s*([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _scan_sharedfiles(cache_root: Path, name: str, cid: str) -> str:
+    """Build a compact CONTRACT CARD from a component's SharedFiles.
+
+    Returns IIDs, the static factory symbol, the vtable method names of every
+    ``IEco*.h`` interface, and the header layout. This lets the architect get
+    the exact contract without raw-reading 12 KB Cyrillic-heavy headers (which
+    the context builder would later elide).
+    """
+    sf = cache_root / name / "SharedFiles"
+    if not sf.is_dir():
+        return ""
+
+    headers = sorted(p.name for p in sf.glob("*.h"))
+    iids: list[str] = []
+    factory: Optional[str] = None
+    vmethods: dict[str, list[str]] = {}
+    seen_methods: set[str] = set()
+
+    for h in sorted(sf.glob("*.h")):
+        try:
+            text = h.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            continue
+        for m in _RE_IID.finditer(text):
+            if m.group(1) not in iids:
+                iids.append(m.group(1))
+        fm = _RE_FACTORY.search(text)
+        if fm and factory is None:
+            factory = fm.group(0)
+        if h.name.startswith("IEco") and h.name.endswith(".h"):
+            for vm in _RE_VMETHOD.finditer(text):
+                meth = vm.group(1)
+                if meth in ("ECOCALLMETHOD",):
+                    continue
+                if meth not in seen_methods:
+                    seen_methods.add(meth)
+                    vmethods.setdefault(h.name, []).append(meth)
+
+    lines = ["", "### Contract card (from SharedFiles/)", ""]
+    lines.append(f"- **factory**: `{factory or ('GetIEcoComponentFactoryPtr_' + cid)}`")
+    if iids:
+        lines.append(f"- **IIDs**: {', '.join('`' + i + '`' for i in iids)}")
+    lines.append(f"- **SharedFiles layout**: {', '.join(headers)}")
+    for hname, methods in vmethods.items():
+        capped = methods[:40]
+        lines.append(f"- **{hname} vtable**: {', '.join(capped)}"
+                     + (" …" if len(methods) > 40 else ""))
+    return "\n".join(lines)
 
 
 class _ProfileArgs(BaseModel):
@@ -141,6 +197,7 @@ def _read_profile(args: _ProfileArgs, cache_root: Path) -> ToolResult:
     # Markdown body so the model can parrot the values back verbatim into
     # its next eco_cli pull call. Details mirror the body as a structured
     # dict for any downstream consumer.
+    card = _scan_sharedfiles(resolved_root, args.name, cid)
     body_lines = [
         f"## Component profile: {args.name}",
         "",
@@ -151,6 +208,8 @@ def _read_profile(args: _ProfileArgs, cache_root: Path) -> ToolResult:
         "Next step: eco_cli(['pull','-c','" + cid + "',"
         "'-v','" + version_name + "','-fid=" + str(devkit_file_id) + "']).",
     ]
+    if card:
+        body_lines.append(card)
     return ToolResult(
         content="\n".join(body_lines),
         details={

@@ -19,7 +19,12 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from agent.internal.eco_agent import EcoTool, ToolResult
-from agent.internal.tools.common import ensure_inside, resolve_inside, decode_text
+from agent.internal.tools.common import (
+    ensure_inside,
+    ensure_inside_any,
+    resolve_inside,
+    decode_text,
+)
 
 
 _READ_FILE_MAX_BYTES = 256 * 1024  # 256 KB — header files + small sources

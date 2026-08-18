@@ -19,17 +19,30 @@ Source-of-truth priority is:
 3. `ecoPackage.json`
 4. `DesignFiles/*.fodt` only as documentation; ignore placeholder marketplace metadata and interface `uguid(...)` values.
 
-### Framework packages
+### Framework packages (MANDATORY base + minimum stack)
 
-Include framework packages according to actual component requirements:
+`Eco.Core1` is the MANDATORY base of EVERY project (not just buildable
+components). It provides `IEcoBase1.h`, `IEcoUnknown`, `IEcoComponentFactory`,
+`IEcoSystem1.h`, and `ErrEcoCodes.h` — the core ACOM types and macros that
+replace standard C primitives.
 
-- `Eco.Core1`: `IEcoBase1.h`, `IEcoUnknown`, `IEcoComponentFactory`, `IEcoSystem1.h`, and `ErrEcoCodes.h`. Include it whenever the plan produces a buildable C component.
-- `Eco.InterfaceBus1`: interface bus services.
-- `Eco.MemoryManger1`: memory manager services. Preserve the SDK spelling `Manger`.
-- `Eco.FileSystemManagement1`: filesystem services.
-- `Eco.System1`: system information and command-argument services only when required.
+Every buildable component or application MUST also include the minimum required
+stack (these are REQUIRED, not optional — do not omit them, and do not add them
+"by rote" either; they are the baseline the contract depends on):
 
-The interface bus, memory manager, and filesystem packages are typical for a normal bus-registered ACOM component, but must not be added by rote.
+- `Eco.InterfaceBus1`: interface bus services (component discovery / registration).
+- `Eco.MemoryManager1`: memory manager services (core allocation). NOTE the
+  correct spelling is `Eco.MemoryManager1` (with double `n` in `Manager`) —
+  do NOT use a misspelling such as `MemoryManger`.
+- `Eco.FileSystemManagement1`: filesystem services — include when the component
+  performs file I/O.
+- `Eco.System1`: system information and command-argument services, and the
+  unified `EcoMain` entry point for cross-platform unikernel applications —
+  include when building an application.
+
+Include ONLY the `SharedFiles/` subfolder of each framework/dependency package
+(the public API). Never read or compile another package's `HeaderFiles/` or
+`SourceFiles/`.
 
 ### ACOM C conventions
 
@@ -42,7 +55,8 @@ The interface bus, memory manager, and filesystem packages are typical for a nor
 - Interface methods return `int16_t`; outputs use `/* out */` pointers.
 - Reference counting is manual through `QueryInterface`, `AddRef`, and `Release`.
 - When `m_cRef` reaches zero, release resources through the component's delete path and allocator.
-- Preserve exact EcoOS spellings, including `MemoryManger1`.
+- Preserve exact EcoOS spellings. The memory-manager package is
+  `Eco.MemoryManager1` (double `n` in `Manager`) — never `MemoryManger1`.
 - Math C89 methods are lowercase: `pow`, `sqrt`, `sin`, and `cos`.
 
 ### Project layout

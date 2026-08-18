@@ -59,6 +59,25 @@ def stitch_source_files(
     return "".join(sections) or "(no C/C++ source files available)"
 
 
+def _core1_sharedfiles(roots: Iterable[Path]) -> Path | None:
+    """Locate ``Eco.Core1/SharedFiles`` within the given source roots.
+
+    Eco.Core1 is the constant ACOM base (core types, ``IEcoUnknown``,
+    ``IEcoBase1``, ``IEcoComponentFactory``, ``IEcoSystem1``, ``ErrEcoCodes``).
+    Stitching it into the static prompt tail makes it a stable prefix, which
+    maximizes provider KV-cache reuse across turns and across C tasks — far
+    cheaper than the old full-marketplace stitch that blew the context window.
+    """
+    for root in roots:
+        candidate = Path(root) / "Eco.Core1" / "SharedFiles"
+        if candidate.is_dir():
+            return candidate.resolve()
+        resolved = Path.cwd() / root / "Eco.Core1" / "SharedFiles"
+        if resolved.is_dir():
+            return resolved.resolve()
+    return None
+
+
 def build_static_system_prompt(
     role_prompt: str,
     *,
@@ -75,14 +94,15 @@ def build_static_system_prompt(
         ),
     )
     header = header_file.read_text(encoding="utf-8") if header_file.exists() else ""
-    # NOTE: The full marketplace cache used to be stitched into every system
-    # prompt here (~80k tokens of component headers). That blew the context
-    # window and is redundant — agents discover components on demand via the
-    # sqlite-vec RAG index / search_marketplace tool instead. Static injection
-    # is disabled for now; a curated, much shorter context (rules / AGENT.md)
-    # will be wired in here later. Keep the plumbing (source_roots / max_bytes)
-    # intact so it can be re-enabled or swapped.
+    # Curated, constant base: stitch Eco.Core1/SharedFiles into the static
+    # prompt tail. This is the always-needed ACOM foundation (core types,
+    # interfaces, error codes, macros) — a stable prefix that maximizes
+    # provider KV-cache hits. Unlike the old full-marketplace stitch (which
+    # blew the window), this is small and does not change per turn.
+    core1 = _core1_sharedfiles(source_roots)
     source = ""
+    if core1 is not None:
+        source = stitch_source_files([core1], max_bytes=min(max_source_bytes, 120_000))
     domain = domain_knowledge or load_acom_domain()
     stable_tools = tool_contract or load_tool_contract()
     return (
@@ -90,7 +110,8 @@ def build_static_system_prompt(
         f"=== STATIC ACOM DOMAIN KNOWLEDGE ===\n{domain.rstrip()}\n\n"
         f"=== STATIC TOOL CONTRACT ===\n{stable_tools.rstrip()}\n\n"
         f"=== ROLE INSTRUCTIONS ===\n{role_prompt.rstrip()}\n\n"
-        f"=== IMMUTABLE SOURCE CODEBASE ===\n{source}"
+        f"=== IMMUTABLE SOURCE CODEBASE (curated Eco.Core1 base) ===\n"
+        f"{source or '(Eco.Core1 SharedFiles not found in source_roots)'}"
     )
 
 

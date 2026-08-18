@@ -330,8 +330,8 @@ makes OpenRouter 404. Each role's `per_query_tokens` budget is sent
 as `max_tokens`; a context-window-aware clamp in
 `agent/pi_ai/providers/openai_completions.py` caps it to fit the model context once
 the system prompt is included, preventing HTTP 400 overflow. `harness.yaml:
-source_roots` / `max_source_bytes` (300000) are currently unused (see context
-injection below).
+source_roots` / `max_source_bytes` (300000) now drive the curated `Eco.Core1`
+stitch (see context injection below).
 
 Live vs baked config: `./agent`, `./backend`, and `./config` are bind-mounted into
 the api container, so edits apply on reload / next request. `eco_harness/` is still
@@ -462,18 +462,32 @@ system header              (config/prompts/acom_system_header.md)
 + STATIC ACOM DOMAIN KNOWLEDGE   (load_acom_domain)
 + STATIC TOOL CONTRACT           (load_tool_contract)
 + ROLE INSTRUCTIONS              (role/mode prompt + language/custom)
-+ IMMUTABLE SOURCE CODEBASE      (was the stitched marketplace cache)
++ IMMUTABLE SOURCE CODEBASE      (curated Eco.Core1 base)
 ```
 
-The `IMMUTABLE SOURCE CODEBASE` block historically contained the **entire stitched
-marketplace cache** (~80k tokens of component headers taken from
-`harness.yaml: source_roots`), injected into every role prompt. That both blew the
-context window (HTTP 400) and was redundant: components are discovered on demand via
+A curated, **constant** `Eco.Core1/SharedFiles` base (core ACOM types,
+`IEcoUnknown`, `IEcoBase1`, `IEcoComponentFactory`, `IEcoSystem1`, `ErrEcoCodes`,
+macros) is now stitched into this block from `source_roots`, capped at
+`min(max_source_bytes, 120000)`. It replaces the old full-marketplace stitch, which
+injected ~80k tokens of every component header into every prompt, blew the context
+window (HTTP 400), and was redundant because components are discovered on demand via
 the sqlite-vec RAG index (`marketplace_index.sqlite`) and the `search_marketplace` /
-`eco-cli` tools. The static stitch is therefore **disabled** — `stitch_source_files`
-is commented out in `build_static_system_prompt`, so the block is empty. A curated,
-shorter context (rules / `AGENT.md`) will replace it later. The `source_roots` and
-`max_source_bytes` settings in `harness.yaml` are currently unused.
+`eco-cli` tools. The curated base is **constant across turns and tasks**, so it sits
+in the stable prompt prefix and maximizes provider KV-cache reuse. `source_roots` /
+`max_source_bytes` in `harness.yaml` now drive this stitch.
+
+Supporting changes that keep the architect fast and on-policy:
+
+- **C language skill** (`config/skills/languages/C.md`) injects the full ACOM/C89/MISRA
+  contract (EcoOS types, `IEcoMemoryAllocator1`-only allocation, UGUID byte format,
+  mandatory Dev-Kit boundary, minimum stack, file/function-header discipline) into
+  every C agent, so those conventions are no longer rediscovered from headers.
+- **`read_component_profile` Contract Card** — returns the CID, IIDs, the
+  `GetIEcoComponentFactoryPtr_<CID>` factory symbol, vtable method names, and the
+  `SharedFiles/` layout in one structured call, avoiding large raw header reads.
+- **`eco_cli`** now auto-resolves the binary (env → repo-relative linux/windows build
+  → `PATH`) and, when none is found, returns an actionable error noting the read-only
+  `marketplace_cache` already holds the needed headers.
 
 ## Working modes
 

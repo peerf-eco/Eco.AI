@@ -93,11 +93,11 @@ def _run_build(args: _BuildArgs, project_dir: Path, make_exe: Path) -> ToolResul
             is_error=True,
             details={"rc": proc.returncode, "subdir": str(subdir)},
         )
-    # On success the model only needs the fact — the full compiler chatter
-    # would otherwise live in the history and be replayed every iteration.
-    # The log tail stays available in details (UI/debugging channel).
+    # On success, surface the (already truncated) build log so the coder can
+    # confirm what compiled. The 8 KB cap keeps compiler chatter from being
+    # replayed unbounded in history; the full tail also stays in details.
     return ToolResult(
-        content=f"BUILD OK in '{args.project_subdir}' (rc=0).",
+        content=f"BUILD OK in '{args.project_subdir}' (rc=0).\n{combined}",
         details={"rc": 0, "subdir": str(subdir), "log_tail": combined[-2000:]},
     )
 

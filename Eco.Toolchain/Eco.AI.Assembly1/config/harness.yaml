@@ -3,7 +3,7 @@ default_platform:
   os: Linux
   arch: x86_64
 source_max_bytes: 300000
-dynamic_tail_items: 5
+dynamic_tail_items: 12
 max_hops: 8
 eco_wizard_path: null
 eco_cli_path: null
