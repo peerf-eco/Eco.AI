@@ -23,7 +23,7 @@ def test_user_message_with_string_content():
 
 def test_assistant_message_with_mixed_content():
     m = AssistantMessage(
-        api="openai-completions", provider="openrouter", model="kimi",
+        api="openai-completions", provider="openrouter", model="hy3",
         content=[
             ThinkingContent(thinking="hmm..."),
             TextContent(text="answer"),

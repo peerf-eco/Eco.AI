@@ -29,7 +29,7 @@ def get_model(profile=None, *, role: str | None = None):
         role_model
         or configured_model
         or os.getenv("LLM_MODEL")
-        or "moonshotai/kimi-k2-thinking"
+        or "tencent/hy3-preview"
     )
 
     if not api_key:
@@ -53,12 +53,26 @@ def get_model(profile=None, *, role: str | None = None):
     print(f"[INFO] Using pi_ai Model: {model_id}")
     print(f"[INFO] API URL: {base_url}")
 
+    # Resolve the model's context window so max_tokens can be clamped to fit
+    # (the system prompt routinely injects a large stitched-source codebase,
+    # which otherwise overflows the context and yields HTTP 400).
+    context_window = 262_144
+    try:
+        from agent.pi_ai.models import known_models
+        for _m in known_models():
+            if _m.id == model_id:
+                context_window = _m.contextWindow or context_window
+                break
+    except Exception:
+        pass
+
     return Model(
         id=model_id,
         name=model_id,
         api="openai-completions",
         provider="openrouter",
         baseUrl=base_url.rstrip("/"),
+        contextWindow=context_window,
         reasoning=getattr(profile, "reasoning", "medium") != "minimal",
         cost=ModelCost(),
         headers={"Authorization": f"Bearer {api_key}"},

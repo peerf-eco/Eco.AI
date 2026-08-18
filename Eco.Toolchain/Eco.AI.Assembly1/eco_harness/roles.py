@@ -90,7 +90,7 @@ def _static_prompt(
         role_prompt,
         source_roots=(
             config.source_roots
-            or [marketplace_cache_root],
+            or [marketplace_cache_root]
         ),
         tool_contract=tool_contract,
         max_source_bytes=config.source_max_bytes,

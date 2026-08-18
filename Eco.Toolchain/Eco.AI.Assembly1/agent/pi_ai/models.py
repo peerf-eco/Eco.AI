@@ -30,8 +30,8 @@ def _openrouter_base() -> str:
 
 # Pre-register the models we know we need.
 _register(Model(
-    id="moonshotai/kimi-k2-thinking",
-    name="Kimi K2.6 Thinking",
+    id="tencent/hy3-preview",
+    name="hy3",
     api="openai-completions",
     provider="openrouter",
     baseUrl=_openrouter_base(),
@@ -47,8 +47,8 @@ _register(Model(
 ))
 
 _register(Model(
-    id="zai-org/glm-4.5",
-    name="GLM 4.5",
+    id="deepseek/deepseek-v4-flash-0731",
+    name="DeepSeek V4 Flash",
     api="openai-completions",
     provider="openrouter",
     baseUrl=_openrouter_base(),

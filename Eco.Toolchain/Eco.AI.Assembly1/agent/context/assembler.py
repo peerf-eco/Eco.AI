@@ -75,7 +75,14 @@ def build_static_system_prompt(
         ),
     )
     header = header_file.read_text(encoding="utf-8") if header_file.exists() else ""
-    source = stitch_source_files(source_roots, max_bytes=max_source_bytes)
+    # NOTE: The full marketplace cache used to be stitched into every system
+    # prompt here (~80k tokens of component headers). That blew the context
+    # window and is redundant — agents discover components on demand via the
+    # sqlite-vec RAG index / search_marketplace tool instead. Static injection
+    # is disabled for now; a curated, much shorter context (rules / AGENT.md)
+    # will be wired in here later. Keep the plumbing (source_roots / max_bytes)
+    # intact so it can be re-enabled or swapped.
+    source = ""
     domain = domain_knowledge or load_acom_domain()
     stable_tools = tool_contract or load_tool_contract()
     return (

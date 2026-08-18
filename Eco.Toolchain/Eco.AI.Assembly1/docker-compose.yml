@@ -52,6 +52,7 @@ services:
       # Монтируем код для разработки (hot reload)
       - ./agent:/app/agent
       - ./backend:/app/backend
+      - ./config:/app/config:ro
       - ./.eco-harness:/app/.eco-harness
     ports:
       - "127.0.0.1:8100:8000"

@@ -29,7 +29,7 @@ def _sse(*payloads: str) -> str:
 
 def _model(thinking_fmt: str = "openrouter") -> Model:
     return Model(
-        id="moonshotai/kimi-k2-thinking", name="kimi",
+        id="tencent/hy3-preview", name="hy3",
         api="openai-completions", provider="openrouter",
         baseUrl="https://openrouter.ai/api/v1",
         cost=ModelCost(),

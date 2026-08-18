@@ -440,7 +440,15 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     return () => {
       intentionalClose.current = true;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
+      // Null the ref BEFORE closing so a StrictMode/dev remount (or fast
+      // refresh) sees a clean ref and opens a fresh socket instead of
+      // bailing on the still-CONNECTING one. Otherwise the first mount's
+      // socket is torn down while connecting and the second mount's
+      // connect() guard short-circuits, leaving the UI permanently
+      // disconnected ("WebSocket closed before the connection is established").
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
     };
   }, [connect]);
 

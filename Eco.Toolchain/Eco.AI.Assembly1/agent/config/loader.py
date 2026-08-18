@@ -174,7 +174,7 @@ def load_config(root: Path | None = None) -> HarnessConfig:
     }
     if "default" not in model_profiles:
         model_profiles["default"] = ModelProfile(
-            id=os.getenv("LLM_MODEL", "moonshotai/kimi-k2-thinking"),
+            id=os.getenv("LLM_MODEL", "tencent/hy3-preview"),
         )
     role_specs = {
         name: RoleSpec(**value)

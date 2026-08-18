@@ -1,17 +1,17 @@
 models:
   default:
-    id: moonshotai/kimi-k2-thinking
+    id: tencent/hy3
     provider: openrouter
     reasoning: high
   reasoning_heavy:
-    id: moonshotai/kimi-k2-thinking
+    id: tencent/hy3
     provider: openrouter
     reasoning: high
   coding_balanced:
-    id: anthropic/claude-sonnet-4
+    id: tencent/hy3
     provider: openrouter
     reasoning: medium
   cheap_fast:
-    id: openai/gpt-4o-mini
+    id: tencent/hy3
     provider: openrouter
     reasoning: low

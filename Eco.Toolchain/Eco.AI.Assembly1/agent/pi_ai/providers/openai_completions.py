@@ -34,6 +34,17 @@ from agent.pi_ai.utils.event_stream import parse_sse
 from agent.pi_ai.utils.json_parse import parse_strict
 
 
+# Conservative margin kept free of the context window (system overhead,
+# tool schemas, reasoning scratch, etc.) when clamping max_tokens.
+_CTX_SAFETY_MARGIN = 4_000
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate (~4 chars/token). Good enough for a safety clamp
+    that only ever *reduces* the requested output budget."""
+    return max(1, len(text or "") // 4)
+
+
 # ── Request body assembly ────────────────────────────────────────────────────
 def _build_request_body(
     model: Model,
@@ -52,12 +63,34 @@ def _build_request_body(
     compat = model.compat or OpenAICompletionsCompat()
 
     # max-tokens field name varies by provider
+    max_field = compat.maxTokensField or "max_tokens"
     if isinstance(opts, StreamOptions) and opts.maxTokens:
-        field = compat.maxTokensField or "max_tokens"
-        body[field] = opts.maxTokens
+        body[max_field] = opts.maxTokens
     elif model.maxTokens:
-        field = compat.maxTokensField or "max_tokens"
-        body[field] = model.maxTokens
+        body[max_field] = model.maxTokens
+
+    # Clamp the requested output tokens so they fit the model's context
+    # window *after* the (often very large, stitched-source) system prompt is
+    # included. Without this, a role whose per_query_tokens budget exceeds the
+    # remaining context (e.g. 200k requested vs ~80k of injected source inside
+    # a 262k window) triggers HTTP 400 "maximum context length exceeded".
+    if max_field in body and model.contextWindow:
+        # body["messages"] already includes the system prompt as its first
+        # message (see _prepend_system), so estimate from there alone to avoid
+        # double-counting it.
+        est_input = 0
+        for _msg in body.get("messages", []):
+            _content = _msg.get("content")
+            if isinstance(_content, str):
+                est_input += _estimate_tokens(_content)
+            elif isinstance(_content, list):
+                for _part in _content:
+                    if isinstance(_part, dict) and isinstance(_part.get("text"), str):
+                        est_input += _estimate_tokens(_part["text"])
+        headroom = model.contextWindow - est_input - _CTX_SAFETY_MARGIN
+        if headroom < 0:
+            headroom = 0
+        body[max_field] = min(int(body[max_field]), headroom)
 
     if opts and opts.temperature is not None:
         body["temperature"] = opts.temperature

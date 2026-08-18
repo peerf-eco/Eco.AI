@@ -285,6 +285,22 @@ ECO_WIZARD_PATH=/opt/eco-wizard-linux/eco-wizard
 | `ui.yaml` | UI defaults and selector options |
 | `security.yaml` | security policy defaults |
 
+Model selection (important): the working chat model is `tencent/hy3` — the older
+`tencent/hy3-preview` slug was removed from OpenRouter's standard routing (it now
+only exists on Tencent's own TokenHub endpoint). `OPENROUTER_PROVIDER_PIN=tencent`
+is set with `allow_fallbacks=False`, so **every role's `models.yaml` profile must
+resolve to a `tencent`-provider model**; pinning a non-tencent model (e.g.
+`deepseek/...`) makes OpenRouter 404. Each role's `per_query_tokens` budget is sent
+as `max_tokens`; a context-window-aware clamp in
+`agent/pi_ai/providers/openai_completions.py` caps it to fit the model context once
+the system prompt is included, preventing HTTP 400 overflow. `harness.yaml:
+source_roots` / `max_source_bytes` (300000) are currently unused (see context
+injection below).
+
+Live vs baked config: `./agent`, `./backend`, and `./config` are bind-mounted into
+the api container, so edits apply on reload / next request. `eco_harness/` is still
+`COPY`'d into the image, so edits there require `docker compose build api`.
+
 Precedence is:
 
 ```text
@@ -375,18 +391,46 @@ config/skills/<skill>/SKILL.md
 agent/skills/<skill>.md
 ```
 
-Language skills belong in `config/skills/languages/<language>.md`. Stable
-prompt changes belong in `config/prompts/`; workspace-specific instructions
-belong in `.eco-harness/`.
+  Language skills belong in `config/skills/languages/<language>.md`. Stable
+  prompt changes belong in `config/prompts/`; workspace-specific instructions
+  belong in `.eco-harness/`.
+
+## Initial context injection
+
+Every role's system prompt is assembled by
+`agent/context/assembler.py::build_static_system_prompt` in this order:
+
+```text
+system header              (config/prompts/acom_system_header.md)
++ STATIC ACOM DOMAIN KNOWLEDGE   (load_acom_domain)
++ STATIC TOOL CONTRACT           (load_tool_contract)
++ ROLE INSTRUCTIONS              (role/mode prompt + language/custom)
++ IMMUTABLE SOURCE CODEBASE      (was the stitched marketplace cache)
+```
+
+The `IMMUTABLE SOURCE CODEBASE` block historically contained the **entire stitched
+marketplace cache** (~80k tokens of component headers taken from
+`harness.yaml: source_roots`), injected into every role prompt. That both blew the
+context window (HTTP 400) and was redundant: components are discovered on demand via
+the sqlite-vec RAG index (`marketplace_index.sqlite`) and the `search_marketplace` /
+`eco-cli` tools. The static stitch is therefore **disabled** — `stitch_source_files`
+is commented out in `build_static_system_prompt`, so the block is empty. A curated,
+shorter context (rules / `AGENT.md`) will replace it later. The `source_roots` and
+`max_source_bytes` settings in `harness.yaml` are currently unused.
 
 ## Working modes
 
-The UI mode selector and CLI support:
+The UI mode selector and CLI support (defined in `config/modes.yaml`):
+`create`, `migrate`, `test`, `review`. There is **no standalone `plan` mode** —
+planning is the first phase of the `create` pipeline, not a separate mode.
 
-- `create` or `/create` — create an application/component from scratch
-- `migrate` or `/migrate` — analyze and migrate an existing codebase to ACOM
-- `test` or `/test` — run the read-only testing agent
-- `review` or `/review` — run the read-only ACOM style/correctness reviewer
+- `create` — architect plans → **human plan approval** → coder ↔ tester build &
+  runtime-test. Even in `create` mode a human must approve the plan: the architect
+  emits `plan_review_required` and the server waits for the user's `plan_decision`
+  before the coder runs (`backend/server.py`).
+- `migrate` — analyze and migrate an existing codebase to ACOM.
+- `test` — read-only testing agent.
+- `review` — read-only ACOM style/correctness reviewer.
 
 Each mode selects its own system prompt and capability set from
 `config/modes.yaml`.
