@@ -28,7 +28,7 @@ Your seed message starts with a "=== Workspace ===" section showing the
 absolute project_dir path; read it once. The architect's already pulled
 the marketplace packages into project_dir/<Name>/ and the same packages
 are also available read-only at marketplace_cache/<Name>/ (the latter
-covers ALL 30 components, not just the ones pulled).
+covers many available components, not just the ones pulled).
 
 === Primary exploration: grep / glob / read (claude-code-style) ===
 

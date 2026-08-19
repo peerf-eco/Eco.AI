@@ -1,14 +1,36 @@
 modes:
-  create:
-    prompt: prompts/modes/create.md
+  # Default mode. Deterministic plan→approve→implement→test loop. A short
+  # intent gate keeps plain chat questions out of the build pipeline.
+  auto:
+    prompt: prompts/modes/auto.md
     roles: [architect, coder, tester]
+    pipeline: true
     capabilities:
       - marketplace_assembly
       - eco_wizard_generation
       - build_and_runtime_testing
+  # Planning only — research, design, and produce a PRD / closed plan. Never
+  # writes or builds code; no automatic pipeline (no HITM→coder→tester loop).
+  plan:
+    prompt: prompts/modes/plan.md
+    roles: [architect]
+    pipeline: false
+    capabilities:
+      - research_and_planning
+      - prd_generation
+  # Direct implementation by the coder role. Standalone — no architect handoff
+  # and no automatic test pipeline; the user drives each phase manually.
+  code:
+    prompt: prompts/modes/code.md
+    roles: [coder]
+    pipeline: false
+    capabilities:
+      - direct_implementation
+      - build_and_runtime_testing
   migrate:
     prompt: prompts/modes/migrate.md
     roles: [architect, coder, tester]
+    pipeline: true
     capabilities:
       - legacy_code_analysis
       - acom_contract_mapping
@@ -17,6 +39,7 @@ modes:
   test:
     prompt: prompts/modes/test.md
     roles: [tester]
+    pipeline: false
     capabilities:
       - read_only_code_inspection
       - runtime_testing
@@ -24,6 +47,7 @@ modes:
   review:
     prompt: prompts/modes/review.md
     roles: [reviewer]
+    pipeline: false
     capabilities:
       - read_only_code_inspection
       - acom_style_review

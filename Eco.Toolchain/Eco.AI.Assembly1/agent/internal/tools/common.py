@@ -2,6 +2,7 @@
 from __future__ import annotations
 import re
 from pathlib import Path
+from typing import Optional
 
 _CID_RE     = re.compile(r"^[0-9A-F]{32}$")
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
@@ -52,6 +53,71 @@ def resolve_inside(project_dir: Path, args_path: str) -> Path:
 def ensure_inside_any(roots: list[Path], child: Path) -> bool:
     """True if `child` resolves inside ANY of `roots`."""
     return any(ensure_inside(r, child) for r in roots)
+
+
+def resolve_inside_any(roots: list[Path], args_path: str) -> Optional[Path]:
+    """Resolve ``args_path`` against ``roots`` and return the absolute Path to
+    use, or ``None`` if it cannot be placed inside any root (e.g. an absolute
+    path that escapes every root, or a ``..`` breakout).
+
+    Acceptance rules, in order:
+      1. Absolute path — accepted only if it already sits inside a root
+         (otherwise ``None``).
+      2. Relative path whose FIRST segment equals the basename of a root
+         (e.g. ``marketplace_cache/...`` when ``/app/marketplace_cache`` is a
+         root) — anchor under that root, stripping the basename prefix. This
+         is what makes ``marketplace_cache/...`` work for ``list_dir`` /
+         ``read_file`` exactly as it does for ``grep`` / ``glob`` / ``read``.
+      3. Path that already resolves (from CWD) inside a root — returned as-is
+         for backwards compatibility with older prompts.
+      4. Otherwise — anchored under the first root (by convention project_dir).
+
+    ``..`` breakouts are rejected (return ``None``) at every step.
+    """
+    roots = [Path(r) for r in roots]
+    if not roots:
+        return None
+    p = Path(args_path)
+
+    if p.is_absolute():
+        rp = p.resolve(strict=False)
+        for root in roots:
+            try:
+                rp.relative_to(root.resolve(strict=False))
+                return rp
+            except ValueError:
+                continue
+        return None
+
+    # Rule (2): basename-prefix match against any root.
+    first_seg = p.parts[0] if p.parts else ""
+    for root in roots:
+        if root.name == first_seg:
+            remainder = Path(*p.parts[1:]) if len(p.parts) > 1 else Path()
+            cand = (root / remainder).resolve(strict=False)
+            try:
+                cand.relative_to(root.resolve(strict=False))
+                return cand
+            except ValueError:
+                return None
+
+    # Rule (3): backwards-compatible CWD-relative resolution.
+    cwd_cand = (Path.cwd() / p).resolve(strict=False)
+    for root in roots:
+        try:
+            cwd_cand.relative_to(root.resolve(strict=False))
+            return cwd_cand
+        except ValueError:
+            continue
+
+    # Rule (4): default anchor under the first root; reject breakouts.
+    cand = (roots[0] / p).resolve(strict=False)
+    try:
+        cand.relative_to(roots[0].resolve(strict=False))
+        return cand
+    except ValueError:
+        return None
+
 
 
 def decode_text(data: bytes) -> str:

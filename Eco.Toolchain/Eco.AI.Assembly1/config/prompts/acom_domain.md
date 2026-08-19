@@ -6,9 +6,9 @@ A single component has multiple ID forms and they are not interchangeable:
 
 - Marketplace CID: 32 uppercase hexadecimal characters without dashes. Use this for `eco-cli find -c` and `eco-cli pull -c`.
 - Hyphenated GUID: 8-4-4-4-12 form for display and documentation only.
-- `ecoPackage` `uguid`: 32 lowercase hexadecimal characters in dependency JSON.
-- C struct `UGUID`: brace-initialized header-internal representation.
-- `IID_*` and `uguid(...)`: interface identifiers, never component CIDs.
+- `ecoPackage` `cid`: 32 UPPERCASE hexadecimal characters in dependency JSON.
+- C struct `UGUID`: brace-initialized header-internal representation of the numeric identifier, in the form `{0x01, Length, {Data}}` — preamble `0x01`; `Length` = `0x04`/`0x08`/`0x10`/`0x20` for 32/64/128/256-bit (UGUID RULE, defined in the C-lang coder rules). A `/* Name IID = {GUID} */` comment precedes every IID/CID.
+- `IID_*`: interface identifiers, never component CIDs`; it is an interface identifier, not a component CID.
 - Package name: stable `Eco.AI.Engine1`-style name without a version suffix.
 - Folder suffix: SDK/package metadata, never part of the component name.
 
@@ -17,7 +17,7 @@ Source-of-truth priority is:
 1. `eco-cli` find/pull output
 2. downloaded `SharedFiles/Id*.h` CID macros
 3. `ecoPackage.json`
-4. `DesignFiles/*.fodt` only as documentation; ignore placeholder marketplace metadata and interface `uguid(...)` values.
+4. `DesignFiles/*.fodt` only should be used as documentation and when rag search tool is not available; ignore placeholder marketplace metadata and interface IID values. These UGUID formated numbers from design files are not authoritative.
 
 ### Framework packages (MANDATORY base + minimum stack)
 

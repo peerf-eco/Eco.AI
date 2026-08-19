@@ -22,7 +22,7 @@ from agent.internal.eco_agent import EcoTool, ToolResult
 from agent.internal.tools.common import (
     ensure_inside,
     ensure_inside_any,
-    resolve_inside,
+    resolve_inside_any,
     decode_text,
 )
 
@@ -71,8 +71,8 @@ class _WriteArgs(BaseModel):
 # ── Read-side tools ────────────────────────────────────────────────────────
 def _list_dir(args: _PathArgs, project_dir: Path, extra_roots: Optional[list[Path]] = None) -> ToolResult:
     roots = [project_dir, *(extra_roots or [])]
-    p = resolve_inside(project_dir, args.path)
-    if not ensure_inside_any(roots, p):
+    p = resolve_inside_any(roots, args.path)
+    if p is None or not ensure_inside_any(roots, p):
         return ToolResult(content=_outside_msg(args.path, project_dir), is_error=True)
     if not p.exists():
         return ToolResult(content=_missing_msg(args.path, p, project_dir, "does not exist"), is_error=True)
@@ -91,8 +91,8 @@ def _list_dir(args: _PathArgs, project_dir: Path, extra_roots: Optional[list[Pat
 
 def _read_file(args: _PathArgs, project_dir: Path, extra_roots: Optional[list[Path]] = None) -> ToolResult:
     roots = [project_dir, *(extra_roots or [])]
-    p = resolve_inside(project_dir, args.path)
-    if not ensure_inside_any(roots, p):
+    p = resolve_inside_any(roots, args.path)
+    if p is None or not ensure_inside_any(roots, p):
         return ToolResult(content=_outside_msg(args.path, project_dir), is_error=True)
     if not p.exists():
         return ToolResult(content=_missing_msg(args.path, p, project_dir, "does not exist"), is_error=True)
@@ -119,8 +119,8 @@ def _read_file(args: _PathArgs, project_dir: Path, extra_roots: Optional[list[Pa
 
 # ── Write-side tool ────────────────────────────────────────────────────────
 def _write_file(args: _WriteArgs, project_dir: Path) -> ToolResult:
-    p = resolve_inside(project_dir, args.path)
-    if not ensure_inside(project_dir, p):
+    p = resolve_inside_any([project_dir], args.path)
+    if p is None or not ensure_inside(project_dir, p):
         return ToolResult(content=_outside_msg(args.path, project_dir), is_error=True)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -135,11 +135,13 @@ def _write_file(args: _WriteArgs, project_dir: Path) -> ToolResult:
 
 # ── Factories ──────────────────────────────────────────────────────────────
 _PATH_HINT = (
-    "Paths are anchored at project_dir: pass them as project_dir-relative "
-    "(e.g. 'Eco.Math.C89/SharedFiles/IEcoMathC89.h'). Absolute paths and "
-    "legacy CWD-relative paths that already point inside project_dir are also "
-    "accepted. Do NOT pass '.' / '/' / '' to discover the workspace — read "
-    "the project_dir absolute path from the seed message instead."
+    "Paths are anchored at project_dir (or at marketplace_cache when the path "
+    "starts with 'marketplace_cache/'), so pass them as root-relative "
+    "(e.g. 'Eco.Math.C89/SharedFiles/IEcoMathC89.h' or "
+    "'marketplace_cache/Eco.System1/SharedFiles'). Absolute paths and legacy "
+    "CWD-relative paths that already point inside a root are also accepted. "
+    "Do NOT pass '.' / '/' / '' to discover the workspace — read the "
+    "project_dir absolute path from the seed message instead."
 )
 
 

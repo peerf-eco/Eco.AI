@@ -37,7 +37,7 @@ export function ChatInterface() {
   // Persist target selection after mount to avoid SSR mismatch.
   const [platform, setPlatform] = useState<PlatformOption>(DEFAULT_PLATFORM);
   const [language, setLanguage] = useState<ProgrammingLanguage>("C");
-  const [mode, setMode] = useState<WorkingMode>("create");
+  const [mode, setMode] = useState<WorkingMode>("auto");
   const [useWorktree, setUseWorktree] = useState(false);
   const [worktreeName, setWorktreeName] = useState("");
   useEffect(() => {
@@ -253,7 +253,9 @@ export function ChatInterface() {
                 aria-label="Working mode"
                 className="rounded-lg border border-white/[0.06] bg-white/[0.04] px-2 py-1.5 text-xs text-foreground/80"
               >
-                <option value="create">Create</option>
+                <option value="auto">Auto (loop)</option>
+                <option value="plan">Plan</option>
+                <option value="code">Code</option>
                 <option value="migrate">Migrate</option>
                 <option value="test">Test</option>
                 <option value="review">Review</option>

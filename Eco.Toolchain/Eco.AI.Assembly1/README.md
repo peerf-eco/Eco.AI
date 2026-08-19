@@ -491,19 +491,29 @@ Supporting changes that keep the architect fast and on-policy:
 
 ## Working modes
 
-The UI mode selector and CLI support (defined in `config/modes.yaml`):
-`create`, `migrate`, `test`, `review`. There is **no standalone `plan` mode** —
-planning is the first phase of the `create` pipeline, not a separate mode.
+The UI mode selector and CLI (defined in `config/modes.yaml`) choose which
+role(s) run and whether the automatic plan→implement→verify pipeline is engaged:
 
-- `create` — architect plans → **human plan approval** → coder ↔ tester build &
-  runtime-test. Even in `create` mode a human must approve the plan: the architect
-  emits `plan_review_required` and the server waits for the user's `plan_decision`
-  before the coder runs (`backend/server.py`).
-- `migrate` — analyze and migrate an existing codebase to ACOM.
+- `auto` (default) — the deterministic loop: **architect plans → human plan
+  approval (HITM) → coder ↔ tester build & runtime-test**. A lightweight intent
+  gate classifies each message first: plain questions are answered directly
+  (no pipeline), while a concrete coding task triggers the loop.
+- `plan` — architect only: research + PRD / closed plan. **No pipeline and no
+  coder hand-off** — the plan is surfaced as the final answer so you can approve
+  it later in `auto` / `code`.
+- `code` — coder only: direct implementation. **No architect pass and no
+  automatic test pipeline**; you drive each phase manually from the mode menu.
+- `migrate` — the same `auto` pipeline, but with a migration-focused system
+  prompt: analyze the existing codebase, divide it into reusable modules, map
+  each to ACOM component contracts, then incrementally refactor.
 - `test` — read-only testing agent.
 - `review` — read-only ACOM style/correctness reviewer.
 
-Each mode selects its own system prompt and capability set from
+In `auto` / `migrate` the architect emits `plan_review_required` and the server
+waits for your `plan_decision` before the coder runs (`backend/server.py`).
+`plan` / `code` / `test` / `review` load exactly one role with its profile and
+never auto-trigger the cross-role pipeline, so you can switch roles freely from
+the mode menu. Each mode selects its own system prompt and capability set from
 `config/modes.yaml`.
 
 ## Worktree isolation
@@ -565,7 +575,7 @@ matches, `glob` 500 entries) so a single call can't blow the context budget.
 The headless entrypoint is:
 
 ```cmd
-python -m eco_harness run "Build a calculator" --mode create --language C
+python -m eco_harness run "Build a calculator" --mode auto --language C
 python -m eco_harness serve --api
 ```
 

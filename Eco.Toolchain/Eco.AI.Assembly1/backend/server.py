@@ -236,6 +236,82 @@ def _last_assistant_text(history: list) -> str:
     return ""
 
 
+def _build_chat_model(config) -> Any:
+    """Cheap model used for the AUTO-mode intent gate and direct chat answers.
+
+    Returns None when no cheap profile is configured, so callers can skip the
+    gate and always run the pipeline.
+    """
+    from agent.main import get_model
+    profile = config.models.get("cheap_fast")
+    if profile is None:
+        return None
+    try:
+        return get_model(profile, role=None)
+    except Exception:
+        logger.exception("chat model init failed")
+        return None
+
+
+def _msg_text(msg) -> str:
+    """Concatenate the text blocks of a pi_ai AssistantMessage."""
+    return "".join(
+        getattr(c, "text", "") or ""
+        for c in (getattr(msg, "content", None) or [])
+        if getattr(c, "type", None) == "text"
+    )
+
+
+_CHAT_GATE_SYS = (
+    "You route messages for an AI coding harness. Reply with exactly one "
+    "word — CODE or CHAT.\n"
+    "CODE = the user wants code produced, built, fixed, refactored, or "
+    "migrated (build, implement, create, write, add, fix, refactor, "
+    "migrate a program, component, or feature).\n"
+    "CHAT = a question, explanation, comparison, status check, or "
+    "conversation that needs no code written or built."
+)
+
+_CHAT_ANSWER_SYS = (
+    "You are a senior EcoOS ACOM systems assistant. Answer the user's "
+    "question clearly and concisely. When the topic is code, explain using "
+    "ACOM / C (C89) conventions. Do not write or build code unless the user "
+    "explicitly asks you to."
+)
+
+
+async def _classify_intent(user_req: str, model) -> bool:
+    """Return True when the message is a concrete coding task (run pipeline)."""
+    from agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
+    from agent.pi_ai.stream import complete
+    ctx = Context(
+        systemPrompt=_CHAT_GATE_SYS,
+        messages=[UserMessage(content=user_req, timestamp=0)],
+    )
+    try:
+        msg = await complete(
+            model, ctx, SimpleStreamOptions(reasoning="minimal", maxTokens=8)
+        )
+        return "CODE" in _msg_text(msg).upper()
+    except Exception:
+        logger.exception("intent classification failed")
+        return True  # on doubt, run the pipeline rather than mis-answer
+
+
+async def _chat_reply(user_req: str, model) -> str:
+    """One-shot direct answer for plain chat questions (no pipeline)."""
+    from agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
+    from agent.pi_ai.stream import complete
+    ctx = Context(
+        systemPrompt=_CHAT_ANSWER_SYS,
+        messages=[UserMessage(content=user_req, timestamp=0)],
+    )
+    msg = await complete(
+        model, ctx, SimpleStreamOptions(reasoning="low", maxTokens=2000)
+    )
+    return _msg_text(msg)
+
+
 def _workspace_header(project_dir: Path, marketplace_cache_root: Path) -> str:
     """Prefix every agent seed with a workspace orientation block.
 
@@ -647,7 +723,7 @@ async def chat_endpoint(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "content": "Missing user_request"})
                 continue
             language = str(payload.get("language") or HARNESS_CONFIG.default_language)
-            mode = str(payload.get("mode") or "create").lower()
+            mode = str(payload.get("mode") or "auto").lower()
             if mode not in HARNESS_CONFIG.modes:
                 await websocket.send_json({
                     "type": "error",
@@ -684,9 +760,14 @@ async def chat_endpoint(websocket: WebSocket):
                 })
                 continue
 
-            # ── Phase 1: plan-review loop (planner re-runs on reject + feedback) ──
-            if mode in {"test", "review"}:
-                one_shot_role = "tester" if mode == "test" else "reviewer"
+            # ── One-shot modes: no automatic pipeline (test / review / code / plan) ──
+            if mode in {"test", "review", "code", "plan"}:
+                one_shot_role = {
+                    "test": "tester",
+                    "review": "reviewer",
+                    "code": "coder",
+                    "plan": "architect",
+                }[mode]
                 _, role_spec, role_profile = load_role_config(
                     one_shot_role, HARNESS_CONFIG.root,
                 )
@@ -721,20 +802,52 @@ async def chat_endpoint(websocket: WebSocket):
                         "content": f"{mode.title()} agent crashed: {error}",
                     })
                     break
+                report = (
+                    (result.stop_payload or {}).get("message")
+                    or _last_assistant_text(result.history)
+                    or result.error
+                    or ""
+                )
+                # A role may answer as plain text (no stop-tool call), e.g. the
+                # architect presenting a plan in PLAN mode. Treat a non-empty
+                # answer as success regardless of whether a stop tool fired.
+                status_ok = result.status in ("done", "no_tool_call") and bool(report.strip())
                 await websocket.send_json({
                     "type": "pipeline_done",
-                    "status": "success" if result.status == "done" else "failed",
+                    "status": "success" if status_ok else "failed",
                     "build_artifact": "",
-                    "tester_report_md": (
-                        (result.stop_payload or {}).get("message")
-                        or result.error
-                        or ""
-                    ),
+                    "tester_report_md": report,
                     "mode": mode,
                     "worktree": str(worktree_path) if worktree_path else None,
                 })
                 continue
 
+            # AUTO mode: a short intent gate keeps plain chat questions out of
+            # the build loop. migrate is always a task, so it skips the gate.
+            if mode == "auto":
+                gate_model = _build_chat_model(HARNESS_CONFIG)
+                if gate_model is not None and not await _classify_intent(user_req, gate_model):
+                    try:
+                        answer = await _chat_reply(user_req, gate_model)
+                    except Exception as error:
+                        answer = f"(chat reply failed: {error})"
+                    await websocket.send_json({
+                        "type":  "node_event",
+                        "node":  "planner",
+                        "event": "text_delta",
+                        "data":  {"content": answer},
+                    })
+                    await websocket.send_json({
+                        "type":             "pipeline_done",
+                        "status":           "success",
+                        "build_artifact":   "",
+                        "tester_report_md": "",
+                        "mode":             mode,
+                        "worktree":         str(worktree_path) if worktree_path else None,
+                    })
+                    continue
+
+            # ── AUTO/MIGRATE: full plan→implement→verify pipeline ──
             workspace = _workspace_header(project_dir, marketplace_cache_root)
             planner_seed = workspace + user_req
             approved_plan_md: str | None = None

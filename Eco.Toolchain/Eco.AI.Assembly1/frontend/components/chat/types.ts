@@ -321,7 +321,7 @@ export interface UserRequestMessage {
   worktree_name?: string;
 }
 
-export type WorkingMode = "create" | "migrate" | "test" | "review";
+export type WorkingMode = "auto" | "plan" | "code" | "migrate" | "test" | "review";
 
 export interface PlanDecisionMessage {
   type: "plan_decision";

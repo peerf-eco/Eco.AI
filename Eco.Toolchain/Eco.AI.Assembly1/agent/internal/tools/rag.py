@@ -169,14 +169,21 @@ def make_search_marketplace_tool(
         # Local import so the tool module is importable even when the rag
         # subpackage's optional deps (sqlite-vec, etc.) aren't installed
         # yet — the factory still returns; failure surfaces at first call.
-        from agent.rag.embedder import Embedder
+        from agent.rag.embedder import Embedder, EmbedderError
         from agent.rag.retrieve import HybridRetriever
         from agent.rag.store import RagStore
 
         embedder = Embedder(model=embed_model) if embed_model else Embedder()
         # Probe dimension once so the store schema check passes.
-        embedder.embed_one("warmup")
-        store = RagStore(resolved_index, embed_dim=embedder.dim)
+        try:
+            embedder.embed_one("warmup")
+        except EmbedderError as e:
+            raise RuntimeError(
+                f"embedding endpoint unavailable: {e}. Check OPENAI_API_KEY / "
+                f"OPENROUTER_API_KEY and EMBEDDINGS_MODEL."
+            ) from e
+        store = RagStore(resolved_index, embed_dim=embedder.dim,
+                         expected_model=embedder.model)
         retriever = HybridRetriever(store, embedder)
 
         state["embedder"] = embedder
@@ -189,6 +196,11 @@ def make_search_marketplace_tool(
         return retriever
 
     def _execute(args: _SearchArgs) -> ToolResult:
+        # Imports are local to preserve the module's lazy-import guarantee
+        # (the tool must be importable without sqlite-vec / the embedder).
+        from agent.rag.embedder import EmbedderError
+        from agent.rag.store import IndexMismatchError
+
         try:
             retriever = _lazy_open()
         except FileNotFoundError as e:
@@ -209,10 +221,25 @@ def make_search_marketplace_tool(
             results = retriever.search_vector_only(
                 args.query, k=args.k, kind=kind, component=args.component,
             )
+        except IndexMismatchError as e:
+            logger.exception("search_marketplace index mismatch")
+            return ToolResult(
+                content=f"search_marketplace: index mismatch: {e}",
+                is_error=True,
+            )
+        except EmbedderError as e:
+            logger.exception("search_marketplace embedding failed")
+            return ToolResult(
+                content=f"search_marketplace: embedding failed: {e}",
+                is_error=True,
+            )
         except Exception as e:  # pragma: no cover
             logger.exception("search_marketplace retrieval failed")
             return ToolResult(
-                content=f"search_marketplace: retrieval error: {e}",
+                content=(
+                    f"search_marketplace: retrieval error "
+                    f"({type(e).__name__}): {e}"
+                ),
                 is_error=True,
             )
 

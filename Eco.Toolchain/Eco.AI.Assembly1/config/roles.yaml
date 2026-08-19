@@ -7,6 +7,7 @@ roles:
     skill_versions:
       acom_framework: "1"
       language: "1"
+      eco_wizard: "1"
     budgets:
       per_query_tokens: 200000
       per_query_usd: 1.5

@@ -1,5 +1,5 @@
 # CODE STYLE: HEADER TEMPLATES
-Если попросят, то используй следующие шапки при генерации:
+if being asked, use the below headers for generation:
 
 ## File Header
 /*
@@ -162,7 +162,7 @@ typedef struct C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE] {
 # C OBJECT IMPLEMENTATION TEMPLATE (Source)
 При генерации файлов в `SourceFiles/CEco[Name].c` строго следуй логике шаблона:
 
-### Шаблон:
+### Template for Object Implementation (Source):
 #include "IEcoSystem1.h"
 #include "IEcoInterfaceBus1.h"
 #include "IEcoInterfaceBus1MemExt.h"
@@ -772,7 +772,7 @@ C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE] g_xC[FIX_PROJECT_NAME][GUID_CID_NAMESPAC
 - **Structure**: Фабрика должна содержать таблицу виртуальных функций `IEcoComponentFactoryVTbl`.
 - **Metadata**: Поля `m_Name[64]`, `m_Version[16]`, `m_Manufacturer[64]` обязательны для заполнения метаданными компонента.
 
-### Шаблон:
+### Template:
 #ifndef __C_[UPPER_PROJECT_NAME]_FACTORY_H__
 #define __C_[UPPER_PROJECT_NAME]_FACTORY_H__
 
@@ -797,7 +797,7 @@ typedef struct C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]Factory {
 
 # C COMPONENT FACTORY TEMPLATE IMPLEMENTATION (Source)
 
-### Шаблон:
+### Template:
 #include "IEcoSystem1.h"
 #include "IEcoInterfaceBus1.h"
 #include "IEcoInterfaceBus1MemExt.h"
@@ -1009,7 +1009,7 @@ IEcoComponentFactory* GetIEcoComponentFactoryPtr_[GUID_CID_TARGET] = (IEcoCompon
 
 # ECO APP/UNIT-TEST GENERATION (EcoMain)
 
-### Шаблон:
+### Template:
 #include "IEcoSystem1.h"
 #include "IdEcoMemoryManager1.h"
 #include "IdEcoInterfaceBus1.h"
@@ -1172,7 +1172,7 @@ Release:
 # ECO CONNECTION POINTS (Infrastructure)
 При реализации механизма событий используй заголовочный файл `HeaderFiles/CEco[Name]ConnectionPoint.h` по следующему шаблону:
 
-## Шаблон ConnectionPoint (Header)
+## template for ConnectionPoint (Header)
 #ifndef __C_[UPPER_PROJECT_NAME]_CONNECTION_POINT_H__
 #define __C_[UPPER_PROJECT_NAME]_CONNECTION_POINT_H__
 
@@ -1205,7 +1205,7 @@ typedef struct C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]ConnectionPoint {
 #endif /* __C_[UPPER_PROJECT_NAME]_CONNECTION_POINT_H__ */
 
 
-## Шаблон ConnectionPoint (Source)
+## Template ConnectionPoint (Source)
 #include "IEcoInterfaceBus1.h"
 #include "IEcoInterfaceBus1MemExt.h"
 #include "C[FIX_PROJECT_NAME]ConnectionPoint.h"
@@ -1455,7 +1455,7 @@ C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]ConnectionPoint g_xC[FIX_PROJECT_NAME][GU
 # ECO ENUM CONNECTION POINTS (Enumerator)
 При реализации перечислителя точек подключения используй заголовочный файл `HeaderFiles/CEco[Name]EnumConnectionPoints.h`:
 
-## Шаблон EnumConnectionPoints (Header)
+## Template for EnumConnectionPoints (Header)
 #ifndef __C_[UPPER_PROJECT_NAME]_ENUM_CONNECTION_POINTS_H__
 #define __C_[UPPER_PROJECT_NAME]_ENUM_CONNECTION_POINTS_H__
 
@@ -1482,7 +1482,7 @@ typedef struct C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumConnectionPoints {
 
 #endif /* __C_[UPPER_PROJECT_NAME]_ENUM_CONNECTION_POINTS_H__ */
 
-## Шаблон EnumConnectionPoints (Source)
+## Template for EnumConnectionPoints (Source)
 #include "IEcoSystem1.h"
 #include "IEcoInterfaceBus1.h"
 #include "IEcoInterfaceBus1MemExt.h"
@@ -1618,7 +1618,7 @@ C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumConnectionPoints g_xC[FIX_PROJECT_NAM
 # ECO CONNECTIONS (Enumerator)
 При реализации перечислителя активных подключений (Sinks) используй заголовочный файл `HeaderFiles/CEco[Name]EnumConnections.h`:
 
-## Шаблон EnumConnections (Header)
+## Template for EnumConnections (Header)
 #ifndef __C_[UPPER_PROJECT_NAME]_ENUM_CONNECTIONS_H__
 #define __C_[UPPER_PROJECT_NAME]_ENUM_CONNECTIONS_H__
 
@@ -1648,7 +1648,7 @@ typedef struct C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumConnections {
 #endif /* __C_[UPPER_PROJECT_NAME]_ENUM_CONNECTIONS_H__ */
 
 
-## Шаблон EnumConnections (Source)
+## Template for EnumConnections (Source)
 #include "IEcoInterfaceBus1.h"
 #include "IEcoInterfaceBus1MemExt.h"
 #include "C[FIX_PROJECT_NAME]EnumConnections.h"
@@ -1894,7 +1894,7 @@ C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumConnections g_xC[FIX_PROJECT_NAME][GU
 # ECO EVENT SINK (Client Side)
 При создании объекта для приема событий в юнит-тестах (`UnitTestFiles/HeaderFiles/CEco[Name]Sink.h`) используй этот шаблон:
 
-## Шаблон Sink-объекта (Header)
+## Template for Sink-объекта (Header)
 
 #ifndef __C_[UPPER_PROJECT_NAME]_SINK_H__
 #define __C_[UPPER_PROJECT_NAME]_SINK_H__
@@ -1929,7 +1929,7 @@ void ECOCALLMETHOD deleteC[!output FIX_PROJECT_NAME]Sink(/* in */ I[!output FIX_
 
 #endif /* __C_[UPPER_PROJECT_NAME]_SINK_H__ */
 
-## Шаблон Sink-объекта (Source)
+## Template for Sink-объекта (Source)
 #include "C[!output FIX_PROJECT_NAME]Sink.h"
 #include "IEcoConnectionPointContainer.h"
 

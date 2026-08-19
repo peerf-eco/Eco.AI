@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import sqlite3
 import struct
@@ -35,6 +36,23 @@ import sqlite_vec
 from agent.rag.chunker_base import Chunk, ChunkKind
 
 logger = logging.getLogger(__name__)
+
+
+class IndexMismatchError(RuntimeError):
+    """Raised when the runtime embedding config doesn't match the index.
+
+    The classic trigger: the index was built with model A (dim N) but the
+    runtime embedder defaults to / is configured for model B (dim M). With a
+    mismatch, ``lazy_open`` succeeds (warmup embed works), but the vec0 KNN
+    ``MATCH`` fails cryptically *at query time* — surfacing as a meaningless
+    "retrieval error". We catch it eagerly at open with an actionable message.
+    """
+
+
+def _vec_dim_from_schema(sql: str) -> Optional[int]:
+    """Extract the vector width declared in a ``vec0`` CREATE statement."""
+    m = re.search(r"float\[(\d+)\]", sql or "")
+    return int(m.group(1)) if m else None
 
 
 def _serialize_vec(v: list[float]) -> bytes:
@@ -74,10 +92,56 @@ class RagStore:
     CREATE INDEX IF NOT EXISTS idx_chunks_chunker ON chunks(chunker_id);
     """
 
-    def __init__(self, db_path: Path, embed_dim: int) -> None:
+    def __init__(self, db_path: Path, embed_dim: int, expected_model: Optional[str] = None) -> None:
         self.db_path = Path(db_path)
         self.embed_dim = embed_dim
+        self.expected_model = expected_model
         self._conn = self._open(self.db_path)
+        self.index_dim: Optional[int] = None
+        self.index_model: Optional[str] = None
+        self._validate_index()
+
+    def _validate_index(self) -> None:
+        """Fail fast (with a clear message) if the runtime embedder's
+        dimension doesn't match the index the vec0 table was built with.
+
+        A fresh DB (no ``vec_chunks`` yet) is a build-in-progress — skip.
+        """
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_chunks'"
+        )
+        if cur.fetchone() is None:
+            self.index_dim = self.embed_dim
+            self.index_model = self.expected_model
+            return
+
+        row = cur.execute(
+            "SELECT sql FROM sqlite_master WHERE name='vec_chunks'"
+        ).fetchone()
+        vec_dim = _vec_dim_from_schema(row[0]) if row else None
+        meta = self.get_meta("ingest_stats") or {}
+        index_dim = meta.get("embed_dim") or vec_dim
+        index_model = meta.get("embed_model")
+
+        if index_dim is not None and self.embed_dim != index_dim:
+            raise IndexMismatchError(
+                f"index built with dim={index_dim} (model={index_model or 'unknown'}) "
+                f"but the runtime embedder produces dim={self.embed_dim} "
+                f"(model={self.expected_model or 'default'}). "
+                f"Rebuild the index with `scripts/build_marketplace_index.py "
+                f"--rebuild` using the SAME EMBEDDINGS_MODEL as the runtime, or "
+                f"set EMBEDDINGS_MODEL to match the existing index "
+                f"(model={index_model})."
+            )
+        if vec_dim is not None and self.embed_dim != vec_dim:
+            raise IndexMismatchError(
+                f"vec_chunks declares float[{vec_dim}] but the runtime embedder "
+                f"produces dim={self.embed_dim}. Rebuild the index with a matching "
+                f"embedding model."
+            )
+        self.index_dim = index_dim or self.embed_dim
+        self.index_model = index_model
 
     @classmethod
     def create(cls, db_path: Path, embed_dim: int, *, reset: bool = False) -> "RagStore":
