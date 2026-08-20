@@ -57,10 +57,7 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
 - NEVER read/use another component's `HeaderFiles/` or `SourceFiles/`.
 - `Eco.Core1/SharedFiles` is the MANDATORY base of EVERY project.
 - Minimum required stack for any buildable component/app:
-  `Eco.Core1` + `Eco.InterfaceBus1` + `Eco.MemoryManager1`
-  (+ `Eco.FileSystemManagement1` when file I/O is used; `Eco.System1` for the
-  `EcoMain` entry point). Do NOT add these by rote omission either — they are
-  required, not optional.
+  `Eco.Core1` + `Eco.InterfaceBus1` + `Eco.MemoryManager1` and optionally `Eco.FileSystemManagement1` only when file I/O is used;
 
 # 8. HEADER / DOC DISCIPLINE
 - Every file starts with the standard file-header comment block (author,

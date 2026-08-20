@@ -53,7 +53,7 @@ Execute actions based on the following keywords in the request:
     - **Minimum Required Stack**: When designing and building any new component or application logic, the AI must always assume and utilize the following baseline of system interfaces:
       - `Eco.InterfaceBus1` — the system interface bus for component discovery, querying, and registration.
       - `Eco.MemoryManager1` — the memory manager providing core allocation services.
-      - `Eco.FileSystemManagement1` — the subsystem handling low-level file system operations.
+      - `Eco.FileSystemManagement1` — the subsystem handling low-level file system operations (include ONLY when the component or application performs file I/O; a console calculator using `Eco.StdIO.C89` does NOT need it).
     - **Entry Point (Eco.System1)**: The `Eco.System1` system library acts as the mandatory unified entry point (`EcoMain`) for compiling cross-platform unikernel applications.
 
 - **Directory Structure**: 

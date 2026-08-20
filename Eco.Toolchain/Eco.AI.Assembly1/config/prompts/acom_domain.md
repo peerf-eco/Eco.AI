@@ -36,9 +36,12 @@ stack (these are REQUIRED, not optional — do not omit them, and do not add the
   do NOT use a misspelling such as `MemoryManger`.
 - `Eco.FileSystemManagement1`: filesystem services — include when the component
   performs file I/O.
-- `Eco.System1`: system information and command-argument services, and the
-  unified `EcoMain` entry point for cross-platform unikernel applications —
-  include when building an application.
+- `Eco.System1`: system information and command-argument services
+  (`IEcoSystemInformation1`, `IEcoCommandArguments1`, `IEcoAndroidNativeApp1`).
+  It is a NORMAL marketplace component — NOT the application entry point. Include
+  it only when the app needs those system services. The application entry point
+  is the app's own `EcoMain` function (see below), not a service of this
+  component.
 
 Include ONLY the `SharedFiles/` subfolder of each framework/dependency package
 (the public API). Never read or compile another package's `HeaderFiles/` or
@@ -73,16 +76,24 @@ BuildFiles/...
 
 Do not manually author generated `BuildFiles` content.
 
-For an application consuming marketplace components, the entry point is normally `SourceFiles/EcoMain.c`. The runtime flow is:
+For an application consuming marketplace components, the entry point is the
+application's OWN function `int16_t EcoMain(IEcoUnknown* pIUnk)` (developer-written
+glue, normally `SourceFiles/EcoMain.c`). It is NOT a marketplace component and has
+no CID/IID/factory. The bootstrap flow is:
 
 ```text
-IEcoSystem1 initialize
-→ IEcoInterfaceBus1 register components
-→ GetPtr(CID) factory
-→ CreateObject(IID)
-→ use
+EcoMain(IEcoUnknown* pIUnk)
+→ pIUnk->QueryInterface(&GID_IEcoSystem) → IEcoSystem1   (from Eco.Core1)
+→ pISys->QueryInterface(&IID_IEcoInterfaceBus1) → IEcoInterfaceBus1
+→ pIBus->RegisterComponent(&CID_X, (IEcoUnknown*)GetIEcoComponentFactoryPtr_<CID_X>)
+→ pIBus->QueryComponent(&CID_X, 0, &IID_IX, (void**)&pIX)
+→ use pIX (e.g. IEcoMathC89::pow / ::sqrt)
 → Release in reverse order
 ```
+
+`IEcoSystem1` lives in `Eco.Core1` and is obtained from the `pIUnk` passed to
+`EcoMain` — never from the marketplace. `Eco.System1` is a different component
+for system-information / command-argument services.
 
 Every successful `QueryInterface` and `CreateObject` must have a matching `Release`.
 

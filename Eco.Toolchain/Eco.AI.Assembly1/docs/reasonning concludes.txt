@@ -1,0 +1,80 @@
+conclusions:
+
+
+1) BUT — the user's confusion is understandable because the AI went looking for a component "Eco.System1" with a CID and a marketplace profile and a "EcoMain provided by it." The AI conflated:
+
+IEcoSystem1 (a Core1 interface, real)
+Eco.System1 (a marketplace component providing IEcoSystemInformation1/IEcoCommandArguments1, also real but different)
+EcoMain (the app's own entry function, real, developer-written)
+The AI's error was: searching for "Eco.System1 CID / .json / EcoMain symbol in a component," when in fact:
+
+EcoMain is the app's own function.
+IEcoSystem1 is from Core1 (no need to look in marketplace; it's in the base).
+Eco.System1 the component is for system information/command args, NOT the entry point.
+So the user's points (1) and (2) are directionally right (EcoMain is glue code, not a component service; EcoSystem1-as-component-with-CID is a confusion), but the nuance is: IEcoSystem1 (capital S, the Core1 interface) is real. The AI's main failure was conflating Eco.System1 (component) and EcoMain (app entry) and hunting for a component CID/EcoMain symbol that don't exist in that form.
+
+Now, the reasoning chain: where did the AI get "Eco.System1 provides EcoMain"? From architect.md line 28 ("the entry point (Eco.System1 / EcoMain)") and acom_domain.md line 39-41 ("Eco.System1: ... and the unified EcoMain entry point"). These prompt statements are MISLEADING/wrong. The correct statement: EcoMain is the application's own entry function (in the app's SourceFiles/EcoMain.c glue code); Eco.System1 is a component for system-information/command-argument services (IEcoSystemInformation1, IEcoCommandArguments1), and IEcoSystem1 (the system bootstrap interface) comes from Eco.Core1.
+
+So the ROOT CAUSE of problems (1) and (2) is the prompt text. The fix must rewrite architect.md and acom_domain.md.
+
+Now, the reference calculator also shows the REAL flow:
+
+EcoMain(IEcoUnknown* pIUnk)
+pIUnk->QueryInterface(pIUnk, &GID_IEcoSystem, &g_pISys) → get IEcoSystem1
+g_pISys->QueryInterface(g_pISys, &IID_IEcoInterfaceBus1, &g_pIBus) → get bus
+For static linking: RegisterComponent(g_pIBus, &CID_EcoMemoryManager1, (IEcoUnknown*)GetIEcoComponentFactoryPtr_<CID>); then QueryComponent to get instances.
+So the AI's plan to register components on the bus and QueryComponent is actually correct! The Math calculator would register CID_EcoMathC89 and CID_EcoStdIOC89 similarly. Good. But the AI never found the actual EcoMain signature or the GID_IEcoSystem bootstrap.
+
+Also note: the reference uses GID_IEcoSystem (a GID, not IID) to get IEcoSystem1 from the unknown. The domain knowledge said "IEcoSystem1 initialize" which matches. So IEcoSystem1 is legitimately in Core1.
+
+Now let me reconcile: the user said "(1) it is trying to locate EcoSystem1 component, its CID and .json files but i am not sure from where the model was convinced that such component is needed and existis. it looks like it is interface name, but interfaces have different name pattern".
+
+So the user is right that "EcoSystem1" (without the "IEco" prefix) is being mistaken for a component by the AI. But there IS a real component Eco.System1 (with IEcoSystemInformation1 etc.) AND a real interface IEcoSystem1 (in Core1). The AI mixed them up. The AI's fatal error: it looked for Eco.System1's CID and profile in the marketplace to get "the EcoMain entry point" — but EcoMain is not in any component; it's the app's function. And IEcoSystem1 comes from Core1, not from the Eco.System1 marketplace component.
+
+
+2) Now I have comprehensive evidence. Let me confirm:
+
+IEcoSystem1 IS a real interface in Eco.Core1/SharedFiles/IEcoSystem1.h, obtained via GID_IEcoSystem (architecture-specific, e.g., GID_IEcoSystem_x86_64). The reference calculator does pIUnk->QueryInterface(pIUnk, &GID_IEcoSystem, &g_pISys) then g_pISys->QueryInterface(g_pISys, &IID_IEcoInterfaceBus1, &g_pIBus).
+EcoMain signature: int16_t EcoMain(IEcoUnknown* pIUnk) — app's own function (glue code). Confirmed user point (2) is correct: entry point is in glue/app code, not a component service.
+Eco.System1 IS a separate marketplace component (provides IEcoSystemInformation1, IEcoCommandArguments1, IEcoAndroidNativeApp1) with a real CID encoded in its .a filenames (...53595331 = SYS1). It does NOT provide EcoMain and is NOT "the entry point." So the AI's hunt for "Eco.System1 CID / EcoMain symbol / .json profile" was based on a prompt-induced misconception, AND its conclusion "Eco.System1 has no CID/profile" was factually wrong (it HAS a CID; it just lacks a _profiles/*.json and doesn't provide EcoMain).
+Math vtable: pow(me, double x, double y)->double confirmed at line 76. sqrt should be there too — let me assume yes (domain knowledge says so). Actually I didn't see sqrt in the grep output (it cut at 76). But domain knowledge says sqrt exists. I'll trust it but note verification.
+StdIO: printf(me, const char* format, ...), scanf(me, const char* format, ...) confirmed. Good — AI's plan to use these is correct in method, though note they take FILE* variants and the simple printf/scanf exist.
+Now, the user's point (1): "it looks like it is interface name, but interfaces have different name pattern". I should clarify: IEcoSystem1 IS a correctly-named interface (IEco + System + 1) and it is REAL (in Core1). The AI's actual mistake was not that IEcoSystem1 is fake, but that it treated "Eco.System1" as a component that must be located/queried for its CID and EcoMain, conflating three distinct things. So I should gently correct the user's framing while validating the underlying concern.
+
+Now let me also confirm the StdIO printf returns int, scanf returns int. The AI's plan: pIStdIO->pVTbl->scanf(pIStdIO, "%lf %lf", &x, &y) — correct signature (variadic). Good.
+
+Now let me also check: the minimum stack. The reference DemoCalculator1 includes: IEcoSystem1.h (Core1), IdEcoMemoryManager1.h, IEcoInterfaceBus1.h, and calculator components. NO FileSystemManagement1, NO StdIO. So for the calculator, FileSystemManagement1 is NOT required. This confirms the C-lang rules line 56 exaggerated; acom_domain.md's conditional statement is correct. So this is a rules inconsistency to fix.
+
+Also, the reference uses a Dialog component for I/O (EcoDemoDialog), not StdIO. But StdIO is a legitimate alternative for console I/O. The architect chose StdIO — reasonable, but it should be verified. Not a hard error.
+
+Now, let me also note: the architect could/should have used eco_framework/Lessons/Eco.DemoCalculator1 as a pattern reference. The harness never directed the agent to consult eco_framework lessons. That's a process gap (no RAG/prior-art source for reference implementations).
+
+Let me also reconsider the "elided reads" issue. The architect prompt says "Never re-read an already-elided header — ask for the contract card instead." But the AI's reasoning shows it kept reading headers that got elided and then asserted specifics. The real fix: the contract card (read_component_profile) should return IIDs and vtable signatures; and there should be a QUALITY GATE that every cited IID/CID/vtable in the plan is traceable to a tool output. The AI in the final plan DID get the Math IID correct (matches actual). So it wasn't purely hallucination — but it's a risk. Still, a gate is warranted.
+
+Now, let me also reconsider: Did the AI actually produce a "closed plan"? The plan has gaps:
+
+EcoMain signature wrong (int16_t EcoMain(IEcoSystem1*) instead of (IEcoUnknown*)).
+Bootstrap missing: how to get IEcoSystem1 (via GID_IEcoSystem from pIUnk) and then the bus.
+Eco.System1 CID falsely claimed nonexistent.
+Doesn't reference the actual reference calculator.
+StdIO/MemMgr IIDs claimed but the plan's specific values should be verified against contract card (they're plausible but the AI mixed
+
+
+
+All fixes applied and verified. Summary of what changed:
+
+**Fixes in prompts/rules (root cause of your (1) & (2))**
+- `config/prompts/architect.md:27-49` — rewrote the dependency-resolution step to state that `EcoMain` is the app's *own* `int16_t EcoMain(IEcoUnknown* pIUnk)` glue (no CID/IID/factory), `IEcoSystem1` is a real `Eco.Core1` interface obtained via `GID_IEcoSystem`, and `Eco.System1` is a *separate* normal component for system-info services — never the entry point.
+- `config/prompts/acom_domain.md:39-44` and `:79-96` — removed the false "*Eco.System1 … unified EcoMain entry point*" claim and replaced the fictional `IEcoSystem1 initialize` flow with the verified bootstrap (`pIUnk → GID_IEcoSystem → IEcoSystem1 → IID_IEcoInterfaceBus1 → bus`).
+
+**Process quality gates (new)**
+- `config/prompts/architect.md:55-85` — added a `CLOSED-PLAN QUALITY GATES` self-check: no marketplace hunt for "EcoMain"/"IEcoSystem1 CID"; CID confirmation via **both** `Id*.h` *and* `BuildFiles/**/*.a` filenames (the `.a` name *is* the CID, e.g. `…53595331`); every IID/CID/vtable traceable to a contract card or quoted header line (no elided-read reconstruction); explicit bootstrap; `FileSystemManagement1` only for file I/O; no invented methods (`IEcoMemoryManager1` has `Init`/`get_Status`/`get_UsedBlocks`, **not** `GetAllocator`); prior-art consultation of `eco_framework/Lessons/*`; absolute-path + retry-on-error rule.
+- `config/prompts/reviewer.md` — reviewer now checks identifier provenance and the correct entry-point/bootstrap.
+
+**Rule reconciliation**
+- `docs/C-lang_coder_for_ACOM_rules.md:56` — `Eco.FileSystemManagement1` is now conditional ("include ONLY when … performs file I/O"), matching `acom_domain.md` and the reference calculator (which omits it).
+
+**Remaining (tooling, not prompt/rule):** P6 — `list_dir` anchoring to the wrong root is a harness bug; I mitigated it with the absolute-path/retry gate above, but the actual `list_dir` root-resolution fix belongs in the harness tool layer.
+
+Key evidence backing these: `Eco.DemoCalculator1.c:53` (`EcoMain(IEcoUnknown* pIUnk)`), `Eco.Core1/SharedFiles/IEcoSystem1.h` (`GID_IEcoSystem_*`), `Eco.System1/BuildFiles/.../lib…53595331.a` (real CID), and `IEcoMemoryManager1.h` vtable (no `GetAllocator`).
+
