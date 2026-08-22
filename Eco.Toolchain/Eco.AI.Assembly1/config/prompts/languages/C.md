@@ -12,4 +12,4 @@ Mode-specific reminders only:
   factory-symbol spellings, `SharedFiles/`-only dev-kit boundary.
 - Minimum stack: `Eco.Core1` + `Eco.InterfaceBus1` + `Eco.MemoryManager1`
   (+ `Eco.FileSystemManagement1` for file I/O; `Eco.System1` when the
-  target is an application with an `EcoMain` entry point).
+  target is an executable application or dynamic library with an `EcoMain` entry point).

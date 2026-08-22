@@ -1,3 +1,14 @@
+---
+name: component_author
+version: 1
+description: >-
+  Full ACOM C component authoring templates (IdEco*/IEco* headers, object +
+  factory implementation, connection points, aggregation/containment variants,
+  EcoMain app/unit-test skeleton) with macro placeholders. Fetch when
+  hand-authoring or repairing ACOM component code WITHOUT a usable eco-wizard,
+  or when the wizard output must be extended by hand.
+---
+
 # CODE STYLE: HEADER TEMPLATES
 if being asked, use the below headers for generation:
 

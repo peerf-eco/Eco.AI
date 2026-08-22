@@ -29,9 +29,13 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
 - First method arg is a typed self pointer named `me`.
 - Methods return `int16_t` status; outputs are `/* out */` pointers.
 - Ref-count manually via `IEcoUnknown::QueryInterface/AddRef/Release`.
-  Release exactly once per successful `QueryInterface`/`CreateObject`.
+  Release exactly once per successful `QueryInterface`/`CreateObject`. When
+  `m_cRef` reaches zero, release owned resources through the component delete
+  path and the allocator (`m_pIMem->pVTbl->Free`), then free the object.
+- Marketplace C-API method spellings are exact: `Eco.Math.C89` methods are
+  lowercase — `pow`, `sqrt`, `sin`, `cos`.
 
-# 4. UGUID RULE (exact byte format)
+# 4. UGUID RULE (exact byte format — single authority)
 - Layout: `{0x01, Length, {Data}}`. Preamble is always `0x01`.
 - Length byte: 32-bit=`0x04`, 64-bit=`0x08`, 128-bit=`0x10`, 256-bit=`0x20`.
 - A comment is REQUIRED before every IID/CID: `/* Name IID = {GUID} */`.
@@ -40,29 +44,25 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
 # 5. NAMING MACROS (when templating)
 - `[GUID_CID_TARGET]` = `GetIEcoComponentFactoryPtr_<FULL 32-hex CID>`.
 - `[GUID_CID_NAMESPACE]` = last 8 hex chars of the CID.
-- Static-link factory symbol: `GetIEcoComponentFactoryPtr_<UPPER_HEX_CID>`,
-  registered as `(IEcoUnknown*)GetIEcoComponentFactoryPtr_<UPPER_HEX_CID>`.
 
 # 6. FILE MAPPING (exact paths)
 - `SharedFiles/Eco[Name].idl`, `SharedFiles/IEco[Name].h`, `SharedFiles/IdEco[Name].h`
 - `SourceFiles/CEco[Name].c` + `HeaderFiles/CEco[Name].h`
 - `SourceFiles/CEco[Name]Factory.c` + `HeaderFiles/CEco[Name]Factory.h`
-- App entry: `SourceFiles/EcoMain.c`. Unit tests: `UnitTestFiles/SourceFiles/Eco[Name].c`.
+- App entry: `SourceFiles/EcoMain.c` defining
+  `int16_t EcoMain(IEcoUnknown* pIUnk)` (application projects only; statically
+  linked with the platform `Eco.System1` library).
+- Unit tests: `UnitTestFiles/SourceFiles/Eco[Name].c`.
 - Build: `AssemblyFiles/<Platform>/<Toolchain>/Makefile` (+ `MakefileExe`).
 
 # 7. MANDATORY DEV-KIT BOUNDARY (strict API surface)
 - Resolve interfaces ONLY from the project `DependenciesFiles/` or the
-  `ECO_FRAMEWORK` / `ECO_FRAMEWORK_PATH` env, and ONLY from a component's
-  `SharedFiles/` subfolder (the public API).
-- NEVER read/use another component's `HeaderFiles/` or `SourceFiles/`.
-- `Eco.Core1/SharedFiles` is the MANDATORY base of EVERY project.
-- Minimum required stack for any buildable component/app:
-  `Eco.Core1` + `Eco.InterfaceBus1` + `Eco.MemoryManager1`
-  (+ `Eco.FileSystemManagement1` only when file I/O is used).
-- ACOM APPLICATIONS (`EcoMain` entry point) additionally link
-  `Eco.System1` — it provides the real `main()` that calls `EcoMain(pIUnk)`
-  and is statically linked with the app. Static components and libraries
-  never have an entry point and never need `Eco.System1`.
+  `ECO_FRAMEWORK` path, and ONLY from a component's `SharedFiles/` subfolder
+  (the public API). NEVER read/use another component's `HeaderFiles/` or
+  `SourceFiles/`.
+- The required framework stack (`Eco.Core1` base + minimum system components,
+  `Eco.System1` for applications) is declared once in the STATIC ACOM DOMAIN
+  block above — encode it exactly as written there.
 
 # 8. HEADER / DOC DISCIPLINE
 - Every file starts with the standard file-header comment block (author,

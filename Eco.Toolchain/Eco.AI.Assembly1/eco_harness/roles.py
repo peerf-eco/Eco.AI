@@ -4,7 +4,10 @@ import os
 from pathlib import Path
 
 from agent.config.loader import HarnessConfig, RoleSpec
-from agent.context import load_custom_instructions
+from agent.context.customization import (
+    on_demand_skills,
+    resolve_custom_instructions,
+)
 from agent.context.assembler import build_static_system_prompt
 from agent.pi_ai import SimpleStreamOptions
 from eco_harness.adapters.eco_agent_bridge import ExternalEcoAgent
@@ -90,6 +93,40 @@ def _tool_contract(agent) -> str:
     )
 
 
+def _merged_skill_versions(config: HarnessConfig, role: str, language: str) -> dict[str, str]:
+    """Language skill map merged under the role's map (same order as prompts)."""
+    role_spec = config.roles.get(role, RoleSpec())
+    language_spec = config.languages.get(language)
+    language_skills = language_spec.skill_versions if language_spec else {}
+    return {**language_skills, **role_spec.skill_versions}
+
+
+def _wire_on_demand_skill_tool(
+    agent,
+    *,
+    config: HarnessConfig,
+    role: str,
+    language: str,
+) -> None:
+    """Attach read_skill when this role's merged map references dynamic skills.
+
+    Dynamic = SKILL.md with YAML frontmatter (see
+    agent/context/customization.py). The tool must be attached BEFORE the
+    static prompt is built so the tool contract lists it.
+    """
+    tools = getattr(agent, "tools", None)
+    if not isinstance(tools, dict):
+        return
+    refs = on_demand_skills(
+        project_root=config.root,
+        skill_versions=_merged_skill_versions(config, role, language),
+    )
+    if refs and "read_skill" not in tools:
+        from agent.internal.tools.skill_reader import make_read_skill_tool
+
+        tools["read_skill"] = make_read_skill_tool(project_root=config.root)
+
+
 def _static_prompt(
     *,
     config: HarnessConfig,
@@ -102,13 +139,11 @@ def _static_prompt(
     mode: str = "create",
 ) -> str:
     role_spec = config.roles.get(role, RoleSpec())
-    language_spec = config.languages.get(language)
-    language_skills = language_spec.skill_versions if language_spec else {}
-    custom = load_custom_instructions(
+    custom, _dynamic = resolve_custom_instructions(
         project_root=config.root,
         role=role,
         language=language,
-        skill_versions={**language_skills, **role_spec.skill_versions},
+        skill_versions=_merged_skill_versions(config, role, language),
     )
     role_prompt = (
         f"=== MODE: {mode.upper()} ===\n{_mode_prompt(config, mode)}\n\n"
@@ -255,6 +290,10 @@ def make_role_agent(
     else:
         raise ValueError(f"Unsupported role: {role}")
     agent.system_prompt = _role_prompt(config, role, agent.system_prompt)
+    # On-demand skills: attach the fetch tool before prompt assembly so the
+    # tool contract includes it (external backends skip this — their manifest
+    # entries carry source paths for their own file tools).
+    _wire_on_demand_skill_tool(agent, config=config, role=role, language=language)
     _configure_context(
         agent,
         config=config,

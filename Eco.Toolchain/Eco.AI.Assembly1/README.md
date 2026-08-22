@@ -468,20 +468,99 @@ it is fetched on demand via `eco-cli pull` into `project_dir`.
 
 ## Customization
 
-Project-wide rules go in the root `AGENTS.md`. Role-specific rules can be
-placed in:
+The harness has a two-layer customization model: git-tracked repo defaults
+under `config/` and an operator-owned workspace layer under `.eco-harness/`
+(no repo changes needed, survives pulls). Everything is resolved at agent
+construction; lower layers win only when the workspace layer is absent or
+empty.
+
+### Role prompts: `config/prompts/` vs `.eco-harness/prompts/`
+
+Resolution (first non-empty wins):
+
+```text
+1. .eco-harness/prompts/<role>.md    workspace override — replaces entirely
+2. config/prompts/<role>.md          editable source of truth
+3. built-in constant                 fallback in agent/internal/agents/<role>.py
+```
+
+Create `.eco-harness/prompts/coder.md` and the coder runs with YOUR text
+instead of the repo prompt. An empty or whitespace-only file is treated as
+absent, so a stub can never blank out real instructions.
+
+### Skills: same name overrides, new names must be declared
+
+Skill bodies are searched with the **workspace first** (`.eco-harness/skills/`
+→ `config/skills/`), name order `v<N>.md → SKILL.md → <skill>.md`:
+
+- **Same name** → your workspace body replaces the repo skill
+  (`.eco-harness/skills/acom_framework/v1.md` wins over
+  `config/skills/acom_framework/v1.md`).
+- **Different name** → it becomes available as an additional skill, but it
+  does NOT self-activate. A skill only loads when listed in the merged
+  `skill_versions` map (`roles.yaml` / `languages.yaml`, overridable per
+  workspace).
+
+To activate skills for a role, override its map in
+`.eco-harness/workspace.yaml`:
+
+```yaml
+roles:
+  coder:
+    skill_versions:            # NOTE: wholesale replacement of the repo map
+      acom_framework: "1"      # keep — body from .eco-harness/skills/ if present
+      eco_wizard: "1"          # keep
+      team_style: "1"          # add — .eco-harness/skills/team_style/v1.md
+```
+
+Only `budgets` blocks merge key-by-key; every other role/language key
+(including `skill_versions`) replaces the repo value wholesale when set in
+the workspace file.
+
+### On-demand skills (Anthropic-style)
+
+Large or rarely-needed skills can be made dynamic instead of always baked
+into the system prompt. Create a `SKILL.md` with YAML frontmatter:
+
+```markdown
+---
+name: my_skill
+description: One line saying WHEN the agent should fetch this skill.
+---
+(free-form markdown body)
+```
+
+Behavior once referenced from `skill_versions`:
+
+- The prompt receives only the one-line description in an
+  `=== ON-DEMAND SKILLS ===` manifest (plus the source path).
+- Internal agents fetch the full body on demand via the auto-wired
+  `read_skill` tool; external CLI agents read the listed path themselves.
+- A plain `v<N>.md` file (or frontmatter-less `SKILL.md`) keeps the classic
+  always-injected behavior — both forms coexist.
+
+First live example: `config/skills/component_author/SKILL.md` (~60 KB of ACOM
+C templates) — the coder sees only its description until hand-authoring
+component code without eco-wizard makes fetching worthwhile.
+
+### Rules files
+
+Project-wide rules go in the root `AGENTS.md`; all layers found are
+concatenated (repo root first):
 
 ```text
 config/agents/<role>/AGENTS.md
 .eco-harness/agents/<role>/AGENTS.md
 ```
 
-Reusable skills can be placed in:
+### Domain vs language rules split
 
-```text
-config/skills/<skill>/v<N>.md   or SKILL.md
-.eco-harness/skills/<skill>/SKILL.md
-```
+`config/prompts/acom_domain.md` holds language-agnostic ACOM knowledge
+(identifier taxonomy, framework stack, dev-kit boundary, EcoMain flow, trust
+model) and is shared by every role and language. All language-specific coding
+conventions live once in `config/skills/languages/<lang>.md`. When adding
+rules, put them in exactly one place — the two cross-reference each other
+instead of duplicating.
 
 The legacy `agent/skills/` root was retired in PRD_2 Phase 2
 (`agent/skills/c.md` → `config/skills/component_author/v1.md`).

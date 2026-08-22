@@ -2,18 +2,19 @@
 
 ### Identifier taxonomy
 
-I. UGUID RULE (ACOM specific number format use for components and interfaces IDs: CID and IID)
-- Format: `{0x01, Length, {Data}}`. 
-- Preamble: `0x01`. Length: 32bit=`0x04`, 64bit=`0x08`, 128bit=`0x10`, 256bit=`0x20` etc.
-- A comment before the IID/CID is required: `/* Name IID = {GUID} */`.
+I. Binary identifier representation (UGUID): the byte format
+`{0x01, Length, {Data}}`, its length codes, and the required
+`/* Name IID = {GUID} */` comment are LANGUAGE-SPECIFIC — follow the active
+language skill (for C: `config/skills/languages/C.md`). Everything below is
+language-agnostic.
 
 A single component has multiple ID forms and they are not interchangeable:
 
 - Marketplace CID: 32 uppercase hexadecimal characters without dashes. Use this for `eco-cli find -c` and `eco-cli pull -c`.
 - Hyphenated GUID: 8-4-4-4-12 form for display and documentation only.
 - `ecoPackage` `cid`: 32 UPPERCASE hexadecimal characters in dependency JSON.
-- C struct `UGUID`: brace-initialized header-internal representation of the numeric identifier, in the form `{0x01, Length, {Data}}` — preamble `0x01`; `Length` = `0x04`/`0x08`/`0x10`/`0x20` for 32/64/128/256-bit (UGUID RULE, defined in the C-lang coder rules). A `/* Name IID = {GUID} */` comment precedes every IID/CID.
-- `IID_*`: interface identifiers, never component CIDs`; it is an interface identifier, not a component CID.
+- `UGUID`: the brace-initialized struct representation of the numeric identifier; the exact source-level form is defined per language skill.
+- `IID_*`: interface identifiers, never component CIDs.
 - Package name: stable `Eco.AI.Engine1`-style name without a version suffix.
 - Folder suffix: SDK/package metadata, never part of the component name.
 
@@ -41,31 +42,24 @@ stack (these are REQUIRED, not optional — do not omit them, and do not add the
   do NOT use a misspelling such as `MemoryManger`.
 - `Eco.FileSystemManagement1`: filesystem services — include when the component
   performs file I/O.
-- `Eco.System1`: system information and command-argument services
-  (`IEcoSystemInformation1`, `IEcoCommandArguments1`, `IEcoAndroidNativeApp1`).
-  It is a NORMAL marketplace component — NOT the application entry point. Include
-  it only when the app needs those system services. The application entry point
-  is the app's own `EcoMain` function (see below), not a service of this
-  component.
+- `Eco.System1`: the system LIBRARY (not an ACOM component — no CID; its
+  binary is a GID-named static lib) that provides the real platform `main()`
+  which calls the application's `EcoMain` entry, plus system services
+  (`IEcoSystemInformation1`, `IEcoCommandArguments1`). APPLICATIONS
+  statically link the platform-specific `Eco.System1` library; plain
+  components and libraries never have an entry point and never link it.
 
 Include ONLY the `SharedFiles/` subfolder of each framework/dependency package
 (the public API). Never read or compile another package's `HeaderFiles/` or
 `SourceFiles/`.
 
-### ACOM C conventions
+### Coding conventions are per-language
 
-- Use EcoOS types such as `int16_t`, `voidptr_t`, `char_t`, and `byte_t`; do not substitute raw `int` or `char` where SDK types apply.
-- Allocate through `IEcoMemoryAllocator1` and `m_pIMem`; never use `malloc` or `free`.
-- Validate `me` and output pointers at the beginning of every method.
-- Return `ERR_ECO_SUCCESES`, `ERR_ECO_POINTER`, and `ERR_ECO_NOINTERFACE` as appropriate.
-- Every vtable method uses `ECOCALLMETHOD`.
-- The first interface method argument is a typed self pointer named `me`.
-- Interface methods return `int16_t`; outputs use `/* out */` pointers.
-- Reference counting is manual through `QueryInterface`, `AddRef`, and `Release`.
-- When `m_cRef` reaches zero, release resources through the component's delete path and allocator.
-- Preserve exact EcoOS spellings. The memory-manager package is
-  `Eco.MemoryManager1` (double `n` in `Manager`) — never `MemoryManger1`.
-- Math C89 methods are lowercase: `pow`, `sqrt`, `sin`, and `cos`.
+Language-specific coding conventions (type discipline, allocation calls,
+vtable shapes, error codes, header/function documentation, template
+processing) are defined ONCE per language in
+`config/skills/languages/<lang>.md` and injected with the role instructions.
+This domain block deliberately does not restate them.
 
 ### Project layout
 
@@ -82,9 +76,9 @@ BuildFiles/...
 Do not manually author generated `BuildFiles` content.
 
 For an application consuming marketplace components, the entry point is the
-application's OWN function `int16_t EcoMain(IEcoUnknown* pIUnk)` (developer-written
-glue, normally `SourceFiles/EcoMain.c`). It is NOT a marketplace component and has
-no CID/IID/factory. The bootstrap flow is:
+application's OWN `EcoMain(pIUnk)` function (developer-written glue, normally
+`SourceFiles/EcoMain.c`; exact signature per language skill). It is NOT a
+marketplace component and has no CID/IID/factory. The bootstrap flow is:
 
 ```text
 EcoMain(IEcoUnknown* pIUnk)
@@ -97,8 +91,9 @@ EcoMain(IEcoUnknown* pIUnk)
 ```
 
 `IEcoSystem1` lives in `Eco.Core1` and is obtained from the `pIUnk` passed to
-`EcoMain` — never from the marketplace. `Eco.System1` is a different component
-for system-information / command-argument services.
+`EcoMain` — never from the marketplace. `Eco.System1` is a different artifact:
+the statically linked system LIBRARY that owns the platform `main()` and calls
+into `EcoMain`.
 
 Every successful `QueryInterface` and `CreateObject` must have a matching `Release`.
 

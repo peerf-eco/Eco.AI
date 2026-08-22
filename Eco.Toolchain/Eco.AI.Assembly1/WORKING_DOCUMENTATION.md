@@ -128,15 +128,78 @@ treated as absent so a stub can never blank out real instructions):
                                         agent/internal/agents/<role>.py
 ```
 
-Skill resolution (`load_custom_instructions`): for every entry of the merged
-`skill_versions` map, candidates are probed in root order
-`config/skills/ → .eco-harness/skills/` and name order
+Skill resolution (`load_custom_instructions` / `resolve_custom_instructions`):
+for every entry of the merged `skill_versions` map, candidates are probed in
+root order `.eco-harness/skills/ → config/skills/` (workspace overrides repo —
+the historical inverted order that silently disabled workspace skill overrides
+was fixed with the on-demand skills work) and name order
 `v<N>.md → SKILL.md → <skill>.md`. Names that match nothing resolve silently
 to nothing (the phantom `language` key was removed from all YAML
 `skill_versions` maps in PRD_2 Phase 2; the legacy `agent/skills/` root was
-retired — `agent/skills/c.md` now lives at
-`config/skills/component_author/v1.md`). The language skill
-(`config/skills/languages/<lang>.md`) is always appended last when present.
+retired). The language skill (`config/skills/languages/<lang>.md`) is always
+appended last when present.
+
+On-demand skills: a `SKILL.md` whose body begins with a YAML frontmatter
+block carrying at least `description:` is NOT injected as text. Its one-line
+description is appended to the prompt as an `=== ON-DEMAND SKILLS ===`
+manifest entry (name, description, source path), and the full body is fetched
+only when relevant — internal agents call the automatically-wired `read_skill`
+EcoTool (`agent/internal/tools/skill_reader.py`, whitelisted to the two skill
+roots, frontmatter stripped, size-capped); external CLI backends read the
+listed source path with their own file tools. `roles.py` attaches
+`read_skill` whenever the role's merged map resolves at least one dynamic
+skill. Plain `v<N>.md` files and frontmatter-less `SKILL.md` files keep the
+eager full-text behavior. First live dynamic skill:
+`config/skills/component_author/SKILL.md` (referenced by the coder role).
+
+### The workspace-level override layer
+
+`.eco-harness/` (or the directory of `ECO_HARNESS_WORKSPACE_CONFIG`) is the
+operator's per-workspace customization layer. It never modifies git-tracked
+config; it overrides or extends it at load time. Per artifact type:
+
+| Artifact | Repo default (read-only convention) | Workspace override | Same-name behavior |
+| --- | --- | --- | --- |
+| Role prompt | `config/prompts/<role>.md` | `.eco-harness/prompts/<role>.md` | Workspace **replaces** repo prompt entirely (first non-empty wins) |
+| Skill body (eager) | `config/skills/<skill>/v<N>.md` | `.eco-harness/skills/<skill>/v<N>.md` | Workspace **replaces** the repo skill with the same name (workspace root probed first) |
+| Skill body (on-demand) | `config/skills/<skill>/SKILL.md` + frontmatter | same override rule | Only the manifest description enters the prompt; full body via `read_skill` / direct file read |
+| Skill, new name | — | `.eco-harness/skills/<skill>/…` | Additional skill — but ONLY if a `skill_versions` entry references it |
+| Role settings | `config/roles.yaml`, `languages.yaml`, `harness.yaml` | `.eco-harness/workspace.yaml` | Deep-merged per role/language; `budgets` merge key-by-key |
+| AGENTS.md rules | `config/agents/<role>/AGENTS.md` | `.eco-harness/agents/<role>/AGENTS.md` | All layers found are concatenated (repo root first), not either/or |
+
+Two mechanics matter and are easy to get wrong:
+
+1. **Skill selection vs skill content are separate decisions.** Dropping a
+   file into `.eco-harness/skills/` does NOT activate it — activation always
+   goes through the merged `skill_versions` map (`languages.yaml` map merged
+   under `roles.yaml` map). A workspace `workspace.yaml` can override the map:
+   `roles.<role>.skill_versions` there replaces the repo map WHOLESALE
+   (dict-spread merge at the role level), so to ADD one skill you repeat the
+   entries you want to keep. Only `budgets` gets a special key-by-key deep
+   merge.
+2. **Empty files lose.** Both for prompts and skills, an empty/whitespace
+   workspace file is treated as absent and the lower layer wins — a stub can
+   never blank out real instructions (regression-tested).
+
+Example — override `acom_framework` and add an operator skill for coders:
+
+```yaml
+# .eco-harness/workspace.yaml
+roles:
+  coder:
+    skill_versions:            # wholesale replacement — re-list kept skills
+      acom_framework: "1"      # body resolved from .eco-harness/skills/
+      eco_wizard: "1"          #   acom_framework/v1.md (override wins)
+      team_style: "1"          # new name → .eco-harness/skills/team_style/v1.md
+```
+
+Content split rule introduced with PRD_2 Phase 2 follow-ups:
+`config/prompts/acom_domain.md` is LANGUAGE-AGNOSTIC domain knowledge shared
+by every role and language (identifier taxonomy, framework stack, dev-kit
+boundary, EcoMain flow, trust model); all language-specific coding
+conventions live ONCE in `config/skills/languages/<lang>.md`. Do not restate
+C rules in the domain block or vice versa — the two cross-reference each other
+by section instead of duplicating.
 
 Source stitch: `_core1_sharedfiles(source_roots)` locates
 `Eco.Core1/SharedFiles` and `stitch_source_files` emits it as one continuous
@@ -194,9 +257,10 @@ The ordering above exists to maximize provider-side implicit prompt-cache
 - Maintainer rules: never interpolate timestamps, thread ids, absolute
   project paths, or marketplace listings into blocks 1–5 — they belong in the
   seed or history. Keep additions to `acom_domain.md` / `tool_contract.md`
-  small; they multiply across every role. Edit role behavior in
-  `config/prompts/<role>.md` (no code change) and operator specialization in
-  `.eco-harness/prompts/<role>.md`.
+  small; they multiply across every role. `acom_domain.md` stays
+  language-agnostic — C/C++ coding rules belong in the per-language skills.
+  Edit role behavior in `config/prompts/<role>.md` (no code change) and
+  operator specialization in `.eco-harness/prompts/<role>.md`.
 
 The framework header explicitly requires:
 
@@ -236,7 +300,8 @@ Root `AGENTS.md` applies to all roles. Role-specific rules belong in
 `config/agents/<role>/AGENTS.md` or `.eco-harness/agents/<role>/AGENTS.md`.
 Role-prompt overrides belong in `.eco-harness/prompts/<role>.md`. Reusable
 skills belong under `config/skills/`; Git commits provide their version
-history.
+history. Same-name vs different-name override semantics for prompts, skills,
+and settings are detailed in §4 ("The workspace-level override layer").
 
 ## 6. Agent backends
 
@@ -476,9 +541,12 @@ volume policy rather than exposing arbitrary write access.
 
 Old chat and verification documents are historical references, not production
 instructions. The active decisions are consolidated here.
-`config/skills/component_author/v1.md` (relocated from `agent/skills/c.md` in
-PRD_2 Phase 2) is a reference corpus for a future `component_author` role,
-not a live default skill.
+`config/skills/component_author/SKILL.md` (relocated from `agent/skills/c.md`
+in PRD_2 Phase 2, converted to the on-demand frontmatter format afterwards) is
+now a LIVE dynamic skill of the coder role: its ~60 KB template corpus is
+fetched via `read_skill` only when the coder hand-authors or repairs ACOM
+component code without a usable eco-wizard — it is never baked into the static
+prompt.
 
 Do not use old version-specific prompts, dead LangGraph instructions, or the
 old Chroma path when changing the production harness.

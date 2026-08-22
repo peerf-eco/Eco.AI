@@ -21,7 +21,12 @@ class _WizardArgs(BaseModel):
     out_dir: str = Field(".", description="Project-relative output directory")
     options: list[str] = Field(
         default_factory=list,
-        description="eco-wizard options such as pn, cp, ut, or ts",
+        description=(
+            "Wizard option codes: pn (namespace postfix), cp (connection "
+            "points), ai/ao/co (aggregation inner/outer, containment outer), "
+            "ut (unit-test project), ts (thread-safe). Add only what the "
+            "plan needs."
+        ),
     )
     use_env_framework: bool = Field(
         True,
