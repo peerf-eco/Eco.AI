@@ -42,6 +42,7 @@ try:
 except ImportError:
     pass
 
+from agent.internal.tools.paths import framework_root
 from agent.rag.chunker_ast import ASTChunker
 from agent.rag.embedder import Embedder
 from agent.rag.ingest import ingest_cache
@@ -68,18 +69,37 @@ def main() -> int:
         help="ASTChunker chunk size (non-whitespace chars). Default 400 — "
              "the size that won the 4-way chunking eval on golden_queries.",
     )
+    parser.add_argument(
+        "--source", choices=("cache", "framework"), default="cache",
+        help="Corpus source: 'cache' (default) indexes marketplace_cache/; "
+             "'framework' indexes the standard ACOM $ECO_FRAMEWORK "
+             "development-kit tree (<Component>_DK_v.<ver>/<Component>/…), "
+             "so DK headers are indexed without a prior fetch. Component "
+             "names are normalized (the _DK_v.<ver> suffix is stripped).",
+    )
     args = parser.parse_args()
 
-    if not CACHE_DIR.exists():
+    if args.source == "framework":
+        corpus_dir = framework_root(repo=PROJECT_ROOT)
+        if not corpus_dir.is_dir():
+            sys.exit(
+                f"ECO_FRAMEWORK corpus not found at {corpus_dir}. Set "
+                f"ECO_FRAMEWORK to the ACOM development-kit directory or "
+                f"populate {CACHE_DIR} and use --source cache."
+            )
+    else:
+        corpus_dir = CACHE_DIR
+
+    if not corpus_dir.exists():
         sys.exit(
-            f"marketplace_cache not found at {CACHE_DIR}. "
+            f"corpus dir not found at {corpus_dir}. "
             f"Pull components first via scripts/fetch_marketplace.py."
         )
 
-    cache_files = [p for p in CACHE_DIR.rglob("*") if p.is_file()]
-    if not cache_files:
+    corpus_files = [p for p in corpus_dir.rglob("*") if p.is_file()]
+    if not corpus_files:
         sys.exit(
-            f"marketplace_cache at {CACHE_DIR} is empty — nothing to index. "
+            f"corpus dir at {corpus_dir} is empty — nothing to index. "
             f"Pull components first via scripts/fetch_marketplace.py."
         )
 
@@ -113,7 +133,7 @@ def main() -> int:
     store = RagStore.create(INDEX_PATH, embed_dim=embedder.dim, reset=True)
     try:
         chunker = ASTChunker(target_chars=args.target_chars)
-        stats = ingest_cache(CACHE_DIR, store, chunker, embedder)
+        stats = ingest_cache(corpus_dir, store, chunker, embedder)
     finally:
         store.close()
 

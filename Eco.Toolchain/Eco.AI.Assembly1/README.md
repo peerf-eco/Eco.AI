@@ -183,6 +183,7 @@ does not override already-set variables).
 | `ECO_MAKE_EXE` | server chat handler | `make` | Path to the make binary used by builds |
 | `MARKETPLACE_CACHE_ROOT` | paths.py consumers | `<repo>/marketplace_cache` → `/app/marketplace_cache` | Pre-pulled component cache |
 | `MARKETPLACE_INDEX_PATH` | paths.py consumers | `<repo>/marketplace_index.sqlite` → `/app/marketplace_index.sqlite` | sqlite-vec RAG index |
+| `ECO_FRAMEWORK` | paths/assembler, eco_cli pulls, index builder, eco-wizard | `<repo>/eco_framework` | Standard ACOM env var: root of the component development kits (`<Component>_DK_v.<ver>/<Component>/`). Used to source Eco.Core1 base headers into prompts, as `eco-cli pull -d` download target, and via `build_marketplace_index.py --source framework` |
 | `HARNESS_OUTPUT_ROOT` | server | `./output` | Where per-chat workspace dirs are created |
 | `HARNESS_TRACES_DIR` | server | `./traces` | Per-conversation LLM trace folders |
 | `HARNESS_MAX_HOPS` | orchestrator | `8` | Max handoff hops (also `harness.yaml.max_hops`) |
@@ -421,6 +422,10 @@ The API endpoints are:
 For CLI use:
 
 ```cmd
+python scripts/build_marketplace_index.py --rebuild
+# Index straight from the ACOM development-kit tree ($ECO_FRAMEWORK) instead
+# of a prior fetch into marketplace_cache/:
+python scripts/build_marketplace_index.py --rebuild --source framework
 python scripts/import_rag.py path/to/docs path/to/dump.sqlite
 python scripts/export_rag.py --index marketplace_index.sqlite --out marketplace_index.team.sqlite
 ```
@@ -528,8 +533,9 @@ Empty or placeholder files are skipped, so they can never blank out real
 instructions.
 
 **Cache/token efficiency**: blocks 1–3 are byte-identical for every role,
-mode, language, and backend; the Eco.Core1 stitch (~120 KB cap) is constant
-across turns and tasks; only the ROLE INSTRUCTIONS block varies per selection
+mode, language, and backend; the Eco.Core1 stitch is C-only (`.h` headers,
+`.hpp` wrappers excluded — ~29% smaller) and constant across turns and tasks;
+only the ROLE INSTRUCTIONS block varies per selection
 and stays stable while an agent iterates. This ordering maximizes provider
 KV-cache reuse (measured: 99.6% cached tokens, −81% cost per call on a pinned
 provider via `provider_pin`). Nothing dynamic — RAG results, tool outputs,

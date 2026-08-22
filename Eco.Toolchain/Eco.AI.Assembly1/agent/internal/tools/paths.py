@@ -105,3 +105,28 @@ def marketplace_index_path(*, repo: Path | None = None) -> Path:
         exists=lambda p: p.is_file(),
         repo=repo,
     )
+
+
+def framework_root(*, repo: Path | None = None) -> Path:
+    """Root of the ACOM components development kits (``ECO_FRAMEWORK``).
+
+    This is the standard ACOM environment variable: a directory holding one
+    ``<Component>_DK_v.<ver>/<Component>/`` tree per development kit, plus the
+    static-link libraries under each DK's ``BuildFiles/``. The harness reuses
+    it (instead of inventing its own variable) for:
+
+      - sourcing base-type headers (``Eco.Core1/SharedFiles``) into the
+        static system prompt (see ``agent/context/assembler.py``)
+      - populating the RAG index (``scripts/build_marketplace_index.py
+        --source framework``)
+      - ``eco-cli pull -d`` downloads land here automatically
+
+    Resolution: ``ECO_FRAMEWORK`` env → ``<repo>/eco_framework`` when present →
+    deterministic ``<repo>/eco_framework`` fallback (warn once when missing).
+    """
+    return _resolve(
+        env_var="ECO_FRAMEWORK",
+        filename="eco_framework",
+        exists=lambda p: p.is_dir(),
+        repo=repo,
+    )

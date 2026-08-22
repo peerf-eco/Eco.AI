@@ -1,4 +1,4 @@
-"""Ingest pipeline: walk marketplace_cache/, chunk, embed, store.
+"""Ingest pipeline: walk a component corpus, chunk, embed, store.
 
 Build a hybrid sqlite-vec + FTS5 index from a corpus directory in three
 phases:
@@ -12,10 +12,19 @@ The whole pipeline is *synchronous*. Embedding is the slow step (HTTP); we
 batch into the Embedder's batch_size and the bottleneck is the network.
 For our 30-component corpus (~175 .h files, ~3-5k chunks) one run finishes
 in ~5-15 minutes depending on embedding provider throughput.
+
+Two corpus layouts are supported:
+
+  - marketplace_cache (flat):    ``<Component>/<Component-specific dirs>``
+  - ECO_FRAMEWORK (versioned DK) ``<Component>_DK_v.<ver>/<Component>/...``
+
+In the DK layout the component name is derived by stripping the
+``_DK_v.<ver>`` suffix so indexed metadata matches marketplace names.
 """
 from __future__ import annotations
 
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Iterable, Optional
@@ -36,13 +45,17 @@ _C_EXTS = {
 }
 
 
-def _iter_source_files(cache_dir: Path) -> Iterable[tuple[str, Path]]:
+# ``Eco.Core1_DK_v.1.0.1.2`` → component name ``Eco.Core1``
+_DK_DIR_RE = re.compile(r"^(?P<name>.+?)_DK_v\.")
+
+
+def _iter_source_files(cache_dir: Path) -> Iterable[tuple[str, Path, Path]]:
     """Yield (component, file_path) pairs from ``cache_dir/<Component>/...``.
 
-    The directory layout is uniform across all 30 components — each has a
-    top-level dir matching its marketplace name (``Eco.Math.C89/``,
-    ``Eco.Core1/``, …) and headers under ``SharedFiles/``. Build artefacts
-    in ``BuildFiles/`` are skipped (binary).
+    Handles both corpus layouts (see module docstring): the flat
+    marketplace_cache layout and the versioned development-kit layout under
+    ``$ECO_FRAMEWORK`` (``<Component>_DK_v.<ver>/<Component>/SharedFiles/…``).
+    Build artefacts in ``BuildFiles/`` are skipped (binary).
     """
     for component_dir in sorted(cache_dir.iterdir()):
         if not component_dir.is_dir():
@@ -50,7 +63,12 @@ def _iter_source_files(cache_dir: Path) -> Iterable[tuple[str, Path]]:
         # Skip eco-cli bookkeeping & profile dumps
         if component_dir.name.startswith((".", "_")):
             continue
-        component = component_dir.name
+        match = _DK_DIR_RE.match(component_dir.name)
+        component = match.group("name") if match else component_dir.name
+        # DK layout: headers live under <DK>/<Component>/ — make file paths
+        # relative to that inner dir so indexed metadata matches the cache.
+        inner = component_dir / component
+        rel_base = inner if inner.is_dir() else component_dir
         for path in component_dir.rglob("*"):
             if not path.is_file():
                 continue
@@ -59,7 +77,7 @@ def _iter_source_files(cache_dir: Path) -> Iterable[tuple[str, Path]]:
             # Skip the (already-binary) build outputs and zip artefacts
             if "BuildFiles" in path.parts:
                 continue
-            yield component, path
+            yield component, path, rel_base
 
 
 def _read_text(path: Path) -> Optional[str]:
@@ -101,7 +119,7 @@ def ingest_cache(
     components_seen: set[str] = set()
     skipped: list[tuple[Path, str]] = []  # (path, reason)
 
-    for component, path in _iter_source_files(cache_dir):
+    for component, path, rel_base in _iter_source_files(cache_dir):
         if component_filter and component not in component_filter:
             continue
         if file_filter and path.name not in file_filter:
@@ -111,7 +129,7 @@ def ingest_cache(
             skipped.append((path, "decode_failed"))
             continue
         try:
-            rel_file = str(path.relative_to(cache_dir / component)).replace("\\", "/")
+            rel_file = str(path.relative_to(rel_base)).replace("\\", "/")
             chunks = chunker.chunk(text, rel_file)
         except Exception as e:
             skipped.append((path, f"chunker_failed: {e}"))

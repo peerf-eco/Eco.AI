@@ -138,12 +138,23 @@ retired — `agent/skills/c.md` now lives at
 `config/skills/component_author/v1.md`). The language skill
 (`config/skills/languages/<lang>.md`) is always appended last when present.
 
-Source stitch: `_core1_sharedfiles(source_roots)` picks the first configured
-root (`harness.yaml:source_roots`) containing `Eco.Core1/SharedFiles`;
-`stitch_source_files` emits it as one continuous payload with
-`START_FILE`/`END_FILE` anchors, capped at `min(HARNESS_SOURCE_MAX_BYTES,
-120_000)` bytes. Only Eco.Core1 is stitched; other components are discovered
-on demand via RAG / `grep` / `eco-cli pull`.
+Source stitch: `_core1_sharedfiles(source_roots)` locates
+`Eco.Core1/SharedFiles` and `stitch_source_files` emits it as one continuous
+payload with `START_FILE`/`END_FILE` anchors, capped at
+`min(HARNESS_SOURCE_MAX_BYTES, 120_000)` bytes. Only Eco.Core1 is stitched;
+other components are discovered on demand via RAG / `grep` / `eco-cli pull`.
+
+Discovery handles both layouts — flat (`<root>/Eco.Core1/SharedFiles`) and
+the versioned development-kit layout the marketplace ships and
+`eco-cli pull -d $ECO_FRAMEWORK` deposits
+(`<root>/Eco.Core1_DK_v.<ver>/Eco.Core1/SharedFiles`, highest version wins).
+The standard ACOM `ECO_FRAMEWORK` environment variable is consulted FIRST
+(via `paths.framework_root()`), then the configured `harness.yaml:source_roots`.
+
+The stitch is C-only (`.h` files; `.hpp` C++ wrappers excluded): agents author
+C89, the wrappers duplicate the same declarations, and dropping them cuts the
+byte-identical block ~29% (~85 KB → ~60 KB on the shipped DK) while keeping
+the KV-cache prefix intact.
 
 Artifact locations (cache, index) resolve via `agent/internal/tools/paths.py`:
 env var → repo-root artifact if present → `/app` mount if present →
@@ -292,14 +303,22 @@ The generator tool exposes the generator with:
 
 The marketplace CLI tool uses an
 allowlist, `shell=False`, bounded output, timeout control, and portable
-`ECO_CLI_PATH`/`ECO_CLI_PREFIX` overrides.
+`ECO_CLI_PATH`/`ECO_CLI_PREFIX` overrides. When the standard ACOM
+`ECO_FRAMEWORK` variable is set, every `pull` is routed into that
+development-kit tree automatically (eco-cli's `-d` flag is appended unless
+the caller already passed one); read-only subcommands are untouched.
 
 ## 9. Shared RAG lifecycle
 
 The shared RAG is a portable SQLite file containing chunk metadata, FTS5,
 sqlite-vec vectors, and provenance metadata. Sources can be:
 
-- marketplace cache files
+- marketplace cache files (`scripts/build_marketplace_index.py`, default)
+- the standard ACOM `ECO_FRAMEWORK` development-kit tree
+  (`scripts/build_marketplace_index.py --source framework`; versioned
+  `<Component>_DK_v.<ver>/` directories are normalized to marketplace
+  component names during ingest)
+- developer documentation
 - developer documentation
 - C/C++/IDL source
 - Markdown/text documentation

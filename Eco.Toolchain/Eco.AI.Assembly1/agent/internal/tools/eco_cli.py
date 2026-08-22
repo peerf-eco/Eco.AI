@@ -58,6 +58,29 @@ class _EcoCliArgs(BaseModel):
     )
 
 
+def _apply_framework_dev_target(raw_args: list[str]) -> tuple[list[str], str]:
+    """Route ``pull`` downloads into ``$ECO_FRAMEWORK`` via eco-cli's ``-d`` flag.
+
+    The ACOM convention: ``ECO_FRAMEWORK`` holds the development-kit tree and
+    eco-cli deposits pulled components there when invoked with ``-d/--dev``.
+    When the variable is set (and the caller did not pass ``-d`` themselves),
+    every ``pull`` gets ``-d <ECO_FRAMEWORK>`` appended so the component lands
+    in the canonical DK location instead of the session project_dir. Read-only
+    subcommands are untouched.
+    """
+    if not raw_args or raw_args[0] != "pull":
+        return raw_args, ""
+    if "-d" in raw_args or "--dev" in raw_args:
+        return raw_args, ""
+    framework = os.getenv("ECO_FRAMEWORK", "").strip()
+    if not framework:
+        return raw_args, ""
+    return [*raw_args, "-d", framework], (
+        f"note: pull targeted $ECO_FRAMEWORK ({framework}) via -d; "
+        "headers are under <Component>_DK_v.<ver>/<Component>/SharedFiles/."
+    )
+
+
 def _truncate(text: str, label: str) -> str:
     if len(text) <= _OUTPUT_TRUNC:
         return text
@@ -123,6 +146,7 @@ def _eco_cli(
         os.getenv("ECO_CLI_PREFIX")
         or os.getenv("internal_CLI_PREFIX", "")
     ).split()
+    raw_args, dev_note = _apply_framework_dev_target(raw_args)
     cmd = [*prefix, str(cli_path), *raw_args]
     cwd = str(project_dir) if project_dir is not None else None
 
@@ -149,6 +173,8 @@ def _eco_cli(
     stderr = _truncate(proc.stderr or "", "stderr")
 
     parts = [f"rc: {proc.returncode}"]
+    if dev_note:
+        parts.append(dev_note)
     if stdout:
         parts.append("=== stdout ===")
         parts.append(stdout)
@@ -196,8 +222,11 @@ def make_eco_cli_tool(
             "['find','-p'] lists every marketplace component as a JSON stream; "
             "['find','-c','<CID>'] returns one component's full JSON profile; "
             "['pull','-c','<CID>','-v','<VER>','-fid=<FID>'] downloads its "
-            "DEVKIT into project_dir (file_id comes from a prior 'find' call's "
-            "versions[].files[] entry with contentType=='DEVKIT'). Returns "
+            "DEVKIT (file_id comes from a prior 'find' call's "
+            "versions[].files[] entry with contentType=='DEVKIT'). When "
+            "$ECO_FRAMEWORK is set, pulls are routed into that development-kit "
+            "tree automatically (eco-cli -d flag); otherwise the DEVKIT lands "
+            "in project_dir. Returns "
             "raw stdout/stderr/rc — you parse the JSON yourself."
         ),
         args_schema=_EcoCliArgs,

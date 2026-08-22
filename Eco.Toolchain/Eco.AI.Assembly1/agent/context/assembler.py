@@ -5,24 +5,35 @@ from pathlib import Path
 from typing import Iterable
 
 from agent.domain import load_acom_domain, load_tool_contract
+from agent.internal.tools.paths import framework_root
 
 
 _SOURCE_EXTENSIONS = frozenset(
     {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".idl", ".inc"},
 )
 
+# The curated Eco.Core1 stitch is C-only: the ACOM base headers ship as C
+# headers (.h) plus their C++ wrappers (.hpp). Agents author C89, and the
+# .hpp duplicates add ~30% tokens to a byte-identical prompt block.
+_CORE1_STITCH_EXTENSIONS = frozenset({".h"})
 
-def _iter_source_files(roots: Iterable[Path]) -> list[Path]:
+
+def _iter_source_files(
+    roots: Iterable[Path],
+    *,
+    extensions: frozenset[str] | None = None,
+) -> list[Path]:
+    allowed = extensions or _SOURCE_EXTENSIONS
     paths: set[Path] = set()
     for root in roots:
         root = Path(root)
-        if root.is_file() and root.suffix.lower() in _SOURCE_EXTENSIONS:
+        if root.is_file() and root.suffix.lower() in allowed:
             paths.add(root.resolve())
             continue
         if not root.is_dir():
             continue
         for path in root.rglob("*"):
-            if path.is_file() and path.suffix.lower() in _SOURCE_EXTENSIONS:
+            if path.is_file() and path.suffix.lower() in allowed:
                 paths.add(path.resolve())
     return sorted(paths, key=lambda path: path.as_posix().lower())
 
@@ -31,10 +42,11 @@ def stitch_source_files(
     roots: Iterable[Path],
     *,
     max_bytes: int = 300_000,
+    extensions: frozenset[str] | None = None,
 ) -> str:
     sections: list[str] = []
     used = 0
-    for path in _iter_source_files(roots):
+    for path in _iter_source_files(roots, extensions=extensions):
         try:
             content = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -59,22 +71,49 @@ def stitch_source_files(
     return "".join(sections) or "(no C/C++ source files available)"
 
 
+def _core1_candidates(root: Path) -> list[Path]:
+    """Eco.Core1/SharedFiles locations under one root.
+
+    Handles both layouts:
+
+      - flat:        ``<root>/Eco.Core1/SharedFiles``
+      - versioned DK ``<root>/Eco.Core1_DK_v.<ver>/Eco.Core1/SharedFiles``
+
+    The versioned layout is what the ACOM marketplace ships and what
+    ``eco-cli pull -d $ECO_FRAMEWORK`` deposits, so it is discovered
+    automatically (highest version number wins if several are present).
+    """
+    root = Path(root)
+    flat = root / "Eco.Core1" / "SharedFiles"
+    if flat.is_dir():
+        return [flat.resolve()]
+    nested: list[Path] = []
+    for dk in sorted(root.glob("Eco.Core1_DK_v.*"), reverse=True):
+        candidate = dk / "Eco.Core1" / "SharedFiles"
+        if candidate.is_dir():
+            nested.append(candidate.resolve())
+    return nested
+
+
 def _core1_sharedfiles(roots: Iterable[Path]) -> Path | None:
-    """Locate ``Eco.Core1/SharedFiles`` within the given source roots.
+    """Locate ``Eco.Core1/SharedFiles`` across the given roots + ECO_FRAMEWORK.
 
     Eco.Core1 is the constant ACOM base (core types, ``IEcoUnknown``,
     ``IEcoBase1``, ``IEcoComponentFactory``, ``IEcoSystem1``, ``ErrEcoCodes``).
     Stitching it into the static prompt tail makes it a stable prefix, which
     maximizes provider KV-cache reuse across turns and across C tasks — far
     cheaper than the old full-marketplace stitch that blew the context window.
+
+    The standard ACOM ``ECO_FRAMEWORK`` environment variable is consulted
+    first (it points at the development-kit tree on host machines), then the
+    configured source roots (``harness.yaml:source_roots``, typically the
+    in-repo ``eco_framework/`` checkout and ``marketplace_cache``).
     """
-    for root in roots:
-        candidate = Path(root) / "Eco.Core1" / "SharedFiles"
-        if candidate.is_dir():
-            return candidate.resolve()
-        resolved = Path.cwd() / root / "Eco.Core1" / "SharedFiles"
-        if resolved.is_dir():
-            return resolved.resolve()
+    candidates_roots: list[Path] = [framework_root()]
+    candidates_roots.extend(Path(root) for root in roots)
+    for root in candidates_roots:
+        for candidate in _core1_candidates(root):
+            return candidate
     return None
 
 
@@ -102,7 +141,14 @@ def build_static_system_prompt(
     core1 = _core1_sharedfiles(source_roots)
     source = ""
     if core1 is not None:
-        source = stitch_source_files([core1], max_bytes=min(max_source_bytes, 120_000))
+        # C-only stitch (.h): the .hpp C++ wrappers duplicate the same
+        # declarations and would burn ~30% more tokens on a block that is
+        # byte-identical across every call (KV-cache prefix).
+        source = stitch_source_files(
+            [core1],
+            max_bytes=min(max_source_bytes, 120_000),
+            extensions=_CORE1_STITCH_EXTENSIONS,
+        )
     domain = domain_knowledge or load_acom_domain()
     stable_tools = tool_contract or load_tool_contract()
     return (
