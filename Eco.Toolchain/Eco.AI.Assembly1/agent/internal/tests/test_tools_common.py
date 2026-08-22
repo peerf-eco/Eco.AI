@@ -76,15 +76,15 @@ def test_resolve_inside_anchors_relative_at_project_dir(tmp_path, monkeypatch):
 
 def test_resolve_inside_backwards_compat_cwd_relative(tmp_path, monkeypatch):
     """If the caller passes a CWD-relative path that already lands inside
-    project_dir (legacy 'output/v7-XXX/Eco.Math.C89' style), keep it as-is."""
+    project_dir (legacy 'output/chat-XXX/Eco.Math.C89' style), keep it as-is."""
     cwd_root = tmp_path
-    project_dir = cwd_root / "output" / "v7-XXX"
+    project_dir = cwd_root / "output" / "chat-XXX"
     project_dir.mkdir(parents=True)
     monkeypatch.chdir(cwd_root)
-    # "output/v7-XXX/Eco.Math.C89" is CWD-relative AND inside project_dir
-    result = resolve_inside(project_dir, "output/v7-XXX/Eco.Math.C89")
-    # Should NOT be double-prefixed to project_dir/output/v7-XXX/...
-    assert result == cwd_root / "output/v7-XXX/Eco.Math.C89"
+    # "output/chat-XXX/Eco.Math.C89" is CWD-relative AND inside project_dir
+    result = resolve_inside(project_dir, "output/chat-XXX/Eco.Math.C89")
+    # Should NOT be double-prefixed to project_dir/output/chat-XXX/...
+    assert result == cwd_root / "output/chat-XXX/Eco.Math.C89"
 
 
 def test_resolve_inside_dot_resolves_to_project_dir(tmp_path, monkeypatch):

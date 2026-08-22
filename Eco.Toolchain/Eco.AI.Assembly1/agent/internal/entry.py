@@ -1,4 +1,4 @@
-﻿"""v7 entry point — assemble the three-agent pipeline and run it.
+﻿"""Pipeline entry point — assemble the three-agent pipeline and run it.
 
 Topology (declared edges):
 
@@ -26,17 +26,17 @@ from agent.internal.agents.tester import make_tester
 from agent.internal.orchestrator import Orchestrator
 
 
-# The single source of truth for the v7 topology.
-V7_EDGES: dict[str, dict[str, Optional[str]]] = {
+# The single source of truth for the pipeline topology.
+PIPELINE_EDGES: dict[str, dict[str, Optional[str]]] = {
     "architect": {"to_coder":     "coder",     "fail": None},
     "coder":     {"to_tester":    "tester",    "to_architect": "architect", "fail": None},
     "tester":    {"to_coder":     "coder",     "done":         None,        "fail": None},
 }
 
-V7_ENTRY = "architect"
+PIPELINE_ENTRY = "architect"
 
 
-def build_v7_pipeline(
+def build_pipeline(
     *,
     model: Model,
     cli_path: Optional[Path],
@@ -45,7 +45,7 @@ def build_v7_pipeline(
     max_hops: int = 8,
     on_event: Optional[Callable] = None,
 ) -> Orchestrator:
-    """Build a ready-to-run v7 orchestrator with all three agents wired up.
+    """Build a ready-to-run pipeline orchestrator with all three agents wired up.
 
     Every agent gets the same pi_ai `model`. To use different models per
     agent (e.g. cheaper for architect, sharper for coder), call the
@@ -80,8 +80,8 @@ def build_v7_pipeline(
     )
     return Orchestrator(
         agents={"architect": architect, "coder": coder, "tester": tester},
-        edges=V7_EDGES,
-        entry=V7_ENTRY,
+        edges=PIPELINE_EDGES,
+        entry=PIPELINE_ENTRY,
         max_hops=max_hops,
     )
 

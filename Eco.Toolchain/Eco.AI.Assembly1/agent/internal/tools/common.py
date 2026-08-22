@@ -34,7 +34,7 @@ def resolve_inside(project_dir: Path, args_path: str) -> Path:
       1. Absolute path — returned as-is (caller's ensure_inside still validates).
       2. Path that already resolves (from CWD) into project_dir — returned
          as-is for backwards compatibility (older prompts produced strings like
-         "output/v7-XXX/Eco.Math.C89" that work from the uvicorn CWD).
+         "output/chat-XXX/Eco.Math.C89" that work from the uvicorn CWD).
       3. Otherwise — anchored against project_dir. This is what current prompts
          teach: pass paths relative to project_dir (e.g. "Eco.Math.C89").
     """

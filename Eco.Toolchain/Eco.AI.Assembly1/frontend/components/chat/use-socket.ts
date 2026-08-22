@@ -2,4 +2,4 @@
 
 export {
   useHarnessSocket,
-} from "./use-v6-socket";
+} from "./use-harness-socket";

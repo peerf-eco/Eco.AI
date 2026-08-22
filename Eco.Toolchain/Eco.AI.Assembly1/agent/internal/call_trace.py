@@ -1,4 +1,4 @@
-﻿"""Per-call LLM trace persistence for the V7 EcoAgent path.
+﻿"""Per-call LLM trace persistence for the EcoAgent path.
 
 Unlike ``agent/internal/trace.py`` — which serializes a whole internal node attempt and
 depends on a live LangGraph context — this module writes ONE file per LLM
@@ -7,7 +7,7 @@ request/response pair, with zero langchain/langgraph imports.
 Design (per user request 2026-05-21):
   - every API request/response is persisted, so a trace exists even after a
     single LLM call and even if the agent loop never terminates;
-  - each conversation gets its own folder (``traces/v7-<id>/``); files inside
+  - each conversation gets its own folder (``traces/chat-<id>/``); files inside
     are numbered globally so architect/coder/tester calls interleave in
     chronological order.
 """

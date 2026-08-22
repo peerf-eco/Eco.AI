@@ -3,7 +3,7 @@
 
 What it does
 ------------
-Pretends to be the V7 architect agent given a real diploma task:
+Pretends to be the architect agent given a real diploma task:
 
     "Build a calculator component using pow and sqrt from EcoOS Math.C89.
      It must register on the InterfaceBus and use Core1 framework."

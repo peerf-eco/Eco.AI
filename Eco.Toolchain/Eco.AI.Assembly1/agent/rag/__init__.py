@@ -1,6 +1,6 @@
 """RAG over EcoOS marketplace_cache.
 
-Independent of langchain (V7 stack uses pi_ai). Public surface:
+Independent of langchain (the active stack uses pi_ai). Public surface:
     - chunker_base.Chunker / Chunk
     - chunker_naive.NaiveChunker / NaiveOverlapChunker
     - chunker_recursive.RecursiveChunker

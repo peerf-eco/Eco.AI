@@ -21,7 +21,7 @@ class HarnessRunner:
         request: str,
         *,
         language: str | None = None,
-        mode: str = "create",
+        mode: str = "plan",
         use_worktree: bool = False,
         worktree_name: str | None = None,
     ) -> dict[str, Any]:
@@ -37,7 +37,21 @@ class HarnessRunner:
         else:
             project_dir = self.config.root / "output" / "cli-run"
         project_dir.mkdir(parents=True, exist_ok=True)
-        role_name = "tester" if mode == "test" else "reviewer" if mode == "review" else "architect"
+        # CLI executes a SINGLE role one-shot. Full pipelines (auto / migrate)
+        # need the HITL plan gate and live only in the /ws/chat server.
+        one_shot_roles = {
+            "plan": "architect",
+            "code": "coder",
+            "test": "tester",
+            "review": "reviewer",
+        }
+        if mode not in one_shot_roles:
+            raise ValueError(
+                f"CLI mode {mode!r} is not supported. One-shot modes: "
+                f"{sorted(one_shot_roles)}. Use the UI/API websocket for the "
+                f"full auto/migrate pipeline."
+            )
+        role_name = one_shot_roles[mode]
         _, spec, profile = load_role_config(role_name, self.config.root)
         backend_name = spec.backend.removesuffix("_cli")
         model = (
@@ -86,8 +100,8 @@ def main() -> int:
     run_parser.add_argument("--language", default=None)
     run_parser.add_argument(
         "--mode",
-        choices=["create", "migrate", "test", "review"],
-        default="create",
+        choices=["plan", "code", "test", "review"],
+        default="plan",
     )
     run_parser.add_argument("--worktree", action="store_true")
     run_parser.add_argument("--worktree-name", default=None)

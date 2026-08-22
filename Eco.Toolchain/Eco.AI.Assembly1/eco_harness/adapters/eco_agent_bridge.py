@@ -1,10 +1,14 @@
+"""Adapt a local coding CLI to the internal orchestrator contract."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
-from agent.internal.eco_agent import EcoAgentResult, EcoAgentEvent
+from agent.internal.eco_agent import EcoAgentEvent, EcoAgentResult, EventType
 from eco_harness.adapters.external_cli import ExternalCliBackend
+
+logger = logging.getLogger(__name__)
 
 
 class ExternalEcoAgent:
@@ -32,14 +36,16 @@ class ExternalEcoAgent:
         def emit(event: dict):
             if self.on_event is None:
                 return
-            event_type = event.get("type", "error")
+            # Event marshalling must never kill a run: map known type names,
+            # degrade unknown ones to ERROR, and drop on any failure.
             try:
-                from agent.v6.eco_agent import EventType
-                event_enum = EventType(event_type)
-            except ValueError:
-                from agent.v6.eco_agent import EventType
-                event_enum = EventType.ERROR
-            self.on_event(EcoAgentEvent(type=event_enum, data=event))
+                try:
+                    event_enum = EventType(str(event.get("type", "")).lower())
+                except ValueError:
+                    event_enum = EventType.ERROR
+                self.on_event(EcoAgentEvent(type=event_enum, data=event))
+            except Exception:  # noqa: BLE001
+                logger.exception("external backend event marshalling failed")
 
         result = self.backend.run(
             role=self.role,

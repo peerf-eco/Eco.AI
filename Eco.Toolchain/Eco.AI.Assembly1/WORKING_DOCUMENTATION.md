@@ -57,42 +57,120 @@ Pydantic AI upgrades from changing the ACOM workflow contract.
 
 ## 4. Prompt-cache contract
 
-Every role and backend uses a deterministic static context assembled by
-`agent/context/assembler.py`:
+### How the initial context is assembled
+
+Every role's initial context (system prompt) is ONE deterministic string,
+built once per agent construction. Call chain:
 
 ```text
-BLOCK A — immutable framework rules, ACOM domain knowledge, and tool contract
-BLOCK B — one stitched source-code payload
-BLOCK C — role, mode, language, skills, and AGENTS.md instructions
-BLOCK D — runtime RAG, tool results, recent history, and user request
+make_role_agent(role, mode, language)          eco_harness/roles.py
+  ├─ make_architect()/make_coder()/…           built-in prompt constants +
+  │                                            toolset (agent/internal/agents/)
+  ├─ _role_prompt()                            workspace > config > built-in (§5)
+  └─ _configure_context() → _static_prompt()   composition below
+       ├─ _mode_prompt()                       config/prompts/modes/<mode>.md
+       ├─ _language_prompt()                   config/prompts/languages/<lang>.md
+       ├─ load_custom_instructions()           agent/context/customization.py:
+       │    AGENTS.md layers + selected skills + language skill
+       └─ build_static_system_prompt()         agent/context/assembler.py
 ```
 
-`config/prompts/acom_domain.md` is the canonical ACOM knowledge block. It
-contains the identifier taxonomy, framework package guidance, ABI and C
-conventions, project layout, static-link CID rules, and trust model. The
-stable tool policy is in `config/prompts/tool_contract.md`. `agent/domain.py`
-loads both files, and the assembler injects them before role-specific
-instructions and the stitched source payload.
-
-The internal implementation in `agent/internal/` and the external `codex`,
-`pi`, and `claude` adapters all use this same assembler path. The old Python
-taxonomy module remains only as a compatibility import surface; it no longer
-duplicates domain text in role prompts. This makes the effective static domain
-block byte-identical across supported backends and roles. Backend capabilities
-may differ, but domain policy and cache ordering do not.
-
-Configured legacy source roots are sorted by normalized path and emitted as one continuous
-payload:
+Final concatenation order is FIXED and must not be reordered:
 
 ```text
-// --- START_FILE: /workspace/src/uuid_registry.h ---
-...
-// --- END_FILE: /workspace/src/uuid_registry.h ---
+# SYSTEM HEADER                          config/prompts/acom_system_header.md
+                                         (HARNESS_SYSTEM_HEADER overrides path)
+=== STATIC ACOM DOMAIN KNOWLEDGE ===     config/prompts/acom_domain.md
+                                         (load_acom_domain)
+=== STATIC TOOL CONTRACT ===             config/prompts/tool_contract.md
+                                         (load_tool_contract)
+=== ROLE INSTRUCTIONS ===                composed block:
+                                           === MODE: <MODE> ===
+                                             config/prompts/modes/<mode>.md
+                                           <role prompt>        (precedence, §5)
+                                           <language prompt>
+                                             config/prompts/languages/<lang>.md
+                                           <custom instructions>
+                                             root/role AGENTS.md layers
+                                             + selected skill profiles
+                                             + config/skills/languages/<lang>.md
+                                           === ROLE CONFIGURATION ===
+                                             backend / model / reasoning
+=== IMMUTABLE SOURCE CODEBASE ===        curated stitch of
+                                         Eco.Core1/SharedFiles only
 ```
 
-The static source block is capped by `HARNESS_SOURCE_MAX_BYTES`. RAG output
-is dynamic and belongs after the static source block. Tool output is bounded
-and the active dynamic tail retains only the configured recent items.
+Selection inputs and their effect:
+
+- **Mode** (`config/modes.yaml`) — injects the mode prompt and selects which
+  roles may run. `auto` and `migrate` drive the full HITM pipeline (server
+  only); `plan`, `code`, `test`, `review` load exactly one role.
+- **Active role** (`config/roles.yaml`) — selects the backend/model/reasoning,
+  budgets, `prompt:` pointer (default `prompts/<role>.md`) and the
+  `skill_versions` map merged over the language's map.
+- **Language** (`config/languages.yaml`) — selects the language prompt file,
+  language skill profile, and the `eco_wizard` template family.
+
+Role-prompt precedence (first non-empty wins; empty/whitespace files are
+treated as absent so a stub can never blank out real instructions):
+
+```text
+1. <workspace>/prompts/<role>.md        i.e. .eco-harness/prompts/<role>.md,
+                                        or prompts/ next to the file named by
+                                        ECO_HARNESS_WORKSPACE_CONFIG
+2. config/<roles.<role>.prompt>         normally config/prompts/<role>.md —
+                                        the editable source of truth
+3. built-in constant                    CODER_SYSTEM_PROMPT etc. in
+                                        agent/internal/agents/<role>.py
+```
+
+Skill resolution (`load_custom_instructions`): for every entry of the merged
+`skill_versions` map, candidates are probed in root order
+`config/skills/ → .eco-harness/skills/ → agent/skills/` and name order
+`v<N>.md → SKILL.md → <skill>.md`. Names that match nothing resolve silently
+to nothing. The language skill (`config/skills/languages/<lang>.md`) is always
+appended last when present.
+
+Source stitch: `_core1_sharedfiles(source_roots)` picks the first configured
+root (`harness.yaml:source_roots`) containing `Eco.Core1/SharedFiles`;
+`stitch_source_files` emits it as one continuous payload with
+`START_FILE`/`END_FILE` anchors, capped at `min(HARNESS_SOURCE_MAX_BYTES,
+120_000)` bytes. Only Eco.Core1 is stitched; other components are discovered
+on demand via RAG / `grep` / `eco-cli pull`.
+
+Artifact locations (cache, index) resolve via `agent/internal/tools/paths.py`:
+env var → repo-root artifact if present → `/app` mount if present →
+deterministic repo-root fallback with a one-time warning. Host checkouts and
+containers therefore need no env vars.
+
+### Cache utilization rules
+
+The ordering above exists to maximize provider-side implicit prompt-cache
+(KV-cache) reuse and minimize billed tokens:
+
+- Blocks 1–3 (header, domain, tool contract) are byte-identical for **every**
+  role, mode, language, and backend → they form the longest shared prefix.
+- The stitched Eco.Core1 block is constant across turns, tasks, and threads.
+- The ROLE INSTRUCTIONS block differs per role but is stable for a given
+  role+mode+language combination, so an iterating agent loop replays its own
+  prefix verbatim on every LLM call.
+- NOTHING dynamic enters the system prompt: RAG snippets, tool outputs, the
+  user request, and handoff messages live in the message HISTORY.
+  `EcoAgent._build_context` elides all but the newest `max_tool_results`
+  (= `harness.yaml:dynamic_tail_items`, default 12) tool results, replacing
+  older payloads with one-line placeholders. `build_dynamic_tail` remains
+  available for non-loop callers only.
+- Implicit caching requires a warm upstream route: the model profile's
+  `provider_pin` (`config/models.yaml`) takes precedence over the global
+  `OPENROUTER_PROVIDER_PIN`; `OPENROUTER_ALLOW_FALLBACKS=true` (default) keeps
+  the pin preferred-but-not-required. Measured on a pinned provider: 99.6%
+  cached tokens, −81% cost per call.
+- Maintainer rules: never interpolate timestamps, thread ids, absolute
+  project paths, or marketplace listings into blocks 1–5 — they belong in the
+  seed or history. Keep additions to `acom_domain.md` / `tool_contract.md`
+  small; they multiply across every role. Edit role behavior in
+  `config/prompts/<role>.md` (no code change) and operator specialization in
+  `.eco-harness/prompts/<role>.md`.
 
 The framework header explicitly requires:
 
@@ -103,7 +181,7 @@ The framework header explicitly requires:
 - manual reference counting and allocator use
 - retrieved tools' output treated as data, not policy
 
-`eco-wizard` is tobe used for ACOM components, object boilerplate / temlates generation
+`eco-wizard` is to be used for ACOM components, object boilerplate / template generation.
 
 ## 5. Configuration and user rules
 
@@ -111,20 +189,28 @@ Repository configuration is stable and reviewable under `config/`. UI changes
 go to `.eco-harness/workspace.yaml`. Environment variables override both.
 Secrets remain outside repository configuration.
 
-Prompt and skill resolution order is stable:
+Overall precedence:
+
+```text
+environment variables > .eco-harness/workspace.yaml > config/*.yaml > code defaults
+```
+
+Prompt and skill resolution order is stable (§4 has the detailed logic):
 
 1. framework header
 2. stable tool contract
-3. role prompt
+3. role prompt — `.eco-harness/prompts/<role>.md` >
+   `config/prompts/<role>.md` > built-in constant; empty files skipped
 4. language prompt and selected skill profiles
 5. project/root and role `AGENTS.md`
-6. stitched source block
-7. dynamic RAG/tool/history tail
+6. stitched Eco.Core1 source block
+7. dynamic history tail (RAG/tool outputs live in message history, not here)
 
 Root `AGENTS.md` applies to all roles. Role-specific rules belong in
 `config/agents/<role>/AGENTS.md` or `.eco-harness/agents/<role>/AGENTS.md`.
-Reusable skills belong under `config/skills/`; Git commits provide their
-version history.
+Role-prompt overrides belong in `.eco-harness/prompts/<role>.md`. Reusable
+skills belong under `config/skills/`; Git commits provide their version
+history.
 
 ## 6. Agent backends
 
@@ -151,6 +237,14 @@ concise handoff
 This keeps external agents compatible with the same declared-edge topology.
 Native tool support can later be added through MCP while retaining the
 adapter protocol.
+
+External roles receive the SAME statically assembled prompt as internal ones,
+flattened into the seed (`<static system prompt>` + `=== DYNAMIC SEED ===` +
+task), because local CLIs have no system-prompt API in this adapter. Backend
+events (`start`, `done`, …) are mapped onto the shared `EventType`; unknown
+types degrade to `ERROR`, and event-sink failures are logged and dropped —
+they never abort a run (regression-tested, see
+`agent/internal/tests/test_prd2_regressions.py`).
 
 ## 7. Language support
 
@@ -232,13 +326,19 @@ fails loudly if Git is unavailable or the destination exists.
 `config/modes.yaml` defines mode-specific prompts, role lists, and
 capabilities:
 
-- `create`: architect, coder, tester; marketplace assembly and generation
-- `migrate`: architect, coder, tester; legacy analysis and incremental ACOM migration
+- `auto`: architect, coder, tester; the HITM plan→implement→verify loop with
+  an intent gate (websocket `/ws/chat` only)
+- `migrate`: same pipeline, migration-focused prompts (websocket only)
+- `plan`: architect only; research + closed plan, no pipeline
+- `code`: coder only; direct implementation, no automatic testing
 - `test`: tester only; read-only runtime verification
 - `review`: reviewer only; read-only style, ABI, naming, and correctness review
 
-The CLI accepts `--mode create|migrate|test|review` and slash aliases such as
-`/create`, `/migrate`, `/test`, and `/review`.
+The headless CLI executes a SINGLE role one-shot and therefore accepts only
+`--mode plan|code|test|review` (mapped to architect/coder/tester/reviewer).
+`auto` / `migrate` are rejected with a pointer to the websocket pipeline —
+the CLI has no human plan-approval gate. Slash aliases `/plan`, `/code`,
+`/test`, `/review` are accepted as leading-argument shortcuts.
 
 ## 13. External agent swarm orchestrator extension
 

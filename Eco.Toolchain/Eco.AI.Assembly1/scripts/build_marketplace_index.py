@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build (or rebuild) ``marketplace_index.sqlite`` from ``marketplace_cache/``.
 
-This is the production-index builder for the V7 ``search_marketplace`` EcoTool.
+This is the production-index builder for the ``search_marketplace`` EcoTool.
 It reuses ``agent/rag/ingest.py``'s pipeline with the **production** stack:
 
     Chunker:   ASTChunker(target_chars=400)  — winner of the 4-way eval

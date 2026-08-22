@@ -12,6 +12,8 @@ from agent.internal.tools.io import make_read_tools, make_write_tools
 from agent.internal.tools.build import make_build_tools
 from agent.internal.tools.rag import make_search_marketplace_tool
 from agent.internal.tools.eco_wizard import make_eco_wizard_tool
+# Fallback only. The editable source of truth is config/prompts/coder.md;
+# eco_harness.roles._role_prompt resolves workspace > config/prompts > this.
 CODER_SYSTEM_PROMPT = """\
 You are the EcoOS Coder — second agent in a three-agent pipeline
 (architect → CODER → tester). Your job is to implement the C sources the
@@ -269,10 +271,10 @@ def make_coder(
     ]
     # Read-only tools answered from a memo on identical repeats; write_file /
     # run_build are NOT listed — they mutate and clear the memo (so a re-read
-    # after an edit returns fresh content). Kill-switch: V7_TOOL_DEDUP=0.
+    # after an edit returns fresh content). Kill-switch: HARNESS_TOOL_DEDUP=0.
     dedup = {
         "read", "glob", "grep", "read_file", "list_dir", "search_marketplace",
-    } if os.getenv("V7_TOOL_DEDUP", "1") == "1" else None
+    } if os.getenv("HARNESS_TOOL_DEDUP", "1") == "1" else None
     return EcoAgent(
         model=model,
         system_prompt=CODER_SYSTEM_PROMPT,

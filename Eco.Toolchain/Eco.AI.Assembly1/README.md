@@ -173,6 +173,11 @@ wine prefix support for Windows executables on Linux.
    - `ECO_WIZARD_PATH` - Override eco-wizard executable path
    - `ECO_WORKTREE_ROOT` - Custom worktree directory
    - `ECO_CLI_PREFIX`/`ECO_WIZARD_PREFIX` - Wine prefix for Windows executables (e.g., `wine64`)
+   - `MARKETPLACE_CACHE_ROOT` / `MARKETPLACE_INDEX_PATH` - Custom artifact
+     locations. Normally NOT needed: on a host checkout the repo-root
+     `marketplace_cache/` and `marketplace_index.sqlite` are detected
+     automatically; in Docker the `/app` mounts are detected too. Set them
+     only for non-standard layouts.
 
 ### Initialization Scripts (Run on Host Machine)
 
@@ -236,7 +241,7 @@ docker compose up --build
 - `./marketplace_cache:/app/marketplace_cache` - Component cache (read-only)
 - `../../../../Dist/eco-cli/eco-cli-windows/eco-cli.exe:/opt/eco-cli-windows:ro` - Windows eco-cli executable
 - `../../../../Dist/eco-cli/eco-cli:/opt/eco-cli:ro` - Linux eco-cli executable (preferred)
-- `../../../../Dist/eco-cli/libaws-crt-jni.so :/opt/libaws-crt-jni.so:ro` - Linux eco-cli executable (preferred)
+- `../../../../Dist/eco-cli/libaws-crt-jni.so:/opt/libaws-crt-jni.so:ro` - AWS CRT JNI library for eco-cli (no space before the colon)
 - `../../../../Dist/eco-cli/eco-wizard-windows/eco-wizard.exe:/opt/eco-wizard-windows:ro` - Windows eco-wizard executable
 - `../../../../Dist/eco-wizard/eco-wizard:/opt/eco-wizard:ro` - Linux eco-wizard executable (preferred)
 
@@ -257,8 +262,8 @@ The system uses intelligent path resolution with the following logic:
 
 **For local development:**
 1. Checks `ECO_CLI_PATH` environment variable (if set)
-2. Checks `../eco-cli-linux/eco-cli` (relative to project)
-3. Checks `../eco-cli-windows/eco-cli.exe` (relative to project)
+2. Checks `<repo>/eco-cli-linux/eco-cli` (inside the project)
+3. Checks `<repo>/eco-cli-windows/eco-cli.exe` (inside the project)
 4. Checks system PATH for `eco-cli` or `eco-cli.exe`
 
 **Environment Variable Examples:**
@@ -454,27 +459,57 @@ agent/skills/<skill>.md
 
 ## Initial context injection
 
-Every role's system prompt is assembled by
-`agent/context/assembler.py::build_static_system_prompt` in this order:
+Every role's initial context (system prompt) is assembled once per agent
+construction by `agent/context/assembler.py::build_static_system_prompt`
+(driven by `eco_harness/roles.py`) from multiple sources, in a fixed order:
 
 ```text
-system header              (config/prompts/acom_system_header.md)
-+ STATIC ACOM DOMAIN KNOWLEDGE   (load_acom_domain)
-+ STATIC TOOL CONTRACT           (load_tool_contract)
-+ ROLE INSTRUCTIONS              (role/mode prompt + language/custom)
-+ IMMUTABLE SOURCE CODEBASE      (curated Eco.Core1 base)
+# SYSTEM HEADER                          config/prompts/acom_system_header.md
+=== STATIC ACOM DOMAIN KNOWLEDGE ===     config/prompts/acom_domain.md
+=== STATIC TOOL CONTRACT ===             config/prompts/tool_contract.md
+=== ROLE INSTRUCTIONS ===                composed from your selections:
+                                           === MODE ===      prompts/modes/<mode>.md
+                                           <role prompt>     precedence chain below
+                                           <language prompt> prompts/languages/<lang>.md
+                                           AGENTS.md layers + selected skills
+                                           ROLE CONFIGURATION (backend/model/reasoning)
+=== IMMUTABLE SOURCE CODEBASE ===        curated Eco.Core1/SharedFiles stitch
 ```
 
-A curated, **constant** `Eco.Core1/SharedFiles` base (core ACOM types,
-`IEcoUnknown`, `IEcoBase1`, `IEcoComponentFactory`, `IEcoSystem1`, `ErrEcoCodes`,
-macros) is now stitched into this block from `source_roots`, capped at
-`min(max_source_bytes, 120000)`. It replaces the old full-marketplace stitch, which
-injected ~80k tokens of every component header into every prompt, blew the context
-window (HTTP 400), and was redundant because components are discovered on demand via
-the sqlite-vec RAG index (`marketplace_index.sqlite`) and the `search_marketplace` /
-`eco-cli` tools. The curated base is **constant across turns and tasks**, so it sits
-in the stable prompt prefix and maximizes provider KV-cache reuse. `source_roots` /
-`max_source_bytes` in `harness.yaml` now drive this stitch.
+**How your selections drive it**
+
+- **Mode** (`config/modes.yaml`): `auto`/`migrate` inject the pipeline-mode
+  prompt and engage the full architect→approval→coder↔tester loop; `plan`,
+  `code`, `test`, `review` inject their one-shot prompt and load exactly one
+  role.
+- **Active role** (`config/roles.yaml`): picks backend, model profile,
+  reasoning level, budgets, and which skill profiles are injected.
+- **Language** (`config/languages.yaml`): picks `prompts/languages/<lang>.md`,
+  the language skill (`config/skills/languages/<lang>.md`), and the eco-wizard
+  template family.
+
+**Role-prompt precedence** (first non-empty wins):
+
+```text
+1. .eco-harness/prompts/<role>.md     workspace override, no repo changes needed
+2. config/prompts/<role>.md           editable source of truth for each role
+3. built-in constant                  fallback in agent/internal/agents/<role>.py
+```
+
+Empty or placeholder files are skipped, so they can never blank out real
+instructions.
+
+**Cache/token efficiency**: blocks 1–3 are byte-identical for every role,
+mode, language, and backend; the Eco.Core1 stitch (~120 KB cap) is constant
+across turns and tasks; only the ROLE INSTRUCTIONS block varies per selection
+and stays stable while an agent iterates. This ordering maximizes provider
+KV-cache reuse (measured: 99.6% cached tokens, −81% cost per call on a pinned
+provider via `provider_pin`). Nothing dynamic — RAG results, tool outputs,
+user requests — enters the system prompt; those live in message history where
+all but the newest 12 tool results are elided automatically.
+
+See `WORKING_DOCUMENTATION.md` §4 for the full developer-level contract
+(skill resolution rules, artifact path resolution, maintainer rules).
 
 Supporting changes that keep the architect fast and on-policy:
 
@@ -525,9 +560,13 @@ that session. It never silently modifies the primary checkout. A custom
 destination can be configured through `ECO_WORKTREE_ROOT`.
 
 ```cmd
-python -m eco_harness run "Migrate this project" --mode migrate --worktree
-python -m eco_harness /review "Check this code" --worktree
+python -m eco_harness run "Review this component" --mode review --worktree
+python -m eco_harness /plan "Design a checksum component" --worktree
 ```
+
+The CLI runs a single role one-shot (`plan|code|test|review`); the full
+`auto`/`migrate` pipeline needs the human plan-approval gate and lives in the
+UI / websocket API.
 
 ## Workspace and per-agent limits
 
@@ -565,8 +604,10 @@ Each role's limits come from `config/roles.yaml` →
 | `max_wall_s` | Wall-clock timeout for the agent. |
 
 Global guards: `HARNESS_MAX_HOPS` (default `8`) bounds orchestrator
-handoffs, and `AGENT_MAX_ITERATIONS` (env; `0`/`unset` = role default) can
-override `max_iters` for every role at once. File-tool results are also
+handoffs. `AGENT_MAX_ITERATIONS` (env) applies only to scripted
+`build_pipeline` runs (`agent/internal/entry.py`); the production
+`/ws/chat` pipeline uses each role's `budgets.max_iters` from
+`config/roles.yaml`. File-tool results are also
 size-capped (`read` 32 KB default / 200 KB max, `read_file` 256 KB, `grep` 100
 matches, `glob` 500 entries) so a single call can't blow the context budget.
 
@@ -575,9 +616,13 @@ matches, `glob` 500 entries) so a single call can't blow the context budget.
 The headless entrypoint is:
 
 ```cmd
-python -m eco_harness run "Build a calculator" --mode auto --language C
+python -m eco_harness run "Design a calculator component" --mode plan --language C
+python -m eco_harness run "Implement the approved plan" --mode code --language C
 python -m eco_harness serve --api
 ```
+
+One-shot modes only (`plan|code|test|review`); use the UI / websocket for the
+full `auto` pipeline with plan approval.
 
 `eco_harness.adapters.AgentBackend`, `eco_harness.tools.ToolRouter`,
 `eco_harness.interfaces.mcp`, and `eco_harness.extensions` are stable
@@ -602,6 +647,8 @@ boundaries, not the domain core.
 3. **RAG index not found:**
    - Run `python scripts/build_marketplace_index.py` on host
    - Ensure `marketplace_index.sqlite` exists in project root
+     (host and container runs auto-detect it there; set
+     `MARKETPLACE_INDEX_PATH` only for custom locations)
    - Check file permissions
 
 4. **Marketplace components missing:**

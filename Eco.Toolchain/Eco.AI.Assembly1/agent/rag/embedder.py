@@ -1,7 +1,7 @@
 """OpenRouter ``/embeddings`` client (sync, batched, retrying).
 
 Why a hand-rolled client and not langchain-openai:
-    The V7 stack deliberately removed langchain_openai (see pi-port phase 1).
+    The active stack deliberately removed langchain_openai (see pi-port phase 1).
     Reintroducing it for embeddings would re-couple us to a Pydantic-wrapped
     SDK that drops ``delta.reasoning`` in chat completions. We can hit
     ``POST /embeddings`` with stdlib + httpx and have a 100-LOC dependency.

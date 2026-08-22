@@ -1,1 +1,1 @@
-"""Three-agent v7 pipeline: architect → coder → tester, with backward handoff edges."""
+"""Three-agent pipeline: architect → coder → tester, with backward handoff edges."""

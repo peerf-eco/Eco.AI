@@ -73,9 +73,6 @@ services:
     container_name: ecoos-frontend
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8100
-      # v7 = three-agent orchestrator (architect → coder → tester). Only V7
-      # remains after the 2026-06-22 retirement; kept for the client to read.
-      - NEXT_PUBLIC_PIPELINE_VERSION=v7
     ports:
       - "127.0.0.1:3100:3000"
     volumes:

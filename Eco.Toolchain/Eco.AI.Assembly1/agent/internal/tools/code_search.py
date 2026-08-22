@@ -40,7 +40,6 @@ This stops a single tool call from eating the context window.
 from __future__ import annotations
 
 import logging
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -49,6 +48,7 @@ from typing import Iterable, Optional
 from pydantic import BaseModel, Field
 
 from agent.internal.eco_agent import EcoTool, ToolResult
+from agent.internal.tools import paths
 from agent.internal.tools.common import decode_text
 
 logger = logging.getLogger(__name__)
@@ -437,8 +437,9 @@ def make_code_search_tools(
         project_dir: Per-run output dir. Comes FIRST in the whitelist so
                      relative paths resolve there by default.
         extra_roots: Additional read-only roots. Defaults to a list
-                     containing the production marketplace_cache mount
-                     (/app/marketplace_cache). Override via
+                     containing the production marketplace_cache (resolved
+                     via ``paths.marketplace_cache_root``: env override →
+                     repo-root cache → /app mount). Override via
                      ``MARKETPLACE_CACHE_ROOT`` env or by passing your
                      own list.
 
@@ -446,10 +447,7 @@ def make_code_search_tools(
         Three EcoTools: grep, glob, read.
     """
     if extra_roots is None:
-        cache_root = Path(os.environ.get(
-            "MARKETPLACE_CACHE_ROOT",
-            "/app/marketplace_cache",
-        ))
+        cache_root = paths.marketplace_cache_root()
         extra_roots = [cache_root] if cache_root.exists() else []
     allowed: list[Path] = [project_dir, *extra_roots]
 

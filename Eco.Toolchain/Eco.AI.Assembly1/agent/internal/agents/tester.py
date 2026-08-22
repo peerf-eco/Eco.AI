@@ -11,6 +11,8 @@ from agent.internal.tools.io import make_read_tools
 from agent.internal.tools.runtime import make_runtime_tools
 
 
+# Fallback only. The editable source of truth is config/prompts/tester.md;
+# eco_harness.roles._role_prompt resolves workspace > config/prompts > this.
 TESTER_SYSTEM_PROMPT = f"""\
 You are the EcoOS Tester — third and final agent in the pipeline
 (architect → coder → TESTER).
@@ -111,7 +113,7 @@ def make_tester(
     ]
     # run_artifact is NOT deduped — repeated runs are legitimate observations.
     dedup = {"read_file", "list_dir"} \
-        if os.getenv("V7_TOOL_DEDUP", "1") == "1" else None
+        if os.getenv("HARNESS_TOOL_DEDUP", "1") == "1" else None
     return EcoAgent(
         model=model,
         system_prompt=TESTER_SYSTEM_PROMPT,

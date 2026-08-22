@@ -41,12 +41,44 @@ def _mode_prompt(config: HarnessConfig, mode: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _workspace_prompt(config: HarnessConfig, role: str) -> Path | None:
+    """Workspace-level override location for a role prompt.
+
+    ``<workspace>/prompts/<role>.md`` next to workspace.yaml (by default
+    ``.eco-harness/prompts/<role>.md``). Wins over config/prompts so an
+    operator can specialize a role without touching repository config.
+    """
+    if config.workspace_override is None:
+        return None
+    return config.workspace_override.parent / "prompts" / f"{role}.md"
+
+
+def _read_prompt(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def _role_prompt(config: HarnessConfig, role: str, fallback: str) -> str:
+    """Resolve the role prompt: workspace > config/prompts > built-in.
+
+    Empty or unreadable files are treated as absent, so a placeholder file can
+    never silently blank out the built-in instructions (regression: the old
+    self-referential coder.md/tester.md stubs replaced the full workflow
+    prompts — see PRD_2.md).
+    """
+    candidates: list[Path] = []
+    workspace_path = _workspace_prompt(config, role)
+    if workspace_path is not None:
+        candidates.append(workspace_path)
     role_spec = config.roles.get(role)
     if role_spec and role_spec.prompt:
-        path = config.root / "config" / role_spec.prompt
-        if path.exists():
-            return path.read_text(encoding="utf-8")
+        candidates.append(config.root / "config" / role_spec.prompt)
+    for path in candidates:
+        content = _read_prompt(path)
+        if content:
+            return content
     return fallback
 
 

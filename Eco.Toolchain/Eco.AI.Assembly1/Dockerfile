@@ -1,4 +1,4 @@
-# EcoOS Component Agent (V7) — backend API + agent
+# EcoOS Component Agent — backend API + agent
 #
 # Stack: FastAPI + custom Orchestrator + pi_ai (OpenRouter) + sqlite-vec RAG.
 # No ChromaDB / LangChain (retired 2026-06-22).
@@ -8,7 +8,7 @@
 FROM python:3.11-slim-bookworm
 
 LABEL maintainer="EcoOS Agent"
-LABEL description="EcoOS V7 agent — FastAPI + pi_ai + sqlite-vec RAG"
+LABEL description="EcoOS agent — FastAPI + pi_ai + sqlite-vec RAG"
 
 # Переменные окружения (значения по умолчанию, переопределяются из .env)
 ENV PYTHONUNBUFFERED=1 \
@@ -36,7 +36,7 @@ ENV WINEPREFIX=/tmp/wine \
     WINEDEBUG=-all
 # Debian 13 trixie ships wine64 binary at /usr/lib/wine/wine64 and does NOT
 # install a wrapper in PATH. Symlink it so subprocess calls that don't go
-# through V6_CLI_PREFIX (and any future debug shells) still work.
+# through ECO_CLI_PREFIX (and any future debug shells) still work.
 RUN ln -sf /usr/lib/wine/wine64 /usr/bin/wine \
     && mkdir -p /tmp/wine \
     && /usr/lib/wine/wine64 wineboot -i 2>/dev/null || true

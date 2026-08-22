@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 from agent.config.loader import load_config, load_role_config
+from agent.internal.tools import paths
 from eco_harness.worktrees import WorktreeError, create_worktree
 from eco_harness.roles import make_role_agent
 
@@ -503,8 +504,7 @@ async def chat_endpoint(websocket: WebSocket):
 
     # The harness uses pi_ai.Model directly (no langchain). This is the path where
     # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
-    is_windows = sys.platform == "win32"
-    
+
     # Automatic path resolution with Linux priority
     def resolve_executable_path(env_var_name, linux_path, windows_path, default_name):
         """Resolve executable path with Linux priority, Windows fallback."""
@@ -578,11 +578,7 @@ async def chat_endpoint(websocket: WebSocket):
         if wizard_path.suffix == ".exe":
             os.environ["ECO_WIZARD_PREFIX"] = "wine64"
     
-    make_env_path = (
-        os.getenv("ECO_MAKE_EXE")
-        or os.getenv("ECO_MAKE_EXE")
-        or (r"C:/Users/gaevy/gcc/bin/make.exe" if is_windows else "make")
-    )
+    make_env_path = os.getenv("ECO_MAKE_EXE") or "make"
     make_exe = Path(make_env_path)
 
     requested_thread_id = websocket.query_params.get("thread_id")
@@ -592,10 +588,9 @@ async def chat_endpoint(websocket: WebSocket):
 
     # Resolved once per connection so the workspace-header block and any
     # other downstream consumer agree on which cache the agent is told
-    # about. Matches the default in the active code-search tool.
-    marketplace_cache_root = Path(os.getenv(
-        "MARKETPLACE_CACHE_ROOT", "/app/marketplace_cache"
-    ))
+    # about. Same resolution as the code-search whitelist (env override →
+    # repo-root cache → /app mount), so host runs advertise a real path.
+    marketplace_cache_root = paths.marketplace_cache_root()
     language = "C"
     use_worktree = False
     worktree_path: Path | None = None

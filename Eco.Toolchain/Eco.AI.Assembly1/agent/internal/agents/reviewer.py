@@ -10,6 +10,8 @@ from agent.internal.tools.handoff import make_fail_tool, make_handoff_tool
 from agent.internal.tools.io import make_read_tools
 
 
+# Fallback only. The editable source of truth is config/prompts/reviewer.md;
+# eco_harness.roles._role_prompt resolves workspace > config/prompts > this.
 REVIEWER_SYSTEM_PROMPT = f"""\
 You are the ACOM code reviewer. You are strictly read-only: do not write,
 build, or modify files. Inspect the existing workspace and report evidence-

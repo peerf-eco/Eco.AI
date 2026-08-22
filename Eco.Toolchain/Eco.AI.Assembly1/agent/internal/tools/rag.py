@@ -30,24 +30,20 @@ where OpenRouter / the index file are unreachable.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from agent.internal.eco_agent import EcoTool, ToolResult
+from agent.internal.tools import paths
 
 logger = logging.getLogger(__name__)
 
 
-# Default index location — can be overridden by env or factory arg. The
-# value matches the production volume in docker-compose.yml. On a dev host
-# it falls back to the experiment artefact so manual runs Just Work.
-_DEFAULT_INDEX = Path(os.environ.get(
-    "MARKETPLACE_INDEX_PATH",
-    "/app/marketplace_index.sqlite",
-))
+# Default index location is resolved per-factory-call via
+# paths.marketplace_index_path() — env override → repo-root index →
+# /app mount — so host dev runs Just Work without env vars.
 
 
 class _SearchArgs(BaseModel):
@@ -136,10 +132,10 @@ def make_search_marketplace_tool(
     Parameters
     ----------
     index_path:
-        Path to ``marketplace_index.sqlite``. If None, reads from
-        ``MARKETPLACE_INDEX_PATH`` env var, falling back to a sane container
-        default. The file must exist by the time the tool is *invoked*;
-        not by the time the factory runs.
+        Path to ``marketplace_index.sqlite``. If None, resolved via
+        ``paths.marketplace_index_path`` (MARKETPLACE_INDEX_PATH env var →
+        repo-root index → /app mount). The file must exist by the time the
+        tool is *invoked*; not by the time the factory runs.
     embed_model:
         Override for the embedding model id (default reads from
         ``EMBEDDINGS_MODEL`` env, falling back to qwen3-embedding-8b).
@@ -150,7 +146,7 @@ def make_search_marketplace_tool(
         Wired and ready. The first call lazy-initialises the underlying
         store + embedder; subsequent calls reuse the same instances.
     """
-    resolved_index = Path(index_path) if index_path else _DEFAULT_INDEX
+    resolved_index = Path(index_path) if index_path else paths.marketplace_index_path()
 
     # Closure state — set on first successful call.
     state: dict = {"store": None, "embedder": None, "retriever": None}

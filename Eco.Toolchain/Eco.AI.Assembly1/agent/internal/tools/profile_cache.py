@@ -33,7 +33,6 @@ agent at the eco_cli fallback path.
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -41,14 +40,12 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from agent.internal.eco_agent import EcoTool, ToolResult
+from agent.internal.tools import paths
 
 
-# Match the production volume mount in docker-compose.yml (./marketplace_cache
-# → /app/marketplace_cache:ro). Override via env for tests / dev hosts.
-_DEFAULT_CACHE_ROOT = Path(os.environ.get(
-    "MARKETPLACE_CACHE_ROOT",
-    "/app/marketplace_cache",
-))
+# Cache root resolved per-factory-call via paths.marketplace_cache_root()
+# (env override → repo-root cache → /app mount) so host runs work without
+# env vars and tests can override freely.
 
 
 _RE_IID = re.compile(r"(IID_[A-Za-z0-9_]+)\s*(?:=)")
@@ -229,13 +226,13 @@ def make_read_component_profile_tool(
 
     Args:
         cache_root: Override for the marketplace cache root directory.
-                    ``None`` uses ``MARKETPLACE_CACHE_ROOT`` env or the
-                    production default (/app/marketplace_cache).
+                    ``None`` resolves via ``paths.marketplace_cache_root``
+                    (MARKETPLACE_CACHE_ROOT env → repo-root cache → /app).
 
     Returns:
         EcoTool with name ``read_component_profile``.
     """
-    resolved_root = Path(cache_root) if cache_root else _DEFAULT_CACHE_ROOT
+    resolved_root = Path(cache_root) if cache_root else paths.marketplace_cache_root()
     return EcoTool(
         name="read_component_profile",
         description=(

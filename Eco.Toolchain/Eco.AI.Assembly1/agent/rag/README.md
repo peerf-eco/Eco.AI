@@ -1,7 +1,7 @@
 # agent/rag — Marketplace RAG Index
 
 This package builds and queries a **hybrid vector + BM25 index** over the
-EcoOS Marketplace component corpus. It powers the V7 `search_marketplace`
+EcoOS Marketplace component corpus. It powers the `search_marketplace`
 EcoTool: an agent discovers a component by semantic/keyword search, then
 pulls its DEVKIT via the marketplace CLI.
 
