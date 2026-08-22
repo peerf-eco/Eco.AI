@@ -29,29 +29,20 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ── Inputs ────────────────────────────────────────────────────────────────
-# Try to find eco-cli with Linux priority
-ECO_CLI = None
-for path in [
-    os.environ.get("ECO_CLI_PATH"),
-    "../../eco-cli-linux/eco-cli",  # Linux ELF (preferred)
-    "../../eco-cli-windows/eco-cli.exe",  # Windows .exe (fallback)
-    "eco-cli",  # System PATH
-    "eco-cli.exe",  # System PATH Windows
-]:
-    if not path:
-        continue
-    candidate = Path(path)
-    if candidate.exists():
-        ECO_CLI = candidate
-        break
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-if ECO_CLI is None:
-    ECO_CLI = Path("../../../../Dist/eco-cli/eco-cli")  # Default fallback for Linux
+from agent.internal.tools.binaries import describe_search_order, resolve_binary  # noqa: E402
+
+# ── Inputs ────────────────────────────────────────────────────────────────
+# Single shared binary-resolution policy (env → <repo>/bin → /opt → legacy
+# platform-suffixed siblings → PATH).
+ECO_CLI = resolve_binary("eco-cli")
 
 CACHE_DIR = Path(os.environ.get(
     "MARKETPLACE_CACHE",
-    "marketplace_cache",  # Relative to project root
+    str(PROJECT_ROOT / "marketplace_cache"),
 ))
 TOKEN = os.environ.get("ECO_API_TOKEN") or ""
 
@@ -144,8 +135,12 @@ def main() -> int:
     if not TOKEN:
         print("ERROR: ECO_API_TOKEN env var not set.", file=sys.stderr)
         return 2
-    if not ECO_CLI.exists():
-        print(f"ERROR: eco-cli binary not found at {ECO_CLI}", file=sys.stderr)
+    if ECO_CLI is None or not ECO_CLI.exists():
+        print(
+            "ERROR: eco-cli binary not found. "
+            + describe_search_order("eco-cli"),
+            file=sys.stderr,
+        )
         return 2
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)

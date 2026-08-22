@@ -6,9 +6,8 @@
 #   - .env                      (cp env.example .env; set OPENAI_API_KEY)
 #   - marketplace_index.sqlite  (build: python scripts/build_marketplace_index.py)
 #   - marketplace_cache/        (python scripts/fetch_marketplace.py)
-#   - ../../../../eco-cli-linux/      (vendored eco-cli; gitignored)
-#   - ../../../../eco-wizard-linux/    (vendored eco-wizard; gitignored)
-# See docs/RAG_SETUP.md.
+# Binaries are bind-mounted straight into /opt (see resolve_binary in
+# agent/internal/tools/binaries.py). See docs/RAG_SETUP.md.
 #
 # This is a DEV compose: api = uvicorn --reload with ./agent + ./backend mounted;
 # frontend = `npm run dev`. For prod, drop the eco_framework bind-mounts and dev commands.
@@ -38,16 +37,12 @@ services:
       #     content the RAG was built from, kept in sync.
       - ./marketplace_index.sqlite:/app/marketplace_index.sqlite
       - ./marketplace_cache:/app/marketplace_cache
-      # Два варианта eco-cli (выбор через ECO_CLI_PATH в .env):
-      #   eco-cli-windows/ — Windows .exe (запуск через wine)
-      #   eco-cli-linux/   — нативный Linux ELF (предпочтительнее)
-      # - ../../../../eco-cli-windows:/opt/eco-cli-windows:ro
+      # eco-cli / eco-wizard are bind-mounted straight to the ELF files
+      # (paths resolved by agent/internal/tools/binaries.py):
+      #   ECO_CLI_PATH / ECO_WIZARD_PATH in .env override these mounts.
       - ../../../../Dist/eco-cli/eco-cli:/opt/eco-cli:ro
-      - ../../../../Dist/eco-cli/libaws-crt-jni.so :/opt/libaws-crt-jni.so:ro
-      # Два варианта eco-wizard (выбор через ECO_WIZARD_PATH в .env):
-      #   eco-wizard-windows/ — Windows .exe (запуск через wine)
-      #   eco-wizard-linux/   — нативный Linux ELF (предпочтительнее)
-      # - ../../../../eco-wizard-windows:/opt/eco-wizard-windows:ro
+      - ../../../../Dist/eco-cli/libaws-crt-jni.so:/opt/libaws-crt-jni.so:ro
+      # eco-wizard mount — same policy as eco-cli above.
       - ../../../../Dist/eco-wizard/eco-wizard:/opt/eco-wizard:ro
       # Монтируем код для разработки (hot reload)
       - ./agent:/app/agent

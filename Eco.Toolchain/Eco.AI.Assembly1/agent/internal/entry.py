@@ -33,7 +33,18 @@ PIPELINE_EDGES: dict[str, dict[str, Optional[str]]] = {
     "tester":    {"to_coder":     "coder",     "done":         None,        "fail": None},
 }
 
+# Post-approval execution topology shared with the /ws/chat sub-orchestrator:
+# identical to PIPELINE_EDGES except coder.to_architect is terminated — the
+# user already approved the plan, so the coder must fail honestly instead of
+# restarting the planner. Declared here (not inline in server.py) so both
+# topologies stay in one place.
+EXECUTION_EDGES: dict[str, dict[str, Optional[str]]] = {
+    "coder":  {"to_tester": "tester", "to_architect": None, "fail": None},
+    "tester": {"to_coder":  "coder",  "done":         None, "fail": None},
+}
+
 PIPELINE_ENTRY = "architect"
+EXECUTION_ENTRY = "coder"
 
 
 def build_pipeline(
@@ -44,6 +55,7 @@ def build_pipeline(
     make_exe: Path,
     max_hops: int = 8,
     on_event: Optional[Callable] = None,
+    trace_dir: Optional[Path] = None,
 ) -> Orchestrator:
     """Build a ready-to-run pipeline orchestrator with all three agents wired up.
 
@@ -54,6 +66,9 @@ def build_pipeline(
     `on_event` (if provided) is called with `{"agent": str, "event": EcoAgentEvent}`
     so handlers can disambiguate events from architect/coder/tester
     without inspecting tool-name patterns.
+
+    `trace_dir` (if provided) is where per-role LLM request/response traces
+    are persisted — same convention as the /ws/chat server topology.
     """
     def _make_wrapped(agent_name: str):
         if on_event is None:
@@ -66,16 +81,19 @@ def build_pipeline(
     architect = make_architect(
         model=model, cli_path=cli_path, project_dir=project_dir,
         max_iters=configured_max_iters,
+        trace_dir=trace_dir,
         on_event=_make_wrapped("architect"),
     )
     coder = make_coder(
         model=model, project_dir=project_dir, make_exe=make_exe,
         max_iters=configured_max_iters,
+        trace_dir=trace_dir,
         on_event=_make_wrapped("coder"),
     )
     tester = make_tester(
         model=model, project_dir=project_dir,
         max_iters=configured_max_iters,
+        trace_dir=trace_dir,
         on_event=_make_wrapped("tester"),
     )
     return Orchestrator(

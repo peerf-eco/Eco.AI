@@ -28,10 +28,11 @@ def load_custom_instructions(
         if content:
             sections.append(f"=== AGENTS.md: {path.as_posix()} ===\n{content}")
 
+    # Canonical skill home only. The legacy `agent/skills` root was retired in
+    # PRD_2 Phase 2 (agent/skills/c.md → config/skills/component_author/v1.md).
     skill_roots = [
         project_root / "config" / "skills",
         project_root / ".eco-harness" / "skills",
-        project_root / "agent" / "skills",
     ]
     for skill_name, version in sorted(skill_versions.items()):
         version_name = f"v{version}" if not str(version).startswith("v") else str(version)

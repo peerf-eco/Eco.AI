@@ -17,7 +17,11 @@ architect → coder → tester
 
 The graph is explicit and bounded. A role stops through a named handoff edge;
 the orchestrator never guesses an unknown edge and never permits an unlimited
-mutual-handoff loop.
+mutual-handoff loop. Both topologies are declared once, in
+`agent/internal/entry.py`: `PIPELINE_EDGES` (full architect→coder↔tester
+graph used by scripted `build_pipeline` runs) and `EXECUTION_EDGES`
+(the post-approval coder↔tester sub-graph used by the `/ws/chat` server,
+with `coder.to_architect` terminated).
 
 ## 2. Backend architecture
 
@@ -126,10 +130,13 @@ treated as absent so a stub can never blank out real instructions):
 
 Skill resolution (`load_custom_instructions`): for every entry of the merged
 `skill_versions` map, candidates are probed in root order
-`config/skills/ → .eco-harness/skills/ → agent/skills/` and name order
+`config/skills/ → .eco-harness/skills/` and name order
 `v<N>.md → SKILL.md → <skill>.md`. Names that match nothing resolve silently
-to nothing. The language skill (`config/skills/languages/<lang>.md`) is always
-appended last when present.
+to nothing (the phantom `language` key was removed from all YAML
+`skill_versions` maps in PRD_2 Phase 2; the legacy `agent/skills/` root was
+retired — `agent/skills/c.md` now lives at
+`config/skills/component_author/v1.md`). The language skill
+(`config/skills/languages/<lang>.md`) is always appended last when present.
 
 Source stitch: `_core1_sharedfiles(source_roots)` picks the first configured
 root (`harness.yaml:source_roots`) containing `Eco.Core1/SharedFiles`;
@@ -141,7 +148,15 @@ on demand via RAG / `grep` / `eco-cli pull`.
 Artifact locations (cache, index) resolve via `agent/internal/tools/paths.py`:
 env var → repo-root artifact if present → `/app` mount if present →
 deterministic repo-root fallback with a one-time warning. Host checkouts and
-containers therefore need no env vars.
+containers therefore need no env vars (PRD_2 Phase 1 fixed the hard-coded
+`/app` defaults that broke host runs).
+
+External tool binaries (eco-cli, eco-wizard, external sub-agents) resolve via
+`agent/internal/tools/binaries.py::resolve_binary` — the single policy since
+PRD_2 Phase 2: explicit config → `ECO_<NAME>_PATH` env → `<repo>/bin/<name>`
+(canonical, gitignored) → `/opt/<name>` (container mounts) → legacy
+platform-suffixed siblings → `PATH`. All former per-consumer resolvers
+(server, eco_cli, eco_wizard, factory, scripts) delegate to it.
 
 ### Cache utilization rules
 
@@ -220,11 +235,15 @@ The external adapter invokes installed local harnesses exactly as follows:
 codex -p "<prompt>"
 pi -e "<prompt>"
 claude -p "<prompt>"
+grok -p "<prompt>"
 ```
 
-The adapter resolves the executable from `<PATH>` or
-`ECO_CODEX_PATH`, `ECO_PI_PATH`, or `ECO_CLAUDE_PATH`. Missing executables
-produce an explicit role failure. There is no silent fallback.
+The adapter resolves the executable via the shared `resolve_binary` policy
+(`ECO_CODEX_PATH`, `ECO_PI_PATH`, `ECO_CLAUDE_PATH`, `ECO_GROK_PATH` →
+`<repo>/bin/<name>` → `/opt` → `PATH`). The invocation flag comes from
+`config/agents/external/<name>.yaml` (`flag:`), wired into
+`ExternalCliBackend` in PRD_2 Phase 2. Missing executables produce an
+explicit role failure. There is no silent fallback.
 
 External agents must return one structured marker:
 
@@ -240,10 +259,13 @@ adapter protocol.
 
 External roles receive the SAME statically assembled prompt as internal ones,
 flattened into the seed (`<static system prompt>` + `=== DYNAMIC SEED ===` +
-task), because local CLIs have no system-prompt API in this adapter. Backend
-events (`start`, `done`, …) are mapped onto the shared `EventType`; unknown
-types degrade to `ERROR`, and event-sink failures are logged and dropped —
-they never abort a run (regression-tested, see
+task), because local CLIs have no system-prompt API in this adapter. Since
+PRD_2 Phase 2 the static prompt is resolved with the full role-prompt
+precedence chain (workspace > `config/prompts/<role>.md` > placeholder), so
+external coders/testers see the same STEP workflow and stop-tool discipline
+as internal agents. Backend events (`start`, `done`, …) are mapped onto the
+shared `EventType`; unknown types degrade to `ERROR`, and event-sink failures
+are logged and dropped — they never abort a run (regression-tested, see
 `agent/internal/tests/test_prd2_regressions.py`).
 
 ## 7. Language support
@@ -261,7 +283,8 @@ invent those layouts.
 
 The generator tool exposes the generator with:
 
-- executable lookup via `ECO_WIZARD_PATH` or `PATH`
+- executable lookup via the shared `resolve_binary` policy
+  (`ECO_WIZARD_PATH` → `<repo>/bin/eco-wizard` → `/opt` → legacy siblings → `PATH`)
 - `eco-wizard new`
 - language, type, output, environment, and option arguments
 - bounded output
@@ -434,15 +457,52 @@ volume policy rather than exposing arbitrary write access.
 
 Old chat and verification documents are historical references, not production
 instructions. The active decisions are consolidated here.
-`agent/skills/c.md` is a reference corpus for a future `component_author`
-role, not a live default skill.
+`config/skills/component_author/v1.md` (relocated from `agent/skills/c.md` in
+PRD_2 Phase 2) is a reference corpus for a future `component_author` role,
+not a live default skill.
 
 Do not use old version-specific prompts, dead LangGraph instructions, or the
 old Chroma path when changing the production harness.
 
 ## 17. Validation checklist
 
+### Test suite
+
+The suite lives in `agent/internal/tests/` and MUST run through the project
+venv so the pinned `pytest-asyncio` / `tree-sitter` versions are used:
+
+```bash
+# One-time setup:
+python -m venv .venv
+.venv/bin/pip install -r agent/requirements.txt   # includes pytest via pytest-asyncio
+
+# Every run:
+.venv/bin/python -m pytest agent/internal/tests -v
+```
+
+(Windows: `.venv\Scripts\python -m pytest agent/internal/tests`.)
+`make test` is the equivalent one-liner. Live-LLM tests are marked
+`@pytest.mark.live` and skipped unless `--live` is passed; the root
+`conftest.py` registers that marker and skips them by default.
+
+Coverage map:
+
+- `test_orchestrator.py`, `test_entry.py` — edge routing, hop ceilings,
+  `build_pipeline` assembly (`trace_dir` passthrough included).
+- `test_eco_agent*.py`, `test_agents.py`, `test_handoff_tools.py`,
+  `test_tools_*.py` — EcoAgent loop, role agents, handoff contract,
+  file/build/runtime tools, RAG tool offline.
+- `test_prd2_regressions.py` — Phase 0/1 locks: external bridge event
+  marshalling, prompt precedence (workspace > config > built-in), host-mode
+  artifact paths.
+- `test_prd2_phase2.py` — Phase 2/3 locks: shared `resolve_binary` order,
+  phantom skill-key removal, dead-YAML wiring, external-role prompt parity,
+  pipeline-topology constants.
+
+### Baseline gate
+
 ```cmd
+.venv/bin/python -m pytest agent/internal/tests
 python -m compileall -q agent backend eco_harness scripts
 cd frontend
 npm run build

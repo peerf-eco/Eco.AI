@@ -8,6 +8,16 @@ be selected per role.
 
 ## Quick Start
 
+The shortest path uses the Makefile targets (`setup` → `index` →
+`preflight` → `up`); the equivalent manual steps follow below.
+
+```bash
+make setup      # .venv + agent/requirements.txt + .env seeded from env.example
+make index      # fetch marketplace components + build the RAG index (needs tokens in .env)
+make preflight  # validate binaries, cache, index (--fix applies safe fixes)
+make up         # docker compose up --build
+```
+
 ### Option 1: Docker Compose (Recommended)
 ```bash
 # Prerequisites on the host (these run on the host, NOT inside the container):
@@ -19,20 +29,20 @@ be selected per role.
 
 # 1. Copy environment template
 cp env.example .env
+#    (or let the preflight script seed it for you:)
+#    python scripts/dev_preflight.py --fix
 
 # 2. Edit .env with your settings. At minimum set:
 #      OPENAI_API_KEY  - OpenRouter API key (used by build_marketplace_index.py embeddings)
 #      ECO_API_TOKEN   - Eco marketplace token (used by fetch_marketplace.py)
-#      ECO_CLI_PATH    - absolute path to the eco-cli binary (or put eco-cli on PATH)
-#      ECO_WIZARD_PATH - absolute path to the eco-wizard binary (or put eco-wizard on PATH)
+#      ECO_CLI_PATH    - absolute path to the eco-cli binary (or put it in <repo>/bin/)
+#      ECO_WIZARD_PATH - absolute path to the eco-wizard binary (or put it in <repo>/bin/)
 #    OPENROUTER_URL defaults to https://openrouter.ai/api/v1 if unset.
 
-# 3. Prepare executables (on host, outside container)
-#    Place executables in these directories relative to project root:
-#    - ../eco-cli-linux/eco-cli            (Linux ELF, preferred)
-#    - ../eco-cli-windows/eco-cli.exe      (Windows .exe, fallback via wine)
-#    - ../eco-wizard-linux/eco-wizard      (Linux ELF, preferred)
-#    - ../eco-wizard-windows/eco-wizard.exe (Windows .exe, fallback via wine)
+# 3. Prepare executables — canonical home is <repo>/bin/ (gitignored):
+mkdir -p bin
+cp /path/to/eco-cli bin/
+cp /path/to/eco-wizard bin/
 #    Or skip this and set ECO_CLI_PATH / ECO_WIZARD_PATH in .env (see step 2).
 
 # 4. Set up the host Python environment for the initialization scripts
@@ -117,42 +127,26 @@ The WebSocket path is `/ws/chat`. New code should use the neutral
 If a configured external executable is missing, the selected role fails with
 an actionable error. The harness does not silently fall back to another agent.
 
-### Executable Directory Structure
+### Executable Resolution
 
-The system uses a consistent directory structure for executables with Linux priority:
+All external tool binaries (eco-cli, eco-wizard, and the optional external
+sub-agents) are resolved by one shared policy —
+`agent/internal/tools/binaries.py::resolve_binary`:
 
-```
-../ (relative to project root)
-├── eco-cli-linux/          # Linux ELF executable (preferred)
-│   └── eco-cli
-├── eco-cli-windows/        # Windows .exe executable (fallback via wine)
-│   └── eco-cli.exe
-├── eco-wizard-linux/       # Linux ELF executable (preferred)
-│   └── eco-wizard
-└── eco-wizard-windows/     # Windows .exe executable (fallback via wine)
-    └── eco-wizard.exe
-```
+1. `ECO_CLI_PATH` / `ECO_WIZARD_PATH` / `ECO_<NAME>_PATH` environment variable
+2. `<repo>/bin/<name>` — the canonical, gitignored home (place binaries here)
+3. `/opt/<name>` — container bind-mount location (docker-compose.yml)
+4. Legacy platform-suffixed siblings (`<repo>/eco-cli-linux/eco-cli`,
+   `<repo>/eco-cli-windows/eco-cli.exe`) — kept for backwards compatibility
+5. System `PATH`
 
-**Path Resolution Priority:**
-1. Environment variables (`ECO_CLI_PATH`, `ECO_WIZARD_PATH`) - **Use to override automatic detection**
-2. Linux executables (preferred for Docker containers)
-3. Windows executables via wine (fallback)
-4. System PATH
-5. Configuration files
+Windows `.exe` binaries on Linux run through a wine wrapper configured via
+`ECO_CLI_PREFIX` / `ECO_WIZARD_PREFIX` (e.g. `wine64`).
 
-The system automatically detects and uses the appropriate executable with
-wine prefix support for Windows executables on Linux.
-
-**When to use `ECO_CLI_PATH`/`ECO_WIZARD_PATH`:**
-- To use a custom executable location not in the standard directories
-- To force use of Windows executable when Linux version is available
-- To specify exact path when multiple versions exist
-- For development/testing with different executable versions
-
-**When NOT needed:**
-- When using standard directory structure (`../eco-cli-linux/`, etc.)
-- When executables are in system PATH
-- For normal Docker Compose deployment (automatic detection works)
+**When to use the env vars:** custom executable locations, forcing the Windows
+binary, or pinning a specific version. For normal setups just drop the
+binaries into `<repo>/bin/` or leave them in Docker mount points — no config
+needed.
 
 ## Setup Details
 
@@ -168,16 +162,50 @@ wine prefix support for Windows executables on Linux.
    - `OPENROUTER_URL` - OpenRouter API URL (default: `https://openrouter.ai/api/v1`)
    - `ECO_API_TOKEN` - Eco marketplace token (for `fetch_marketplace.py`)
 
-3. **Optional environment variables:**
-   - `ECO_CLI_PATH` - Override eco-cli executable path
-   - `ECO_WIZARD_PATH` - Override eco-wizard executable path
-   - `ECO_WORKTREE_ROOT` - Custom worktree directory
-   - `ECO_CLI_PREFIX`/`ECO_WIZARD_PREFIX` - Wine prefix for Windows executables (e.g., `wine64`)
-   - `MARKETPLACE_CACHE_ROOT` / `MARKETPLACE_INDEX_PATH` - Custom artifact
-     locations. Normally NOT needed: on a host checkout the repo-root
-     `marketplace_cache/` and `marketplace_index.sqlite` are detected
-     automatically; in Docker the `/app` mounts are detected too. Set them
-     only for non-standard layouts.
+### Environment Variable Matrix
+
+Canonical reference for every environment variable the harness reads.
+`.env` is loaded via python-dotenv; shell exports win over nothing (dotenv
+does not override already-set variables).
+
+| Variable | Read by | Default | Purpose |
+| --- | --- | --- | --- |
+| `OPENAI_API_KEY` | embedder, providers | — | OpenRouter API key (RAG embeddings + LLM calls) |
+| `OPENROUTER_URL` | providers | `https://openrouter.ai/api/v1` | OpenRouter endpoint |
+| `LLM_MODEL` | config loader | `tencent/hy3-preview` | Default model id (sets/overrides the `default` profile) |
+| `ECO_API_TOKEN` | fetch_marketplace.py, eco-cli | — | Eco marketplace token |
+| `ECO_CLI_PATH` | binary resolution | `<repo>/bin/eco-cli` → `/opt/eco-cli` → PATH | eco-cli binary location |
+| `ECO_WIZARD_PATH` | binary resolution | `<repo>/bin/eco-wizard` → `/opt/eco-wizard` → PATH | eco-wizard binary location |
+| `ECO_CLI_PREFIX` | eco_cli tool | — | Wrapper command for Windows binaries under Linux (e.g. `wine64`) |
+| `ECO_WIZARD_PREFIX` | eco_wizard tool | — | Same, for eco-wizard |
+| `ECO_WIZARD_TIMEOUT_S` | eco_wizard tool | `180` | Scaffold generation timeout |
+| `ECO_CLAUDE_PATH` / `ECO_CODEX_PATH` / `ECO_GROK_PATH` / `ECO_PI_PATH` | factory / ExternalCliBackend | PATH lookup | External sub-agent binaries; flags come from `config/agents/external/<name>.yaml` |
+| `ECO_MAKE_EXE` | server chat handler | `make` | Path to the make binary used by builds |
+| `MARKETPLACE_CACHE_ROOT` | paths.py consumers | `<repo>/marketplace_cache` → `/app/marketplace_cache` | Pre-pulled component cache |
+| `MARKETPLACE_INDEX_PATH` | paths.py consumers | `<repo>/marketplace_index.sqlite` → `/app/marketplace_index.sqlite` | sqlite-vec RAG index |
+| `HARNESS_OUTPUT_ROOT` | server | `./output` | Where per-chat workspace dirs are created |
+| `HARNESS_TRACES_DIR` | server | `./traces` | Per-conversation LLM trace folders |
+| `HARNESS_MAX_HOPS` | orchestrator | `8` | Max handoff hops (also `harness.yaml.max_hops`) |
+| `AGENT_MAX_ITERATIONS` | `build_pipeline` runs only | unset | Overrides per-role `max_iters` for scripted pipeline runs; production `/ws/chat` uses `budgets.max_iters` from `config/roles.yaml` |
+| `HARNESS_DYNAMIC_TAIL_ITEMS` | agent context | `5` (`harness.yaml`: 12) | Newest tool results kept verbatim in context |
+| `HARNESS_RETAINED_TOOL_OUTPUTS` | agent context | `budgets.yaml.retained_tool_outputs` (5) | Wired alias controlling `max_tool_results` context retention |
+| `HARNESS_SOURCE_MAX_BYTES` | context assembler | `300000` | Cap on static source material in the system prompt |
+| `HARNESS_PREPULL_FRAMEWORK` | server scaffold | `1` | `0` disables copying framework components into project_dir |
+| `HARNESS_TOOL_DEDUP` | read-only tool memo-dedup | on | `0` disables dedup kill-switch (consistent name across code/.env/env.example) |
+| `HARNESS_WARM_SEED` | server warm-retry | `0` | `1` enables warm retry seeds |
+| `HARNESS_SCAFFOLD` | server scaffold | on | `0` disables pre-seeding src/EcoMain.c + Makefile |
+| `ECO_WORKTREE_ROOT` | worktrees | repo default | Isolated git-worktree root |
+| `ECO_HARNESS_WORKSPACE_CONFIG` | config loader | `.eco-harness/workspace.yaml` | Workspace override file |
+| `ECO_ROLE_<ROLE>_BACKEND` / `_MODEL` / `_REASONING` / `_MAX_TOKENS` | config loader | `roles.yaml` | Per-role overrides (e.g. `ECO_ROLE_CODER_BACKEND=pi`) |
+| `DEFAULT_LANGUAGE` | config loader | `C` | Default implementation language |
+
+Optional external env vars consumed indirectly by eco-cli/eco-wizard:
+`ECO_API_TOKEN`, `ECO_FRAMEWORK` / `ECO_FRAMEWORK_PATH` (framework DK path).
+
+3. **Optional configuration notes:**
+   - `MARKETPLACE_CACHE_ROOT` / `MARKETPLACE_INDEX_PATH` are normally NOT
+     needed: on a host checkout the repo-root artifacts are detected
+     automatically; in Docker the `/app` mounts are detected too.
 
 ### Initialization Scripts (Run on Host Machine)
 
@@ -210,13 +238,17 @@ wine prefix support for Windows executables on Linux.
 
 ### Executable Preparation
 
-Place executables in these locations **relative to project root on host** depending on your OS and files locations, example:
-- `../eco-cli-linux/eco-cli` - Linux ELF (preferred)
-- `../eco-cli-windows/eco-cli.exe` - Windows .exe (fallback via wine)
-- `../eco-wizard-linux/eco-wizard` - Linux ELF (preferred)
-- `../eco-wizard-windows/eco-wizard.exe` - Windows .exe (fallback via wine)
+Place the binaries in the canonical gitignored home relative to project root:
 
-Docker Compose will mount these directories into the container at `/opt/eco-*-linux/` and `/opt/eco-*-windows/`.
+```
+bin/
+├── eco-cli       # Linux ELF (preferred)
+└── eco-wizard    # Linux ELF (preferred)
+```
+
+Docker Compose bind-mounts the vendored ELF files directly into the
+container at `/opt/eco-cli` and `/opt/eco-wizard`; both locations are found
+automatically by `resolve_binary`.
 
 ### Docker Compose Deployment
 
@@ -224,7 +256,8 @@ Docker Compose will mount these directories into the container at `/opt/eco-*-li
 1. `.env` file configured
 2. `marketplace_index.sqlite` created (via `build_marketplace_index.py`)
 3. `marketplace_cache/` directory populated (via `fetch_marketplace.py`)
-4. Executables placed in `../eco-*-linux/` and `../eco-*-windows/` directories
+4. Binaries placed in `<repo>/bin/eco-cli` and `<repo>/bin/eco-wizard`
+   (or available at the `/opt/...` mount points)
 
 **Start the application:**
 ```bash
@@ -239,11 +272,9 @@ docker compose up --build
 **Volume Mounts in Docker Compose:**
 - `./marketplace_index.sqlite:/app/marketplace_index.sqlite` - RAG index (read-write)
 - `./marketplace_cache:/app/marketplace_cache` - Component cache (read-only)
-- `../../../../Dist/eco-cli/eco-cli-windows/eco-cli.exe:/opt/eco-cli-windows:ro` - Windows eco-cli executable
-- `../../../../Dist/eco-cli/eco-cli:/opt/eco-cli:ro` - Linux eco-cli executable (preferred)
+- `../../../../Dist/eco-cli/eco-cli:/opt/eco-cli:ro` - eco-cli executable
 - `../../../../Dist/eco-cli/libaws-crt-jni.so:/opt/libaws-crt-jni.so:ro` - AWS CRT JNI library for eco-cli (no space before the colon)
-- `../../../../Dist/eco-cli/eco-wizard-windows/eco-wizard.exe:/opt/eco-wizard-windows:ro` - Windows eco-wizard executable
-- `../../../../Dist/eco-wizard/eco-wizard:/opt/eco-wizard:ro` - Linux eco-wizard executable (preferred)
+- `../../../../Dist/eco-wizard/eco-wizard:/opt/eco-wizard:ro` - eco-wizard executable
 
 **Important:** The RAG index (`marketplace_index.sqlite`) is mounted read-write because the UI can update it through import functionality. The component cache (`marketplace_cache/`) is read-only as it contains pre-downloaded components.
 
@@ -253,30 +284,30 @@ Repository configuration is under `config/`:
 
 ### Path Resolution System
 
-The system uses intelligent path resolution with the following logic:
+One shared resolver (`agent/internal/tools/binaries.py::resolve_binary`)
+handles every external binary, host and container alike:
 
-**For Docker containers:**
-1. Checks `/opt/eco-cli-linux/eco-cli` (Linux ELF, preferred)
-2. Falls back to `/opt/eco-cli-windows/eco-cli.exe` (Windows .exe via wine)
-3. Same logic for eco-wizard
-
-**For local development:**
-1. Checks `ECO_CLI_PATH` environment variable (if set)
-2. Checks `<repo>/eco-cli-linux/eco-cli` (inside the project)
-3. Checks `<repo>/eco-cli-windows/eco-cli.exe` (inside the project)
-4. Checks system PATH for `eco-cli` or `eco-cli.exe`
+1. Explicit config (e.g. `harness.yaml` `eco_cli_path` / `eco_wizard_path`)
+2. `ECO_CLI_PATH` / `ECO_WIZARD_PATH` / `ECO_<NAME>_PATH` environment variable
+3. `<repo>/bin/<name>` (canonical, gitignored)
+4. `/opt/<name>` (Docker bind-mount point)
+5. Legacy platform-suffixed siblings (`<repo>/eco-cli-linux/eco-cli`,
+   `<repo>/eco-cli-windows/eco-cli.exe`) — backwards compatibility only
+6. System `PATH`
 
 **Environment Variable Examples:**
 ```bash
-# Use Linux executable (default in Docker)
-export ECO_CLI_PATH=/opt/eco-cli-linux/eco-cli
-export ECO_WIZARD_PATH=/opt/eco-wizard-linux/eco-wizard
+# Canonical home (recommended):
+export ECO_CLI_PATH=$PWD/bin/eco-cli
+export ECO_WIZARD_PATH=$PWD/bin/eco-wizard
 
-# Use Windows executable via wine (fallback)
-export ECO_CLI_PATH=/opt/eco-cli-windows/eco-cli.exe
-export ECO_WIZARD_PATH=/opt/eco-wizard-windows/eco-wizard.exe
+# Docker mount points:
+export ECO_CLI_PATH=/opt/eco-cli
+export ECO_WIZARD_PATH=/opt/eco-wizard
+
+# Windows executable via wine:
+export ECO_CLI_PATH=/path/to/eco-cli.exe
 export ECO_CLI_PREFIX=wine64
-export ECO_WIZARD_PREFIX=wine64
 
 # Custom path (development)
 export ECO_CLI_PATH=/usr/local/bin/eco-cli
@@ -285,15 +316,10 @@ export ECO_WIZARD_PATH=/home/user/tools/eco-wizard
 
 **Default `.env` configuration:**
 ```
-# Linux paths (preferred, work in Docker):
-ECO_CLI_PATH=/opt/eco-cli-linux/eco-cli
-ECO_WIZARD_PATH=/opt/eco-wizard-linux/eco-wizard
-
-# Windows paths (fallback via wine, comment out unless needed):
-# ECO_CLI_PATH=/opt/eco-cli-windows/eco-cli.exe
-# ECO_WIZARD_PATH=/opt/eco-wizard-windows/eco-wizard.exe
-# ECO_CLI_PREFIX=wine64
-# ECO_WIZARD_PREFIX=wine64
+# Leave unset when the binaries are in <repo>/bin/ or at the /opt mounts.
+# Override only for custom locations:
+# ECO_CLI_PATH=/usr/local/bin/eco-cli
+# ECO_WIZARD_PATH=/home/user/tools/eco-wizard
 ```
 
 | File | Purpose |
@@ -448,10 +474,12 @@ config/agents/<role>/AGENTS.md
 Reusable skills can be placed in:
 
 ```text
-config/skills/<skill>/SKILL.md
+config/skills/<skill>/v<N>.md   or SKILL.md
 .eco-harness/skills/<skill>/SKILL.md
-agent/skills/<skill>.md
 ```
+
+The legacy `agent/skills/` root was retired in PRD_2 Phase 2
+(`agent/skills/c.md` → `config/skills/component_author/v1.md`).
 
   Language skills belong in `config/skills/languages/<language>.md`. Stable
   prompt changes belong in `config/prompts/`; workspace-specific instructions
@@ -520,8 +548,9 @@ Supporting changes that keep the architect fast and on-policy:
 - **`read_component_profile` Contract Card** — returns the CID, IIDs, the
   `GetIEcoComponentFactoryPtr_<CID>` factory symbol, vtable method names, and the
   `SharedFiles/` layout in one structured call, avoiding large raw header reads.
-- **`eco_cli`** now auto-resolves the binary (env → repo-relative linux/windows build
-  → `PATH`) and, when none is found, returns an actionable error noting the read-only
+- **`eco_cli`** now auto-resolves the binary via the shared resolver
+  (`ECO_*_PATH` → `<repo>/bin/` → `/opt/` mount → legacy siblings → `PATH`) and,
+  when none is found, returns an actionable error noting the read-only
   `marketplace_cache` already holds the needed headers.
 
 ## Working modes
@@ -635,9 +664,10 @@ boundaries, not the domain core.
 ### Common Issues
 
 1. **"eco-cli not found" error:**
-   - Ensure executables are in `../eco-cli-linux/` or `../eco-cli-windows/`
-   - Check Docker volume mounts in `docker-compose.yml`
-   - Verify `ECO_CLI_PATH` in `.env` if using custom location
+   - Place the binary at `<repo>/bin/eco-cli` (canonical home)
+   - Check Docker volume mounts in `docker-compose.yml` (`/opt/eco-cli`)
+   - Verify `ECO_CLI_PATH` in `.env` if using a custom location
+   - Run `python scripts/dev_preflight.py --fix` for the full lookup order
 
 2. **GPG signature errors during Docker build:**
    - Update Dockerfile base image
@@ -668,9 +698,51 @@ boundaries, not the domain core.
 - Test eco-cli in container: `docker compose exec api eco-cli --version`
 - Verify volume mounts: `docker compose exec api ls -la /opt/`
 
+## Testing
+
+The regression suite lives in `agent/internal/tests/` and runs against the
+venv created during setup (`make setup` or `python -m venv .venv` +
+`pip install -r agent/requirements.txt`, which includes `pytest` via
+`pytest-asyncio`). Always run it through the venv so the pinned
+`pytest-asyncio` / `tree-sitter` versions match what CI expects:
+
+```bash
+source .venv/bin/activate        # On Windows: .venv\Scripts\activate
+python -m pytest agent/internal/tests -v
+# Or without activating:
+.venv/bin/python -m pytest agent/internal/tests
+```
+
+What the suite covers:
+
+- **Core engine** — orchestrator edge routing, hop ceilings, seed builders,
+  handoff tool contract, EcoAgent loop, file/build/runtime tools, RAG tool
+  (offline, mocked embedder/store).
+- **PRD_2 Phase 0 regressions** (`test_prd2_regressions.py`) — external
+  bridge event marshalling (no `ModuleNotFoundError` on pi/claude/codex/grok
+  backends), role-prompt precedence (workspace > config > built-in, empty
+  files skipped, full STEP workflow present in the runtime prompt), and
+  host-mode artifact path resolution (env → repo root → `/app` → fallback).
+- **PRD_2 Phase 2 regressions** (`test_prd2_phase2.py`) — shared
+  `resolve_binary` order, phantom skill-key removal, dead-YAML wiring
+  (framework components, retained tool outputs, external flags),
+  external-role prompt parity, and pipeline-topology constants.
+
+Live-LLM tests are marked `@pytest.mark.live` and skipped unless you pass
+`--live`. The baseline gate used before every commit is:
+
+```bash
+python -m pytest agent/internal/tests
+python -m compileall -q agent backend eco_harness scripts
+# equivalent one-liner:
+make test
+```
+
 ## Validation
 
 ```bash
+source .venv/bin/activate
+python -m pytest agent/internal/tests
 python -m compileall -q agent backend eco_harness scripts
 cd frontend
 npm run build

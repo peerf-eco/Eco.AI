@@ -18,8 +18,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
-from agent.config.loader import load_config, load_role_config
-from agent.internal.tools import paths
+from agent.config.loader import (
+    load_config,
+    load_marketplace_framework_components,
+    load_role_config,
+)
+from agent.internal.tools import binaries, paths
 from eco_harness.worktrees import WorktreeError, create_worktree
 from eco_harness.roles import make_role_agent
 
@@ -394,12 +398,15 @@ def _save_mermaid_blocks(plan_md: str, project_dir: Path) -> list[Path]:
 # MemoryManager1/Core1/FileSystemManagement1). Deterministic across every run,
 # so we materialize them up-front instead of letting the coder hand-copy
 # headers one write_file at a time (observed: 7-21 wasted LLM calls per run).
-_FRAMEWORK_COMPONENTS = (
-    "Eco.Core1", "Eco.InterfaceBus1", "Eco.MemoryManager1",
-    "Eco.FileSystemManagement1", "Eco.System1",
-)
-# Subtrees the Linux Makefile actually consumes: headers + the static lib.
+# Wired in PRD_2 Phase 2: config/marketplace.yaml → framework_components is
+# the source of truth; the hard-coded tuple is only a fallback.
 _FRAMEWORK_SUBDIRS = ("SharedFiles", "BuildFiles/Linux/x86_64/StaticRelease")
+
+
+def _framework_components() -> tuple[str, ...]:
+    return load_marketplace_framework_components(
+        Path(__file__).resolve().parent.parent,
+    )
 
 
 def _prepull_framework(project_dir: Path, cache_root: Path) -> list[str]:
@@ -410,7 +417,7 @@ def _prepull_framework(project_dir: Path, cache_root: Path) -> list[str]:
     list of component names made present."""
     import shutil
     present: list[str] = []
-    for comp in _FRAMEWORK_COMPONENTS:
+    for comp in _framework_components():
         src_root = cache_root / comp
         if not src_root.is_dir():
             continue
@@ -505,65 +512,30 @@ async def chat_endpoint(websocket: WebSocket):
     # The harness uses pi_ai.Model directly (no langchain). This is the path where
     # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
 
-    # Automatic path resolution with Linux priority
-    def resolve_executable_path(env_var_name, linux_path, windows_path, default_name):
-        """Resolve executable path with Linux priority, Windows fallback."""
-        # 1. Check explicit environment variable
-        explicit_path = os.getenv(env_var_name)
-        if explicit_path:
-            path = Path(explicit_path)
-            if path.exists():
-                return path
-            logger.warning(f"{env_var_name}={explicit_path} does not exist")
-        
-        # 2. Check Linux path (preferred). Supports both a directory that
-        #    contains `default_name` AND a direct binary mount (e.g.
-        #    /opt/eco-cli bound straight to the ELF in docker-compose.yml).
-        linux_dir = Path(linux_path)
-        if linux_dir.is_file():
-            logger.info(f"Using Linux executable: {linux_dir}")
-            return linux_dir
-        linux_full = linux_dir / default_name
-        if linux_full.exists():
-            logger.info(f"Using Linux executable: {linux_full}")
-            return linux_full
-        
-        # 3. Check Windows path (fallback via wine)
-        windows_full = Path(windows_path) / (default_name + ".exe")
-        if windows_full.exists():
-            logger.info(f"Using Windows executable (via wine): {windows_full}")
-            return windows_full
-        
-        # 4. Check system PATH
-        found = shutil.which(default_name)
-        if found:
-            logger.info(f"Found in system PATH: {found}")
-            return Path(found)
-        
-        # 5. Check config
-        config_path = getattr(HARNESS_CONFIG, f"{env_var_name.lower()}_path", None)
-        if config_path:
-            path = Path(config_path)
-            if path.exists():
-                return path
-        
-        return None
-    
+    # Binary resolution now goes through the single shared policy
+    # (agent/internal/tools/binaries.py): explicit config → ECO_*_PATH env →
+    # <repo>/bin/<name> → /opt mount → legacy platform-suffixed siblings →
+    # PATH. The harness.yaml eco_*_path settings ride in as the explicit
+    # candidate.
+    def resolve_executable_path(config_attr: str, default_name: str):
+        """Resolve an external tool binary via binaries.resolve_binary."""
+        configured = getattr(HARNESS_CONFIG, config_attr, None)
+        resolved = binaries.resolve_binary(default_name, explicit=configured)
+        if resolved is None:
+            logger.warning(
+                "Executable %s not found. %s",
+                default_name,
+                binaries.describe_search_order(default_name),
+            )
+            return None
+        logger.info("Using executable: %s", resolved)
+        return resolved
+
     # Resolve eco-cli path
-    cli_path = resolve_executable_path(
-        "ECO_CLI_PATH",
-        "/opt/eco-cli",
-        "/opt/eco-cli-windows",
-        "eco-cli"
-    )
-    
+    cli_path = resolve_executable_path("eco_cli_path", "eco-cli")
+
     # Resolve eco-wizard path
-    wizard_path = resolve_executable_path(
-        "ECO_WIZARD_PATH",
-        "/opt/eco-wizard",
-        "/opt/eco-wizard-windows",
-        "eco-wizard"
-    )
+    wizard_path = resolve_executable_path("eco_wizard_path", "eco-wizard")
     
     # Set environment variables for tool resolution
     if cli_path:
@@ -1073,16 +1045,16 @@ async def chat_endpoint(websocket: WebSocket):
                 trace_dir=trace_dir,
                 on_event=_make_on_event(ev_queue, "tester"),
             )
-            # coder.to_architect edge is terminated as None — we don't restart
-            # the planner from inside the sub-orchestrator (user already approved
-            # the plan; if coder thinks the plan is wrong, it should fail honestly).
+            # Shared post-approval topology (agent/internal/entry.py):
+            # coder.to_architect is terminated — we don't restart the planner
+            # from inside the sub-orchestrator (user already approved the plan;
+            # if coder thinks the plan is wrong, it should fail honestly).
+            from agent.internal.entry import EXECUTION_EDGES, EXECUTION_ENTRY
+
             sub_orch = Orchestrator(
                 agents={"coder": coder, "tester": tester},
-                edges={
-                    "coder":  {"to_tester": "tester", "to_architect": None, "fail": None},
-                    "tester": {"to_coder":  "coder",  "done":         None, "fail": None},
-                },
-                entry="coder",
+                edges=EXECUTION_EDGES,
+                entry=EXECUTION_ENTRY,
                 max_hops=HARNESS_CONFIG.max_hops,
                 seed_builders=seed_builders,
             )

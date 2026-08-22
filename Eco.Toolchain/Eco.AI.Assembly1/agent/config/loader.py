@@ -77,6 +77,10 @@ class HarnessConfig(BaseModel):
     worktree_root: Path | None = None
     source_max_bytes: int = 300_000
     dynamic_tail_items: int = 5
+    # budgets.yaml → retained_tool_outputs: how many newest tool outputs the
+    # agent keeps verbatim in context (wired to EcoAgent.max_tool_results in
+    # PRD_2 Phase 2; previously a dead key).
+    retained_tool_outputs: int = 5
     max_hops: int = 8
     source_roots: list[Path] = Field(default_factory=list)
     eco_wizard_path: str | None = None
@@ -95,6 +99,24 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def load_marketplace_framework_components(root: Path | None = None) -> tuple[str, ...]:
+    """config/marketplace.yaml → framework_components (wired in PRD_2 Phase 2).
+
+    These are the always-required components ``_prepull_framework`` copies
+    into every project_dir. Falls back to the historical hard-coded set when
+    the key is absent.
+    """
+    config_root = (_project_root(root) / "config") if root is not None else Path("config")
+    marketplace = _read_yaml(config_root / "marketplace.yaml")
+    components = marketplace.get("framework_components")
+    if isinstance(components, list) and all(isinstance(c, str) for c in components):
+        return tuple(components)
+    return (
+        "Eco.Core1", "Eco.InterfaceBus1", "Eco.MemoryManager1",
+        "Eco.FileSystemManagement1", "Eco.System1",
+    )
+
+
 def _role_files(config_root: Path) -> dict[str, dict[str, Any]]:
     roles = _read_yaml(config_root / "roles.yaml").get("roles", {})
     if not isinstance(roles, dict):
@@ -106,6 +128,7 @@ def load_config(root: Path | None = None) -> HarnessConfig:
     project_root = _project_root(root)
     config_root = project_root / "config"
     harness = _read_yaml(config_root / "harness.yaml")
+    budgets = _read_yaml(config_root / "budgets.yaml")
     models = _read_yaml(config_root / "models.yaml").get("models", {})
     languages = _read_yaml(config_root / "languages.yaml").get("languages", {})
     modes = _read_yaml(config_root / "modes.yaml").get("modes", {})
@@ -217,6 +240,12 @@ def load_config(root: Path | None = None) -> HarnessConfig:
         ),
         dynamic_tail_items=int(
             os.getenv("HARNESS_DYNAMIC_TAIL_ITEMS", merged_harness.get("dynamic_tail_items", 5)),
+        ),
+        retained_tool_outputs=int(
+            os.getenv(
+                "HARNESS_RETAINED_TOOL_OUTPUTS",
+                budgets.get("retained_tool_outputs", 5),
+            ),
         ),
         max_hops=int(
             os.getenv("HARNESS_MAX_HOPS", merged_harness.get("max_hops", 8)),

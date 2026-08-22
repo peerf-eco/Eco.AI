@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from agent.internal.eco_agent import EcoTool, ToolResult
+from agent.internal.tools.binaries import resolve_binary
 
 
 class _WizardArgs(BaseModel):
@@ -30,16 +30,8 @@ class _WizardArgs(BaseModel):
 
 
 def _resolve_wizard() -> str | None:
-    configured = os.getenv("ECO_WIZARD_PATH")
-    if configured:
-        if Path(configured).is_file():
-            return configured
-        return None
-    for name in ("eco-wizard", "eco-wizard.exe"):
-        found = shutil.which(name)
-        if found:
-            return found
-    return None
+    resolved = resolve_binary("eco-wizard")
+    return str(resolved) if resolved else None
 
 
 def _run_wizard(args: _WizardArgs, project_dir: Path) -> ToolResult:

@@ -151,7 +151,8 @@ def _configure_context(
         mode=mode,
     )
     agent.max_iters = role_spec.budgets.max_iters
-    agent.max_tool_results = config.dynamic_tail_items
+    # budgets.yaml → retained_tool_outputs (PRD_2 Phase 2 wired this dead key).
+    agent.max_tool_results = config.retained_tool_outputs
     if hasattr(agent, "stream_options"):
         model_profile = config.models.get(role_spec.model)
         max_tokens = model_profile.max_tokens if model_profile else None
@@ -189,6 +190,10 @@ def make_role_agent(
             cwd=project_dir,
             timeout_s=role_spec.budgets.max_wall_s,
         )
+        # Prompt parity (PRD_2 Phase 2): external coders/testers get the same
+        # config/prompts/<role>.md content as internal agents — the placeholder
+        # one-liner used to silently drop the STEP workflow and stop-tool
+        # discipline for every external backend (pi/claude/codex/grok).
         return ExternalEcoAgent(
             backend=backend,
             role=role,
@@ -196,8 +201,10 @@ def make_role_agent(
             system_prompt=_static_prompt(
                 config=config,
                 role=role,
-                role_prompt=(
-                    f"You are the {role} role in the ACOM meta-harness."
+                role_prompt=_role_prompt(
+                    config,
+                    role,
+                    f"You are the {role} role in the ACOM meta-harness.",
                 ),
                 language=language,
                 project_dir=project_dir,

@@ -26,7 +26,6 @@ What we keep from the old wrappers:
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -34,6 +33,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from agent.internal.eco_agent import EcoTool, ToolResult
+from agent.internal.tools.binaries import describe_search_order, resolve_binary
 
 
 _TIMEOUT_S = 180
@@ -68,31 +68,15 @@ def _truncate(text: str, label: str) -> str:
 
 
 def _resolve_cli_path(cli_path: Optional[Path]) -> Optional[Path]:
-    """Resolve a usable eco-cli binary.
+    """Resolve a usable eco-cli binary via the shared binary-resolution policy.
 
-    Order: explicit arg → ECO_CLI_PATH env → repo-relative linux/windows
-    builds → eco-cli on PATH. Returns None only if nothing is found, in which
-    case the tool still returns an actionable error (the marketplace_cache
-    already holds the DEVKITs read-only, so a pull is often unnecessary).
+    Order: explicit arg → ECO_CLI_PATH env → <repo>/bin/eco-cli → legacy
+    eco-cli-linux/windows siblings → PATH. Returns None only if nothing is
+    found, in which case the tool still returns an actionable error (the
+    marketplace_cache already holds the DEVKITs read-only, so a pull is often
+    unnecessary).
     """
-    candidates: list[Path] = []
-    if cli_path is not None:
-        candidates.append(Path(cli_path))
-    env_path = os.getenv("ECO_CLI_PATH")
-    if env_path:
-        candidates.append(Path(env_path))
-    repo_root = Path(__file__).resolve().parents[3]
-    candidates.extend([
-        repo_root / "eco-cli-linux" / "eco-cli",
-        repo_root / "eco-cli-windows" / "eco-cli.exe",
-    ])
-    for c in candidates:
-        if c and c.is_file():
-            return c
-    on_path = shutil.which("eco-cli") or shutil.which("eco-cli.exe")
-    if on_path:
-        return Path(on_path)
-    return None
+    return resolve_binary("eco-cli", explicit=cli_path)
 
 
 def _eco_cli(
@@ -103,10 +87,9 @@ def _eco_cli(
     if cli_path is None:
         return ToolResult(
             content=(
-                "eco_cli: no CLI binary configured (ECO_CLI_PATH unset and no "
-                "eco-cli found at the repo-relative linux/windows build or on "
-                "PATH). Set ECO_CLI_PATH to the binary, or run "
-                "scripts/fetch_marketplace.py to populate marketplace_cache. "
+                "eco_cli: no CLI binary configured. " + describe_search_order("eco-cli")
+                + ". Alternatively run scripts/fetch_marketplace.py to populate "
+                "marketplace_cache. "
                 "Note: the full DEVKIT headers for every published component "
                 "are ALREADY present read-only under marketplace_cache/<Name>/"
                 "SharedFiles/ — you can read them directly via grep/glob/read "

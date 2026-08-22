@@ -53,6 +53,9 @@ traces/
 eco.cli/
 .eco/
 
+# Vendored tool binaries (canonical home, see agent/internal/tools/binaries.py)
+/bin/
+
 # Auto-generated
 test_results/
 # AI-review artifacts dumped at the app root. Leading slash anchors this to

@@ -45,30 +45,15 @@ try:
 except ImportError:
     pass
 
+from agent.internal.tools.binaries import resolve_binary
 from agent.rag.embedder import Embedder
 from agent.rag.retrieve import HybridRetriever
 from agent.rag.store import RagStore
 
 # Demo project — a fresh dir we pretend the agent owns.
 DEMO_PROJECT = PROJECT_ROOT / "e2e_demo_project"
-# Try to find eco-cli with Linux priority
-ECO_CLI = None
-for path in [
-    os.environ.get("ECO_CLI_PATH"),
-    str(PROJECT_ROOT.parent.parent / "eco-cli-linux" / "eco-cli"),  # Linux ELF (preferred)
-    str(PROJECT_ROOT.parent.parent / "eco-cli-windows" / "eco-cli.exe"),  # Windows .exe (fallback)
-    "eco-cli",  # System PATH
-    "eco-cli.exe",  # System PATH Windows
-]:
-    if not path:
-        continue
-    candidate = Path(path)
-    if candidate.exists():
-        ECO_CLI = candidate
-        break
-
-if ECO_CLI is None:
-    ECO_CLI = Path(str(PROJECT_ROOT.parent.parent / "eco-cli-windows" / "eco-cli.exe"))  # Default fallback
+# Shared binary-resolution policy (env → <repo>/bin → /opt → legacy siblings → PATH).
+ECO_CLI = resolve_binary("eco-cli", repo=PROJECT_ROOT)
 INDEX = PROJECT_ROOT / "experiments" / "chunking_eval" / "artifacts" / "ast.sqlite"
 
 
@@ -98,8 +83,11 @@ def search(retr: HybridRetriever, query: str, k: int = 5, **kw) -> list:
 def main() -> int:
     if not INDEX.exists():
         sys.exit(f"index not found: {INDEX}")
-    if not ECO_CLI.exists():
-        sys.exit(f"eco-cli not found: {ECO_CLI}")
+    if ECO_CLI is None:
+        sys.exit(
+            "eco-cli binary not found — set ECO_CLI_PATH, place it in "
+            "<repo>/bin/, or install it on PATH (see README: Executable Resolution)."
+        )
     if not os.getenv("ECO_API_TOKEN"):
         sys.exit("ECO_API_TOKEN not set in env")
 
