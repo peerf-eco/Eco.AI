@@ -281,7 +281,12 @@ _CHAT_ANSWER_SYS = (
 
 
 async def _classify_intent(user_req: str, model) -> bool:
-    """Return True when the message is a concrete coding task (run pipeline)."""
+    """Return True when the message is a concrete coding task (run pipeline).
+
+    "minimal" reasoning disables thinking so the model returns a clean one-word
+    answer. We fail SAFE toward running the pipeline: only an explicit CHAT (and
+    no CODE) is treated as a question; ambiguity / empty / error → CODE.
+    """
     from agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
     from agent.pi_ai.stream import complete
     ctx = Context(
@@ -290,9 +295,12 @@ async def _classify_intent(user_req: str, model) -> bool:
     )
     try:
         msg = await complete(
-            model, ctx, SimpleStreamOptions(reasoning="minimal", maxTokens=8)
+            model, ctx, SimpleStreamOptions(reasoning="minimal", maxTokens=16)
         )
-        return "CODE" in _msg_text(msg).upper()
+        text = _msg_text(msg).upper()
+        # CHAT present without CODE → plain question. Otherwise (CODE, both, or
+        # neither) → treat as a task so we never silently drop a request.
+        return not ("CHAT" in text and "CODE" not in text)
     except Exception:
         logger.exception("intent classification failed")
         return True  # on doubt, run the pipeline rather than mis-answer

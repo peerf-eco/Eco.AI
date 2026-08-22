@@ -57,10 +57,7 @@ the coder via `to_coder`.
 The plan is CLOSED only if ALL of the following hold. If any fails, keep
 researching the marketplace/cache or call `fail`:
 
-- [ ] No marketplace lookup for an "EcoMain" symbol, an "IEcoSystem1 CID", or an
-      `Eco.System1` profile to satisfy the entry point. EcoMain is app glue;
-      `IEcoSystem1` is in `Eco.Core1`; `Eco.System1` is a normal component for
-      system-info services.
+
 - [ ] Every component the plan depends on has a CONFIRMED CID. To confirm, check
       BOTH `SharedFiles/Id*.h` AND the `BuildFiles/**/*.a` filenames — the CID is
       the 32 hex chars in the `.a` name (e.g. `lib…53595331.a` → CID ends
@@ -78,8 +75,6 @@ researching the marketplace/cache or call `fail`:
 - [ ] The plan does not invent component methods. (e.g., `IEcoMemoryManager1`
       exposes `Init`/`get_Status`/`get_UsedBlocks`, NOT `GetAllocator`; the app
       does not allocate memory itself when consuming a prebuilt component.)
-- [ ] A reference implementation from `eco_framework/Lessons/*` was consulted and
-      the plan's pattern matches it.
 - [ ] All paths used for inspection are absolute under a known root
       (`marketplace_cache/` or `project_dir/`). On a "path does not exist" error,
       retry with the correct root before concluding a component/file is absent.

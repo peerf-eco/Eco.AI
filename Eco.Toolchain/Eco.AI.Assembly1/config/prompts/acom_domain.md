@@ -2,6 +2,11 @@
 
 ### Identifier taxonomy
 
+I. UGUID RULE (ACOM specific number format use for components and interfaces IDs: CID and IID)
+- Format: `{0x01, Length, {Data}}`. 
+- Preamble: `0x01`. Length: 32bit=`0x04`, 64bit=`0x08`, 128bit=`0x10`, 256bit=`0x20` etc.
+- A comment before the IID/CID is required: `/* Name IID = {GUID} */`.
+
 A single component has multiple ID forms and they are not interchangeable:
 
 - Marketplace CID: 32 uppercase hexadecimal characters without dashes. Use this for `eco-cli find -c` and `eco-cli pull -c`.
@@ -12,7 +17,7 @@ A single component has multiple ID forms and they are not interchangeable:
 - Package name: stable `Eco.AI.Engine1`-style name without a version suffix.
 - Folder suffix: SDK/package metadata, never part of the component name.
 
-Source-of-truth priority is:
+II. Source-of-truth priority is:
 
 1. `eco-cli` find/pull output
 2. downloaded `SharedFiles/Id*.h` CID macros

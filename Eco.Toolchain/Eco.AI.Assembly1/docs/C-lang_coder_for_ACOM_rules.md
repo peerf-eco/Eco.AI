@@ -44,6 +44,12 @@ Execute actions based on the following keywords in the request:
 - **"Test"**: Generate EcoMain with method result validation (do not use assert).
 
 <!-- --- MODULE: Stack/acom.md (EN) --- -->
+
+# UGUID RULE (ACOM specific number format use for components and interfaces IDs: CID and IID)
+- Format: `{0x01, Length, {Data}}`. 
+- Preamble: `0x01`. Length: 32bit=`0x04`, 64bit=`0x08`, 128bit=`0x10`, 256bit=`0x20` etc.
+- A comment before the IID/CID is required: `/* Name IID = {GUID} */`.
+
 # ECO COMPONENT MODEL (ACOM)
 - **Naming**: `[PROJECT_NAME]` in CamelCase, `[UPPER_PROJECT_NAME]` in UPPER_CASE. If the name does not explicitly start with the `Eco` prefix, add it automatically as a prefix.
 
@@ -53,8 +59,8 @@ Execute actions based on the following keywords in the request:
     - **Minimum Required Stack**: When designing and building any new component or application logic, the AI must always assume and utilize the following baseline of system interfaces:
       - `Eco.InterfaceBus1` — the system interface bus for component discovery, querying, and registration.
       - `Eco.MemoryManager1` — the memory manager providing core allocation services.
-      - `Eco.FileSystemManagement1` — the subsystem handling low-level file system operations (include ONLY when the component or application performs file I/O; a console calculator using `Eco.StdIO.C89` does NOT need it).
-    - **Entry Point (Eco.System1)**: The `Eco.System1` system library acts as the mandatory unified entry point (`EcoMain`) for compiling cross-platform unikernel applications.
+      - `Eco.FileSystemManagement1` — the subsystem handling low-level file system operations (include ONLY when the component or application performs file I/O).
+    - **Entry Point (EcoMain)**:  `EcoMain` (reserved name) is always ACOM application entry point. Static ACOM components and librarties never have entry point. To build ACOM application for specific target platform `Eco.System1` (human readable marketplace name) libraries must be used. `Eco.System1` is a library, not ACOM component, so it has no CID (Component ID) identity. Its actual name is GID.{lib|a} (Generation ID), similar as actual names of ACOM compoonents are their CID number in UGUID format. `Eco.System1` are available in ACOM marketplace for many platforms as prebuilt binaries. This system library acts similar to unikernel libraries (it has ACOM microkernel with its Eco.InterfaceBus) and statically linked with `EcoMain` entry point and other required by application ACOM components. This enables compiling cross-platform applications just by selecting corresponding `Eco.System1` library for linkage. There two types of `Eco.System1` libraries for each platform: one already includes all system ACOM components (InterfaceBus, FileManager, MemoryManager, etc) and located in `Eco.System1/BuildFiles/<platfrom OS>/StaticRelease/<CPU architecture/>` folder of 'Eco.System1' development kit (DK) and another of smaller size just contains loader for three components: InterfaceBus (obligatory), MemoryManager and optional FileSystemManager, located in `Eco.System1/BuildFiles/<platfrom OS>/DynamicRelease/<CPU architecture/>`
 
 - **Directory Structure**: 
     - Create the following folder structure in the root directory of the project if it does not exist:
@@ -80,10 +86,6 @@ Execute actions based on the following keywords in the request:
     - Unit-Test Makefile: `AssemblyFiles/<Platform>/<Toolchain>/MakefileExe`
     - IDE Project Files: `AssemblyFiles/<Platform>/<Toolchain>/*`
 
-# UGUID RULE
-- Format: `{0x01, Length, {Data}}`. 
-- Preamble: `0x01`. Length: 32bit=`0x04`, 64bit=`0x08`, 128bit=`0x10`, 256bit=`0x20` etc.
-- A comment before the IID/CID is required: `/* Name IID = {GUID} */`.
 
 # ECO MACROS & NAMING CONVENTION
 Use the following macros when generating code and templates:

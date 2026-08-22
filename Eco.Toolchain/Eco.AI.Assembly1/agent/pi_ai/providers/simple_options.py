@@ -32,7 +32,15 @@ def _map_effort(model: Model, level: ThinkingLevel) -> str:
 def apply_reasoning(body: dict, model: Model, opts: Optional[SimpleStreamOptions]) -> dict:
     """Mutate `body` in place: insert provider-correct thinking request based
     on model.compat.thinkingFormat. Returns body for chaining."""
-    if opts is None or opts.reasoning is None or opts.reasoning == "minimal":
+    if opts is None or opts.reasoning is None:
+        return body
+
+    # "minimal" = disable thinking entirely. Used by cheap routing gates that
+    # need a short, token-clean answer. OpenRouter honours `reasoning: false`;
+    # other formats simply get no thinking field.
+    if opts.reasoning == "minimal":
+        if (_compat(model).thinkingFormat or "openai") == "openrouter":
+            body["reasoning"] = {"enabled": False}
         return body
 
     compat = _compat(model)

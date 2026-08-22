@@ -27,6 +27,7 @@ modes:
     capabilities:
       - direct_implementation
       - build_and_runtime_testing
+      - eco_wizard_generation
   migrate:
     prompt: prompts/modes/migrate.md
     roles: [architect, coder, tester]
@@ -36,6 +37,7 @@ modes:
       - acom_contract_mapping
       - incremental_migration
       - build_and_runtime_testing
+      - eco_wizard_generation
   test:
     prompt: prompts/modes/test.md
     roles: [tester]
