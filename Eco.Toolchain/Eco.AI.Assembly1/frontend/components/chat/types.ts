@@ -193,6 +193,12 @@ export interface HeartbeatEvent extends ServerEventBase {
   thread_id?: string;
 }
 
+export interface WorktreeCreatedEvent extends ServerEventBase {
+  type: "worktree_created";
+  path: string;
+  name: string;
+}
+
 export interface PhaseChangeEvent extends ServerEventBase {
   type: "phase_change";
   phase: HarnessPhase;
@@ -291,6 +297,7 @@ export interface ErrorEvent extends ServerEventBase {
 
 export type ServerEvent =
   | HeartbeatEvent
+  | WorktreeCreatedEvent
   | PhaseChangeEvent
   | NodeDoneEvent
   | NodeEventEvent
@@ -318,7 +325,6 @@ export interface UserRequestMessage {
   language?: string;
   mode?: WorkingMode;
   use_worktree?: boolean;
-  worktree_name?: string;
 }
 
 export type WorkingMode = "auto" | "plan" | "code" | "migrate" | "test" | "review";
@@ -344,3 +350,40 @@ export type ClientMessage =
   | PlanDecisionMessage
   | EscalationDecisionMessage
   | AbortMessage;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Projects panel DTOs (GET/POST /api/projects, GET /api/fs/browse)
+// ────────────────────────────────────────────────────────────────────────────
+
+export type SessionStatus = "running" | "success" | "failed" | "aborted" | "idle";
+
+export interface SessionInfo {
+  id: string;
+  thread_id: string;
+  project_path: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  status: SessionStatus;
+}
+
+export interface ProjectInfo {
+  id: string;
+  path: string;
+  name: string;
+  added_at: string;
+  auto?: boolean;
+  sessions: SessionInfo[];
+}
+
+export interface FsEntry {
+  name: string;
+  path: string;
+  type: "dir";
+}
+
+export interface FsListing {
+  path: string;
+  parent: string | null;
+  entries: FsEntry[];
+}

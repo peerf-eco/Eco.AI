@@ -11,6 +11,11 @@ import type {
   WorkingMode,
 } from "./types";
 
+export interface WorktreeRef {
+  name: string;
+  path: string;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // id generation — UUID where available, counter as a safe fallback.
 // ────────────────────────────────────────────────────────────────────────────
@@ -119,6 +124,9 @@ export interface UseHarnessSocketResult {
   currentPhase: HarnessPhase | null;
   completedPhases: HarnessPhase[];
   threadId: string | null;
+  // Set when the backend creates an isolated worktree for this session;
+  // kept until New session so the name/path stays available for reference.
+  worktree: WorktreeRef | null;
 
   sendUserRequest: (
     text: string,
@@ -130,7 +138,6 @@ export interface UseHarnessSocketResult {
       language?: string;
       mode?: WorkingMode;
       useWorktree?: boolean;
-      worktreeName?: string;
     },
   ) => void;
   sendPlanDecision: (blockId: string, approved: boolean, opts?: { modifiedPlanMd?: string; reason?: string }) => void;
@@ -146,6 +153,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
   const [currentPhase, setCurrentPhase] = useState<HarnessPhase | null>(null);
   const [completedPhases, setCompletedPhases] = useState<HarnessPhase[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
+  const [worktree, setWorktree] = useState<WorktreeRef | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempt = useRef(0);
@@ -163,6 +171,11 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
             sessionStorage.setItem(THREAD_ID_KEY, ev.thread_id);
           }
         }
+        return;
+      }
+
+      case "worktree_created": {
+        setWorktree({ name: ev.name || "", path: ev.path || "" });
         return;
       }
 
@@ -472,7 +485,6 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
       language?: string;
       mode?: WorkingMode;
       useWorktree?: boolean;
-      worktreeName?: string;
     },
   ) => {
     const trimmed = text.trim();
@@ -494,7 +506,6 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
       language: opts?.language,
       mode: opts?.mode,
       use_worktree: opts?.useWorktree,
-      worktree_name: opts?.worktreeName,
     });
   }, [send]);
 
@@ -540,6 +551,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     setMessages([]);
     setCurrentPhase(null);
     setCompletedPhases([]);
+    setWorktree(null);
     if (typeof window !== "undefined") {
       sessionStorage.removeItem(THREAD_ID_KEY);
     }
@@ -560,6 +572,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     currentPhase,
     completedPhases,
     threadId,
+    worktree,
     sendUserRequest,
     sendPlanDecision,
     sendEscalationDecision,

@@ -186,6 +186,7 @@ does not override already-set variables).
 | `ECO_FRAMEWORK` | paths/assembler, eco_cli pulls, index builder, eco-wizard | `<repo>/eco_framework` | Standard ACOM env var: root of the component development kits (`<Component>_DK_v.<ver>/<Component>/`). Used to source Eco.Core1 base headers into prompts, as `eco-cli pull -d` download target, and via `build_marketplace_index.py --source framework` |
 | `HARNESS_OUTPUT_ROOT` | server | `./output` | Where per-chat workspace dirs are created |
 | `HARNESS_TRACES_DIR` | server | `./traces` | Per-conversation LLM trace folders |
+| `HARNESS_ALLOWED_ROOTS` | server: `/api/fs/browse`, `/api/projects`, WS `project_dir` | home dir + `HARNESS_OUTPUT_ROOT` | Extra directories (os.pathsep-separated) the UI may browse, register, or target as `project_dir` |
 | `HARNESS_MAX_HOPS` | orchestrator | `8` | Max handoff hops (also `harness.yaml.max_hops`) |
 | `AGENT_MAX_ITERATIONS` | `build_pipeline` runs only | unset | Overrides per-role `max_iters` for scripted pipeline runs; production `/ws/chat` uses `budgets.max_iters` from `config/roles.yaml` |
 | `HARNESS_DYNAMIC_TAIL_ITEMS` | agent context | `5` (`harness.yaml`: 12) | Newest tool results kept verbatim in context |
@@ -672,6 +673,17 @@ The harness creates a detached Git worktree outside the primary checkout and
 uses it as the project root for all subsequent agent filesystem operations in
 that session. It never silently modifies the primary checkout. A custom
 destination can be configured through `ECO_WORKTREE_ROOT`.
+
+When no explicit name is given, the worktree directory is auto-named
+`<repo>-<session8>-<commit7>` (e.g. `Eco.AI.Assembly1-3f2b8c1a-d41cd09`) —
+unique per session and directly findable via `git worktree list` or a
+directory search. The name and full path appear on a reference strip below
+the progress bar as soon as the worktree is created and stay visible until
+you press New session.
+
+> **Note:** the compose `api` container ships without `.git`, so Worktree
+> mode requires either a host-run backend or bind-mounting `.git` into
+> `/app` in `docker-compose.yml`.
 
 ```cmd
 python -m eco_harness run "Review this component" --mode review --worktree

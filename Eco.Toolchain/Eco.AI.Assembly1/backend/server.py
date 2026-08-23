@@ -6,6 +6,8 @@ import uuid
 import asyncio
 import logging
 import shutil
+import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add project root to PYTHONPATH for agent imports
@@ -59,6 +61,259 @@ app.add_middleware(
 # Mount output files
 os.makedirs("output", exist_ok=True)
 app.mount("/files", StaticFiles(directory="output"), name="files")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PROJECT & SESSION REGISTRY — persisted at <output_root>/.harness-registry.json
+#
+# The web UI's left panel lists projects (folders registered by the user or
+# seen in output/) and each project's coding sessions (one per chat thread).
+# Shape:
+#   {"projects":  [{id, path, name, added_at}],
+#    "sessions":  [{id, thread_id, project_path, title, created_at,
+#                   updated_at, status}]}
+# Session ids are the first 8 chars of thread_id — matching the chat-<id8>
+# output directory convention. Legacy output/chat-* dirs are seeded as idle
+# sessions on read so history survives registry resets.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _output_root() -> Path:
+    return Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")).resolve()
+
+
+def _registry_path() -> Path:
+    return _output_root() / ".harness-registry.json"
+
+
+def _load_registry() -> dict:
+    try:
+        data = json.loads(_registry_path().read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            data.setdefault("projects", [])
+            data.setdefault("sessions", [])
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"projects": [], "sessions": []}
+
+
+def _save_registry(registry: dict) -> None:
+    path = _registry_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _project_entry(path: Path) -> dict:
+    return {
+        "id": hashlib.sha1(str(path).encode("utf-8")).hexdigest()[:12],
+        "path": str(path),
+        "name": path.name or str(path),
+        "added_at": _now_iso(),
+    }
+
+
+class ProjectRegisterRequest(BaseModel):
+    path: str
+
+
+def _allowed_roots() -> list[Path]:
+    """Roots the UI may browse, register, or run in: the user's home, the
+    harness output root, plus any extra paths from HARNESS_ALLOWED_ROOTS
+    (os.pathsep-separated). Everything else is rejected with 400 — the
+    endpoints below would otherwise enumerate/create directories anywhere
+    the server process can write."""
+    roots: list[Path] = [Path.home().resolve(), _output_root()]
+    for part in os.getenv("HARNESS_ALLOWED_ROOTS", "").split(os.pathsep):
+        if not part.strip():
+            continue
+        try:
+            roots.append(Path(part.strip()).expanduser().resolve())
+        except (OSError, RuntimeError):
+            continue
+    unique: list[Path] = []
+    for root in roots:
+        if root not in unique:
+            unique.append(root)
+    return unique
+
+
+def _is_within_allowed(path: Path) -> bool:
+    resolved = path.resolve()
+    return any(
+        resolved == root or root in resolved.parents
+        for root in _allowed_roots()
+    )
+
+
+def _ensure_allowed(path: Path) -> Path:
+    if not _is_within_allowed(path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Path is outside the allowed roots (home, output root, "
+                   f"HARNESS_ALLOWED_ROOTS): {path}",
+        )
+    return path.resolve()
+
+
+@app.get("/api/fs/browse")
+async def fs_browse(path: str | None = None):
+    """List subdirectories of `path` (home dir when omitted) for the folder picker."""
+    try:
+        target = Path(path).expanduser().resolve() if path else Path.home().resolve()
+    except (OSError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=f"Invalid path: {error}") from error
+    _ensure_allowed(target)
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {target}")
+    entries: list[dict] = []
+    try:
+        children = sorted(target.iterdir(), key=lambda c: c.name.lower())
+    except PermissionError:
+        children = []
+    for child in children:
+        if child.is_dir() and not child.name.startswith(".") and not child.is_symlink():
+            entries.append({"name": child.name, "path": str(child), "type": "dir"})
+    # Hide the ".." escape hatch when the parent sits outside the allowlist.
+    parent = None
+    if target.parent != target and _is_within_allowed(target.parent):
+        parent = str(target.parent)
+    return {"path": str(target), "parent": parent, "entries": entries}
+
+
+@app.get("/api/projects")
+async def list_projects():
+    """Projects with their sessions; auto-seeds legacy output/chat-* runs."""
+    registry = _load_registry()
+    projects: dict[str, dict] = {
+        entry["path"]: {**entry, "auto": False}
+        for entry in registry["projects"]
+    }
+    sessions: dict[str, dict] = {}
+    for session in registry["sessions"]:
+        sessions[session["id"]] = session
+
+    # Seed legacy/default chat-* dirs that have no session record yet.
+    known_dirs: set[str] = set()
+    for session in registry["sessions"]:
+        p = session.get("project_path")
+        if p:
+            known_dirs.add(p)
+    for d in sorted(_output_root().glob("chat-*")):
+        if not d.is_dir():
+            continue
+        project_path = str(d)
+        short_id = d.name.replace("chat-", "", 1)
+        if short_id in sessions or project_path in known_dirs:
+            continue
+        sessions[short_id] = {
+            "id": short_id,
+            "thread_id": short_id,
+            "project_path": project_path,
+            "title": "(previous run)",
+            "created_at": datetime.fromtimestamp(d.stat().st_ctime, timezone.utc).isoformat(),
+            "updated_at": datetime.fromtimestamp(d.stat().st_mtime, timezone.utc).isoformat(),
+            "status": "idle",
+        }
+        known_dirs.add(project_path)
+
+    # Every distinct session project becomes a visible project entry.
+    for session in sessions.values():
+        ppath = session.get("project_path")
+        if ppath and ppath not in projects:
+            projects[ppath] = {**_project_entry(Path(ppath)), "auto": True}
+
+    grouped: dict[str, list[dict]] = {}
+    for session in sessions.values():
+        grouped.setdefault(session.get("project_path") or "", []).append(session)
+
+    result = []
+    for ppath, entry in projects.items():
+        proj_sessions = sorted(
+            grouped.get(ppath, []),
+            key=lambda s: s.get("updated_at") or "",
+            reverse=True,
+        )
+        result.append({**entry, "sessions": proj_sessions})
+    result.sort(key=lambda p: (p.get("added_at") or ""), reverse=True)
+    return {"projects": result}
+
+
+@app.post("/api/projects")
+async def register_project(request: ProjectRegisterRequest):
+    """Validate and register a folder chosen in the UI's folder browser."""
+    raw = (request.path or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Path is required")
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except (OSError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=f"Invalid path: {error}") from error
+    _ensure_allowed(resolved)
+    if not resolved.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {resolved}")
+    registry = _load_registry()
+    for entry in registry["projects"]:
+        if entry["path"] == str(resolved):
+            return {**entry, "auto": False}
+    entry = _project_entry(resolved)
+    registry["projects"].append(entry)
+    _save_registry(registry)
+    return {**entry, "auto": False}
+
+
+def _record_session_start(thread_id: str, project_dir: Path, title: str) -> None:
+    """Upsert a session record when a user_request starts processing."""
+    try:
+        registry = _load_registry()
+        short_id = thread_id[:8]
+        project_path = str(project_dir.resolve())
+        now = _now_iso()
+        for session in registry["sessions"]:
+            if session["id"] == short_id:
+                session["updated_at"] = now
+                session["status"] = "running"
+                session["project_path"] = project_path
+                if title and (not session.get("title") or session["title"] == "(previous run)"):
+                    session["title"] = title.strip()[:60]
+                break
+        else:
+            registry["sessions"].append({
+                "id": short_id,
+                "thread_id": thread_id,
+                "project_path": project_path,
+                "title": title.strip()[:60],
+                "created_at": now,
+                "updated_at": now,
+                "status": "running",
+            })
+        if not any(p["path"] == project_path for p in registry["projects"]):
+            registry["projects"].append(_project_entry(project_dir.resolve()))
+        _save_registry(registry)
+    except Exception:
+        logger.exception("session start recording failed")
+
+
+def _record_session_end(thread_id: str, project_dir: Path, status: str) -> None:
+    try:
+        registry = _load_registry()
+        short_id = thread_id[:8]
+        for session in registry["sessions"]:
+            if session["id"] == short_id:
+                session["status"] = status
+                session["updated_at"] = _now_iso()
+                session["project_path"] = str(project_dir.resolve())
+                break
+        _save_registry(registry)
+    except Exception:
+        logger.exception("session end recording failed")
 
 
 
@@ -555,7 +810,11 @@ async def chat_endpoint(websocket: WebSocket):
 
     requested_thread_id = websocket.query_params.get("thread_id")
     thread_id = requested_thread_id or str(uuid.uuid4())
-    project_dir = Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")) / f"chat-{thread_id[:8]}"
+
+    def _default_project_dir() -> Path:
+        return Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")) / f"chat-{thread_id[:8]}"
+
+    project_dir = _default_project_dir()
     project_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolved once per connection so the workspace-header block and any
@@ -579,6 +838,17 @@ async def chat_endpoint(websocket: WebSocket):
         f"project_dir={project_dir} trace_dir={trace_dir}"
     )
     await websocket.send_json({"type": "heartbeat", "protocol": "chat", "thread_id": thread_id})
+
+    # Session bookkeeping for the UI project panel: flip the registry status
+    # when this connection's run reaches any terminal state.
+    session_open = False
+
+    def finish_session(status: str) -> None:
+        nonlocal session_open
+        if not session_open:
+            return
+        session_open = False
+        _record_session_end(thread_id, project_dir, status)
 
     # Preserve stable node identifiers expected by the client.
     PHASE_OF = {"architect": "planning", "coder": "coding",  "tester": "testing"}
@@ -682,6 +952,7 @@ async def chat_endpoint(websocket: WebSocket):
 
             msg_type = payload.get("type", "user_request")
             if msg_type == "abort":
+                finish_session("aborted")
                 await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
                 break
             if msg_type in ("plan_decision", "escalation_decision"):
@@ -697,6 +968,37 @@ async def chat_endpoint(websocket: WebSocket):
             if not user_req:
                 await websocket.send_json({"type": "error", "content": "Missing user_request"})
                 continue
+
+            # Per-message project override: the UI sends the folder selected
+            # in the left projects panel. Without it we fall back to (and
+            # reset to) the default per-thread chat-<id8> directory, so a
+            # worktree-free follow-up never writes into a previous custom
+            # project by accident.
+            requested_project = str(payload.get("project_dir") or "").strip()
+            if requested_project:
+                candidate = Path(requested_project).expanduser().resolve()
+                if not _is_within_allowed(candidate):
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": (
+                            f"project_dir is outside the allowed roots (home, "
+                            f"output root, HARNESS_ALLOWED_ROOTS): {candidate}"
+                        ),
+                    })
+                    continue
+                try:
+                    candidate.mkdir(parents=True, exist_ok=True)
+                except OSError as error:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": f"Cannot use project_dir {candidate}: {error}",
+                    })
+                    continue
+                project_dir = candidate
+            else:
+                project_dir = _default_project_dir()
+                project_dir.mkdir(parents=True, exist_ok=True)
+
             language = str(payload.get("language") or HARNESS_CONFIG.default_language)
             mode = str(payload.get("mode") or "auto").lower()
             if mode not in HARNESS_CONFIG.modes:
@@ -734,6 +1036,11 @@ async def chat_endpoint(websocket: WebSocket):
                     "content": f"Unsupported programming language: {language}",
                 })
                 continue
+
+            # All validation passed — this request becomes a visible session
+            # in the UI's project panel (title from the first message only).
+            _record_session_start(thread_id, project_dir, user_req)
+            session_open = True
 
             # ── One-shot modes: no automatic pipeline (test / review / code / plan) ──
             if mode in {"test", "review", "code", "plan"}:
@@ -787,6 +1094,7 @@ async def chat_endpoint(websocket: WebSocket):
                 # architect presenting a plan in PLAN mode. Treat a non-empty
                 # answer as success regardless of whether a stop tool fired.
                 status_ok = result.status in ("done", "no_tool_call") and bool(report.strip())
+                finish_session("success" if status_ok else "failed")
                 await websocket.send_json({
                     "type": "pipeline_done",
                     "status": "success" if status_ok else "failed",
@@ -812,6 +1120,7 @@ async def chat_endpoint(websocket: WebSocket):
                         "event": "text_delta",
                         "data":  {"content": answer},
                     })
+                    finish_session("success")
                     await websocket.send_json({
                         "type":             "pipeline_done",
                         "status":           "success",
@@ -856,6 +1165,7 @@ async def chat_endpoint(websocket: WebSocket):
                     planner_result = await _run_agent(planner.run, ev_queue, planner_seed)
                 except Exception as e:
                     logger.exception(f"[CHAT WS] planner crashed thread_id={thread_id}")
+                    finish_session("failed")
                     await websocket.send_json({
                         "type": "error",
                         "content": f"Planner crashed: {type(e).__name__}: {e}",
@@ -871,6 +1181,7 @@ async def chat_endpoint(websocket: WebSocket):
                         f"{last_text!r}"
                         if last_text else ""
                     )
+                    finish_session("failed")
                     await websocket.send_json({
                         "type": "pipeline_done",
                         "status": "failed",
@@ -890,6 +1201,7 @@ async def chat_endpoint(websocket: WebSocket):
                 if planner_result.stop_tool_name == "fail":
                     fail_reason = (planner_result.stop_payload or {}).get("reason", "") \
                                   or (planner_result.stop_payload or {}).get("message", "")
+                    finish_session("failed")
                     await websocket.send_json({
                         "type": "pipeline_done",
                         "status": "failed",
@@ -921,6 +1233,7 @@ async def chat_endpoint(websocket: WebSocket):
                         continue
                     p2_type = p2.get("type")
                     if p2_type == "abort":
+                        finish_session("aborted")
                         await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
                         terminate_chat = True
                         decision_received = True
@@ -1064,6 +1377,7 @@ async def chat_endpoint(websocket: WebSocket):
                 result = await _run_agent(sub_orch.run, ev_queue, coder_seed)
             except Exception as e:
                 logger.exception(f"[CHAT WS] sub_orch crashed thread_id={thread_id}")
+                finish_session("failed")
                 await websocket.send_json({
                     "type": "error",
                     "content": f"Orchestrator error: {type(e).__name__}: {e}",
@@ -1085,6 +1399,7 @@ async def chat_endpoint(websocket: WebSocket):
                 if artifact_candidates
                 else ""
             )
+            finish_session("success" if success else "failed")
             await websocket.send_json({
                 "type":             "pipeline_done",
                 "status":           "success" if success else "failed",
@@ -1098,8 +1413,10 @@ async def chat_endpoint(websocket: WebSocket):
             break
 
     except WebSocketDisconnect:
+        finish_session("aborted")
         logger.info(f"[CHAT WS] disconnected thread_id={thread_id}")
     except Exception:
+        finish_session("failed")
         logger.exception(f"[CHAT WS] handler crashed thread_id={thread_id}")
         try:
             await websocket.close()
