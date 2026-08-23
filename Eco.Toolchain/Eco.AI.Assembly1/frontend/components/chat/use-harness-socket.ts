@@ -98,15 +98,17 @@ function updateLastBlock(
   return { messages: updated, matched };
 }
 
-// Flip every active ThinkingBlock for `node` (or all nodes when undefined)
-// to isActive=false so the UI collapses the caret/pulse without deleting
-// the history. Called on tool_call_start, phase_change, pipeline_done — any
-// boundary that semantically ends a reasoning burst.
-function finalizeActiveThinking(prev: ChatMessage[], node?: PipelineNode): ChatMessage[] {
+// Flip every active ThinkingBlock / AnswerBlock for `node` (or all nodes when
+// undefined) to isActive=false so the UI stops the caret/pulse without
+// deleting the history. Called on tool_call_start, phase_change, node_done,
+// pipeline_done — any boundary that semantically ends a streaming burst.
+// Thinking blocks additionally collapse; answer blocks stay expanded (the
+// renderer treats isActive as "live" only).
+function finalizeActiveStreaming(prev: ChatMessage[], node?: PipelineNode): ChatMessage[] {
   return prev.map((msg) => ({
     ...msg,
     blocks: msg.blocks.map((b) =>
-      b.type === "thinking" && b.isActive && (node === undefined || b.node === node)
+      (b.type === "thinking" || b.type === "answer") && b.isActive && (node === undefined || b.node === node)
         ? { ...b, isActive: false }
         : b,
     ),
@@ -190,7 +192,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
           // Crossing a phase boundary means the previous node has stopped
           // reasoning — collapse all active thinking blocks first, then
           // append the phase header.
-          const collapsed = finalizeActiveThinking(prev);
+          const collapsed = finalizeActiveStreaming(prev);
           return appendBlock(collapsed, {
             id: newId("phase"),
             type: "phase_header",
@@ -203,7 +205,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
 
       case "node_done": {
         setMessages((prev) => {
-          const collapsed = finalizeActiveThinking(prev, ev.node as PipelineNode);
+          const collapsed = finalizeActiveStreaming(prev, ev.node as PipelineNode);
           return appendBlock(collapsed, {
             id: newId("nodedone"),
             type: "node_done",
@@ -276,7 +278,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
           setCompletedPhases((p) => (p.includes(currentPhase) ? p : [...p, currentPhase]));
         }
         setMessages((prev) => {
-          const collapsed = finalizeActiveThinking(prev);
+          const collapsed = finalizeActiveStreaming(prev);
           return appendBlock(collapsed, {
             id: newId("done"),
             type: "pipeline_done",
@@ -297,24 +299,27 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
 
       case "node_event": {
         if (ev.event === "thinking_delta" || ev.event === "text_delta") {
+          const isAnswer = ev.event === "text_delta";
           const delta = (ev.data.content as string | undefined) ?? "";
           if (!delta) return;
-          // Append to the most-recent active thinking block of this node;
-          // if none, start a new one. Inactive blocks (already finalised by
-          // a previous tool/phase boundary) are NOT reused — each ReAct
-          // iteration gets its own collapsible thinking block.
+          // thinking_delta → collapsible reasoning block (one per ReAct
+          // iteration). text_delta → always-expanded answer block so the
+          // model's actual reply is never hidden inside a collapsed reasoning
+          // card. Inactive blocks are NOT reused — each burst after a
+          // tool/phase boundary gets its own block.
+          const blockType = isAnswer ? "answer" : "thinking";
           setMessages((prev) => {
             const { messages: appended, matched } = updateLastBlock(
               prev,
-              (b) => b.type === "thinking" && b.isActive && b.node === ev.node,
-              (b) => b.type === "thinking"
+              (b) => b.type === blockType && b.isActive && b.node === ev.node,
+              (b) => b.type === blockType
                 ? { ...b, content: b.content + delta }
                 : b,
             );
             if (matched) return appended;
             return appendBlock(prev, {
-              id: newId("think"),
-              type: "thinking",
+              id: newId(isAnswer ? "ans" : "think"),
+              type: blockType,
               node: ev.node,
               content: delta,
               isActive: true,
@@ -331,7 +336,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
           setMessages((prev) => {
             // A tool call ends the current reasoning burst — collapse first,
             // then append the tool card.
-            const collapsed = finalizeActiveThinking(prev, ev.node);
+            const collapsed = finalizeActiveStreaming(prev, ev.node);
             return appendBlock(collapsed, {
               id: newId("toolcall"),
               type: "tool_call",
@@ -348,6 +353,19 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
         if (ev.event === "tool_call_end") {
           const name = (ev.data.name as string | undefined) ?? "";
           const isError = Boolean(ev.data.is_error);
+          const details = (ev.data.details ?? {}) as Record<string, unknown>;
+          // Policy denials arrive either as a structured marker from the
+          // agent loop or as recognizable rejection texts in the preview.
+          const preview = typeof details.reason === "string" ? details.reason : "";
+          const DENIAL_PATTERNS = [
+            /not in the whitelist/i,
+            /^BLOCKED:/i,
+            /outside the allowed roots/i,
+            /outside project_dir/i,
+          ];
+          const blockedByPolicy =
+            details.denied === true ||
+            (!isError ? false : DENIAL_PATTERNS.some((p) => p.test(preview)));
           // Match the most-recent running ToolCallBlock with the same node + toolName.
           setMessages((prev) => {
             let matchedOnce = false;
@@ -366,6 +384,9 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
                     status: isError ? ("error" as const) : ("ok" as const),
                     durationMs: Math.max(0, now - b.startedAt),
                     output: safeStringifyPreview(ev.data.details),
+                    ...(blockedByPolicy
+                      ? { blockedByPolicy: true, denialReason: preview || undefined }
+                      : {}),
                   };
                 }
                 return b;
@@ -377,7 +398,20 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
           return;
         }
 
-        // Other node_event kinds (iteration, start, done, no_tool_call, max_iters, error)
+        if (ev.event === "error") {
+          const reason = (ev.data?.reason as string | undefined) ?? "Agent error";
+          setMessages((prev) => {
+            const collapsed = finalizeActiveStreaming(prev, ev.node);
+            return appendBlock(collapsed, {
+              id: newId("err"),
+              type: "error",
+              content: reason,
+            });
+          });
+          return;
+        }
+
+        // Other node_event kinds (iteration, start, done, no_tool_call, max_iters)
         // are bookkeeping — surface in a later iteration; spec §6 deferred them.
         return;
       }

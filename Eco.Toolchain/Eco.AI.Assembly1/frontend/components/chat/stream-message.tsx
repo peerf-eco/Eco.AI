@@ -99,6 +99,22 @@ function BlockView({
         </div>
       );
 
+    case "answer":
+      // The model's visible reply — always expanded, normal prose styling.
+      // Never collapses into a reasoning card; isActive only drives the live
+      // streaming caret.
+      return (
+        <div className="rounded-xl px-4 py-3 glass border border-blue-500/15">
+          <div className="prose prose-sm prose-invert max-w-none leading-relaxed
+            prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5
+            prose-li:my-0.5 prose-pre:my-2 prose-strong:text-white
+            prose-code:text-blue-300 prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded">
+            <EnhancedMarkdown>{block.content}</EnhancedMarkdown>
+            {block.isActive && <span className="thinking-caret" aria-hidden />}
+          </div>
+        </div>
+      );
+
     case "phase_header": {
       const NodeIcon = block.node ? NODE_ICON[block.node as PipelineNode] : Bot;
       return (

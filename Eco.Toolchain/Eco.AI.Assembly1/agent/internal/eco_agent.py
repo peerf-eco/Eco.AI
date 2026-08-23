@@ -161,6 +161,12 @@ async def _drain_stream(
 _LLM_TRANSIENT_RETRIES = 3
 _LLM_RETRY_BACKOFF_S = 5  # 5s, 10s, 15s
 
+# How much of a failed tool's textual result is forwarded to the UI in the
+# tool_call_end event. The full content still goes to the model; this preview
+# exists so the chat can surface *why* a call failed (allowlist denials,
+# path rejections) without forwarding every successful payload.
+_TOOL_ERROR_PREVIEW_CHARS = 500
+
 
 def _is_transient_llm_error(msg: Optional[str]) -> bool:
     """Provider-side hiccups worth retrying: 5xx family, overload, timeouts.
@@ -380,6 +386,14 @@ class EcoAgent:
                         content=[TextContent(text=f"UNKNOWN TOOL: {name}")],
                         isError=True, timestamp=_now_ms(),
                     ))
+                    # Close the UI tool card — without TOOL_END it would spin
+                    # as "running" forever (same for the other error paths
+                    # below). denied=True marks policy-level rejections so the
+                    # frontend can badge them distinctly.
+                    self._emit(EventType.TOOL_END, {
+                        "name": name, "is_error": True,
+                        "details": {"denied": True, "reason": f"unknown tool {name!r}"},
+                    })
                     continue
 
                 # 1. prepare_arguments shim
@@ -402,6 +416,10 @@ class EcoAgent:
                             content=[TextContent(text=f"ARGS ERROR: {ve}")],
                             isError=True, timestamp=_now_ms(),
                         ))
+                        self._emit(EventType.TOOL_END, {
+                            "name": name, "is_error": True,
+                            "details": {"reason": str(ve)},
+                        })
                         continue
 
                 # 3. before_tool_call gate
@@ -413,6 +431,10 @@ class EcoAgent:
                             content=[TextContent(text=f"BLOCKED: {gate.get('reason', '')}")],
                             isError=True, timestamp=_now_ms(),
                         ))
+                        self._emit(EventType.TOOL_END, {
+                            "name": name, "is_error": True,
+                            "details": {"denied": True, "reason": gate.get("reason", "")},
+                        })
                         continue
 
                 # 4. stop tool — short-circuit return
@@ -454,6 +476,10 @@ class EcoAgent:
                         content=[TextContent(text=f"TOOL ERROR: {e}")],
                         isError=True, timestamp=_now_ms(),
                     ))
+                    self._emit(EventType.TOOL_END, {
+                        "name": name, "is_error": True,
+                        "details": {"reason": f"{type(e).__name__}: {e}"},
+                    })
                     continue
 
                 # 6. after_tool_call hook
@@ -468,8 +494,17 @@ class EcoAgent:
                 elif self.dedup_tools:
                     self._dedup_memo.clear()
 
+                end_details = dict(result.details or {})
+                if result.is_error:
+                    # Forward a preview of the failure text so the UI can
+                    # show *why* the call failed (allowlist/path denials
+                    # included).
+                    end_details.setdefault(
+                        "reason", result.content[:_TOOL_ERROR_PREVIEW_CHARS],
+                    )
                 self._emit(EventType.TOOL_END, {
-                    "name": name, "is_error": result.is_error, "details": result.details,
+                    "name": name, "is_error": result.is_error,
+                    "details": end_details,
                 })
                 history.append(ToolResultMessage(
                     toolCallId=call_id, toolName=name,

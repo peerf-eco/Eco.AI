@@ -98,18 +98,32 @@ export interface ToolCallBlock extends BlockBase {
   output?: string;        // populated on tool_call_end if details has stringifiable shape
   durationMs?: number;
   startedAt: number;      // performance.now() / Date.now()
+  // True when the call was rejected by a hardcoded policy gate (subcommand
+  // whitelist, path allowlist, tool gate) rather than failing organically.
+  blockedByPolicy?: boolean;
+  denialReason?: string;
 }
 
 // Streaming thinking/reasoning text from the LLM. One block per ReAct
-// iteration (a new tool_call_start finalises the current one). Both vendor
-// reasoning channels (additional_kwargs.reasoning_content) and visible
-// content tokens stream into this block so the user sees the model "work"
-// regardless of whether the underlying model is in thinking mode.
+// iteration (a new tool_call_start finalises the current one). Only vendor
+// reasoning channels (thinking_delta) stream into this block so it stays
+// purely "how the model reasoned" — visible answers go to AnswerBlock.
 export interface ThinkingBlock extends BlockBase {
   type: "thinking";
   node: PipelineNode;
   content: string;
   isActive: boolean;        // false → block collapses, caret hides
+  startedAt: number;
+}
+
+// The model's visible answer (text_delta): always expanded, normal prose
+// styling, never collapsed into a reasoning caret block. Finalised like
+// thinking on tool/phase boundaries but the UI keeps it open regardless.
+export interface AnswerBlock extends BlockBase {
+  type: "answer";
+  node: PipelineNode;
+  content: string;
+  isActive: boolean;        // controls the live caret only — never collapses
   startedAt: number;
 }
 
@@ -159,6 +173,7 @@ export type Block =
   | NodeDoneBlock
   | ToolCallBlock
   | ThinkingBlock
+  | AnswerBlock
   | FailBlock
   | PlanReviewBlock
   | EscalationBlock
@@ -258,6 +273,8 @@ export interface NodeEventEvent extends ServerEventBase {
     args?: Record<string, unknown>;
     // tool_call_end
     is_error?: boolean;
+    // Policy denial marker / failure preview forwarded inside details by the
+    // agent loop (denied: subcommand-whitelist or path-gate rejection).
     details?: Record<string, unknown> | null;
     // iteration
     i?: number;

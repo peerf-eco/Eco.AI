@@ -140,6 +140,9 @@ def _eco_cli(
                 "_ALLOWED_SUBCOMMANDS — do not retry with a different spelling."
             ),
             is_error=True,
+            # Structured denial marker: the UI badges these distinctly
+            # ("blocked by policy") instead of looking like a tool crash.
+            details={"denied": True, "reason": f"subcommand {sub!r} is not allowlisted"},
         )
 
     prefix = (

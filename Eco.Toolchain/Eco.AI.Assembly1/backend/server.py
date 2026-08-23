@@ -915,6 +915,13 @@ async def chat_endpoint(websocket: WebSocket):
                         "event": "text_delta",
                         "data":  {"content": header + message},
                     })
+                # Node completion card on handoff — a scannable per-node
+                # success marker that also closes the streaming burst in the UI.
+                if agent != "architect":
+                    await websocket.send_json({
+                        "type": "node_done",
+                        "node": NODE_OF.get(agent, "planner"),
+                    })
             elif etype == "error":
                 reason = (ev.data or {}).get("reason", "")
                 await websocket.send_json({
@@ -1399,17 +1406,112 @@ async def chat_endpoint(websocket: WebSocket):
                 if artifact_candidates
                 else ""
             )
-            finish_session("success" if success else "failed")
+
+            # ── Structured failure cards, derived from the hop trace ─────────
+            # The sub-orchestrator runs synchronously in one worker thread, so
+            # per-hop outcomes can't stream live; we replay result.hops here.
+            # tester --to_coder--> *  ⇒ test_fail (each backward hop = 1 retry)
+            # coder honest-fail/crash ⇒ build_fail
+            # Emitted only when the run ultimately FAILED: on a recovered
+            # retry the red "failed" card would contradict the green
+            # pipeline_done right after it — the retry itself is already
+            # visible via tool cards / thinking blocks.
+            test_retries = 0
+            if not success:
+                for hop in result.hops:
+                    if hop.agent == "tester" and hop.edge == "to_coder":
+                        test_retries += 1
+                        await websocket.send_json({
+                            "type":        "test_fail",
+                            "reason_md":   hop.message or "(tester gave no reason)",
+                            "retry_count": test_retries,
+                        })
+                    elif hop.agent == "coder" and (hop.edge == "fail" or hop.edge is None):
+                        await websocket.send_json({
+                            "type":        "build_fail",
+                            "error_md":    hop.message or result.error or "(coder failed without a message)",
+                            "retry_count": 0,
+                        })
+
+            # Status is recorded only after the escalation gate resolves so
+            # an abort here lands as "aborted", not "failed".
+            if success:
+                finish_session("success")
+                await websocket.send_json({
+                    "type":             "pipeline_done",
+                    "status":           "success",
+                    "build_artifact":   build_artifact,
+                    "tester_report_md": result.last_message
+                                        + f"\n\n(orchestrator: {result.status}, hops={len(result.hops)})",
+                })
+                break
+
+            # Failure → escalate to the user. The escalation card is a real
+            # gate: wait for the Continue/Abort decision before the terminal
+            # pipeline_done, otherwise the UI would re-enter a phantom
+            # processing state when the user clicks a button nobody answers.
+            last_coder_msg = next(
+                (h.message for h in reversed(result.hops) if h.agent == "coder"), "",
+            )
+            last_tester_msg = next(
+                (h.message for h in reversed(result.hops) if h.agent == "tester"), "",
+            )
+            if result.status == "loop_exceeded":
+                reason_code = f"{result.last_agent}_retry_limit"
+            elif result.status == "agent_failed":
+                # matches the frontend REASON_LABEL keys, e.g. coder_max_iters
+                failing_status = next(
+                    (h.agent_status for h in reversed(result.hops) if h.agent == result.last_agent),
+                    "error",
+                )
+                reason_code = f"{result.last_agent}_{failing_status}"
+            elif result.status == "unknown_edge":
+                reason_code = f"{result.last_agent}_error"
+            else:
+                reason_code = f"{result.last_agent}_fail"
             await websocket.send_json({
-                "type":             "pipeline_done",
-                "status":           "success" if success else "failed",
-                "build_artifact":   build_artifact,
-                "tester_report_md": result.last_message
-                                    + (f"\n\n(orchestrator: {result.status}"
-                                       + (f", edge={result.terminal_edge}"
-                                          if result.terminal_edge else "")
-                                       + f", hops={len(result.hops)})"),
+                "type":             "escalation_required",
+                "reason":           reason_code,
+                "failure_origin":   NODE_OF.get(result.last_agent, result.last_agent),
+                "retry_count":      test_retries,
+                "max_retries":      HARNESS_CONFIG.max_hops,
+                "build_log":        last_coder_msg[-4000:],
+                "tester_report_md": last_tester_msg[-8000:],
+                "plan_md":          approved_plan_md or "",
+                "coder_summary_md": last_coder_msg[-4000:],
             })
+
+            escalation_aborted = False
+            try:
+                while True:
+                    raw3 = await websocket.receive_text()
+                    try:
+                        p3 = json.loads(raw3)
+                    except json.JSONDecodeError:
+                        continue
+                    p3_type = p3.get("type")
+                    if p3_type == "abort":
+                        escalation_aborted = True
+                        break
+                    if p3_type == "escalation_decision":
+                        escalation_aborted = not bool(p3.get("continue"))
+                        break
+                    # stale plan_decision / anything else — ignore
+            except WebSocketDisconnect:
+                raise
+            if escalation_aborted:
+                finish_session("aborted")
+                await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
+            else:
+                # Continue keeps the session open for a follow-up request;
+                # this run itself stays failed — the user drives what's next.
+                finish_session("failed")
+                await websocket.send_json({
+                    "type":             "pipeline_done",
+                    "status":           "failed",
+                    "build_artifact":   build_artifact,
+                    "tester_report_md": result.last_message,
+                })
             break
 
     except WebSocketDisconnect:
