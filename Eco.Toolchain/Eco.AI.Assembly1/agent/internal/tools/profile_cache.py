@@ -194,7 +194,11 @@ def _read_profile(args: _ProfileArgs, cache_root: Path) -> ToolResult:
     # Markdown body so the model can parrot the values back verbatim into
     # its next eco_cli pull call. Details mirror the body as a structured
     # dict for any downstream consumer.
-    card = _scan_sharedfiles(resolved_root, args.name, cid)
+    # NOTE: ``cache_root``, not ``resolved_root`` — that name only exists in
+    # make_read_component_profile_tool; referencing it here raised NameError
+    # on every SUCCESSFUL profile lookup (the failure paths returned first),
+    # so read_component_profile never produced a contract card.
+    card = _scan_sharedfiles(cache_root, args.name, cid)
     body_lines = [
         f"## Component profile: {args.name}",
         "",

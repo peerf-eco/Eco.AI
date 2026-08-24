@@ -16,7 +16,7 @@ import { useHarnessSocket } from "./use-socket";
 import { Dropdown, type DropdownOption } from "./dropdown";
 import { PlatformSelector, PLATFORM_OPTIONS, DEFAULT_PLATFORM, type PlatformOption } from "./platform-selector";
 import { LanguageSelector, LANGUAGE_OPTIONS, type ProgrammingLanguage } from "./language-selector";
-import { ProjectsPanel } from "./project-panel";
+import { ProjectsPanel, type ExportFormat } from "./project-panel";
 import { FolderBrowser } from "./folder-browser";
 import { EcoosLogo } from "./ecoos-logo";
 import { AgentSettings } from "./agent-settings";
@@ -85,6 +85,9 @@ export function ChatInterface() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  // Panel feedback (removal blocked, export errors) + in-flight export marker.
+  const [panelNotice, setPanelNotice] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
 
   // Session-scoped attachments (decision #1): available to every message in the
   // current session, cleared on New Session. Kept in component state so the
@@ -165,6 +168,79 @@ export function ChatInterface() {
     const match = list.find((p) => p.path === entry.path);
     if (match) handleSelectProject(match);
   }, [refreshProjects, handleSelectProject]);
+
+  // ── Panel actions: whitelist removal + session export downloads ───────────
+  // Removal is visual only server-side; on failure (409 running session etc.)
+  // surface the reason as a dismissible panel notice. The panel list is
+  // refreshed either way and the auto-reselect effect covers the removed
+  // active project.
+  const handleRemoveProject = useCallback(async (project: ProjectInfo) => {
+    setPanelNotice(null);
+    try {
+      const res = await fetch(`${API_URL}/api/projects/${project.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setPanelNotice(
+          body?.detail
+            ? `Cannot remove "${project.name}": ${body.detail}`
+            : `Cannot remove "${project.name}" (HTTP ${res.status})`,
+        );
+      }
+    } catch {
+      setPanelNotice(`Cannot remove "${project.name}": backend unreachable`);
+    }
+    await refreshProjects();
+  }, [refreshProjects]);
+
+  const downloadExport = useCallback(async (url: string, fallbackName: string) => {
+    setExportBusy(true);
+    setPanelNotice(null);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setPanelNotice(body?.detail ?? `Export failed (HTTP ${res.status})`);
+        return;
+      }
+      const blob = await res.blob();
+      const match = (res.headers.get("Content-Disposition") ?? "")
+        .match(/filename="?([^";]+)"?/i);
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = match?.[1] || fallbackName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(href);
+    } catch {
+      setPanelNotice("Export failed: backend unreachable");
+    } finally {
+      setExportBusy(false);
+    }
+  }, []);
+
+  const handleExportProject = useCallback(
+    (project: ProjectInfo, format: ExportFormat) => {
+      void downloadExport(
+        `${API_URL}/api/projects/${project.id}/export?format=${format}`,
+        `${project.name}-sessions.${format}`,
+      );
+    },
+    [downloadExport],
+  );
+
+  const handleExportAll = useCallback(
+    (format: ExportFormat) => {
+      void downloadExport(
+        `${API_URL}/api/export/all?format=${format}`,
+        `harness-sessions-all.${format}`,
+      );
+    },
+    [downloadExport],
+  );
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
 
@@ -477,6 +553,12 @@ export function ChatInterface() {
         activeProjectId={activeProjectId}
         onSelect={handleSelectProject}
         onNewProject={() => setBrowserOpen(true)}
+        onRemoveProject={handleRemoveProject}
+        onExportProject={handleExportProject}
+        onExportAll={handleExportAll}
+        exportBusy={exportBusy}
+        notice={panelNotice}
+        onDismissNotice={() => setPanelNotice(null)}
       />
 
       {/* Settings sidebar */}

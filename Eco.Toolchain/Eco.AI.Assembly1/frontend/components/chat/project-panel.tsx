@@ -1,16 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
+  Download,
+  FileText,
   FolderClosed,
+  FolderDown,
+  MoreVertical,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  Trash2,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProjectInfo, SessionInfo, SessionStatus } from "./types";
 import { EcoosLogo } from "./ecoos-logo";
+
+export type ExportFormat = "jsonl" | "txt";
 
 interface ProjectsPanelProps {
   open: boolean;
@@ -19,12 +27,20 @@ interface ProjectsPanelProps {
   activeProjectId: string | null;
   onSelect: (project: ProjectInfo) => void;
   onNewProject: () => void;
+  onRemoveProject?: (project: ProjectInfo) => void;
+  onExportProject?: (project: ProjectInfo, format: ExportFormat) => void;
+  onExportAll?: (format: ExportFormat) => void;
+  exportBusy?: boolean;
+  notice?: string | null;
+  onDismissNotice?: () => void;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Left vertical panel: project list + per-project coding sessions.
+// Left vertical panel: whitelisted projects + per-project coding sessions.
 // Collapses to an icon rail; selection highlights the current project card,
-// past projects stay gray; clicking a card reveals its sessions.
+// past projects stay gray; clicking a card reveals its sessions. Each card
+// carries a 3-dot menu (session export / remove from panel); the panel
+// header offers combined export of all projects.
 // ────────────────────────────────────────────────────────────────────────────
 
 export function ProjectsPanel({
@@ -34,6 +50,12 @@ export function ProjectsPanel({
   activeProjectId,
   onSelect,
   onNewProject,
+  onRemoveProject,
+  onExportProject,
+  onExportAll,
+  exportBusy = false,
+  notice,
+  onDismissNotice,
 }: ProjectsPanelProps) {
   // Which card's session list is unfolded — follows selection by default.
   const [expandedId, setExpandedId] = useState<string | null>(activeProjectId);
@@ -87,15 +109,35 @@ export function ProjectsPanel({
           <EcoosLogo className="h-8 w-8 shrink-0" />
           <span className="truncate text-sm font-semibold tracking-tight">Projects</span>
         </div>
-        <button
-          type="button"
-          onClick={onToggle}
-          title="Collapse panel"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground transition-colors"
-        >
-          <PanelLeftClose className="h-4 w-4" />
-        </button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <PanelMenu exportBusy={exportBusy} onExportAll={onExportAll} />
+          <button
+            type="button"
+            onClick={onToggle}
+            title="Collapse panel"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground transition-colors"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
+        </div>
       </div>
+
+      {/* Transient notice (removal blocked, export errors, …) */}
+      {notice && (
+        <div className="mx-3 mb-2 flex items-start gap-2 rounded-lg border border-white/[0.08] bg-black/25 px-2.5 py-2 text-[11px] leading-snug text-muted-foreground">
+          <span className="min-w-0 flex-1 break-words">{notice}</span>
+          {onDismissNotice && (
+            <button
+              type="button"
+              onClick={onDismissNotice}
+              aria-label="Dismiss"
+              className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-white/10 hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* New project */}
       <div className="px-3 pb-3">
@@ -128,13 +170,13 @@ export function ProjectsPanel({
           const active = project.id === activeProjectId;
           const expanded = project.id === expandedId && project.sessions.length > 0;
           return (
-            <div key={project.id}>
+            <div key={project.id} className="relative group/card">
               <button
                 type="button"
                 onClick={() => onSelect(project)}
                 title={`${project.name}\n${project.path}`}
                 className={cn(
-                  "group flex w-full items-start gap-2.5 rounded-xl border px-3 py-2.5",
+                  "flex w-full items-start gap-2.5 rounded-xl border px-3 py-2.5",
                   "text-left transition-colors",
                   active
                     ? "border-blue-500/40 bg-blue-500/[0.08]"
@@ -147,12 +189,12 @@ export function ProjectsPanel({
                     "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
                     active
                       ? "bg-gradient-to-br from-blue-500/30 to-violet-500/30 text-blue-200"
-                      : "bg-white/[0.04] text-muted-foreground group-hover:text-foreground",
+                      : "bg-white/[0.04] text-muted-foreground group-hover/card:text-foreground",
                   )}
                 >
                   <FolderClosed className="h-3.5 w-3.5" />
                 </div>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 pr-4">
                   <div
                     className={cn(
                       "truncate text-xs font-medium",
@@ -175,6 +217,13 @@ export function ProjectsPanel({
                 />
               </button>
 
+              <ProjectCardMenu
+                project={project}
+                active={active}
+                onExport={(format) => onExportProject?.(project, format)}
+                onRemove={() => onRemoveProject?.(project)}
+              />
+
               {/* Sessions revealed under the selected project */}
               {expanded && (
                 <motion.div
@@ -194,6 +243,216 @@ export function ProjectsPanel({
         })}
       </div>
     </motion.aside>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Card 3-dot menu: session export + remove-from-panel (visual only).
+// ────────────────────────────────────────────────────────────────────────────
+
+const REMOVE_BLOCKED_TITLE =
+  "Cannot remove the active project or one with running sessions";
+const REMOVE_TITLE = "Projects can be re-added anytime; nothing is deleted";
+
+function useDismissable(open: boolean, close: () => void) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        close();
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, close]);
+  return wrapperRef;
+}
+
+function ProjectCardMenu({
+  project,
+  active,
+  onExport,
+  onRemove,
+}: {
+  project: ProjectInfo;
+  active: boolean;
+  onExport: (format: ExportFormat) => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  const wrapperRef = useDismissable(open, close);
+  const removeBlocked =
+    active || project.sessions.some((s) => s.status === "running");
+
+  return (
+    <div ref={wrapperRef} className="absolute right-1.5 top-1.5 z-10">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={removeBlocked ? REMOVE_BLOCKED_TITLE : "Project actions"}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (removeBlocked) return;
+          setOpen((v) => !v);
+        }}
+        className={cn(
+          "rounded-md p-1 text-muted-foreground transition-opacity",
+          "hover:bg-white/10 hover:text-foreground",
+          "bg-black/40 opacity-0 backdrop-blur-sm",
+          "focus:opacity-100 group-hover/card:opacity-100",
+          open && "opacity-100",
+          removeBlocked &&
+            "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground",
+        )}
+      >
+        <MoreVertical className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className={cn(
+            "absolute right-0 top-full mt-1 z-50 min-w-[176px]",
+            "rounded-xl border border-white/10 glass-strong",
+            "shadow-[0_16px_48px_-12px_rgba(0,0,0,0.8)] p-1.5 space-y-0.5",
+          )}
+        >
+          <MenuItem
+            icon={<Download className="h-3.5 w-3.5 text-blue-300/90" />}
+            label="Export sessions · JSONL"
+            onClick={() => {
+              close();
+              onExport("jsonl");
+            }}
+          />
+          <MenuItem
+            icon={<FileText className="h-3.5 w-3.5 text-blue-300/90" />}
+            label="Export sessions · TXT"
+            onClick={() => {
+              close();
+              onExport("txt");
+            }}
+          />
+          <div className="my-1 h-px bg-white/[0.08]" role="separator" />
+          <MenuItem
+            danger
+            icon={<Trash2 className="h-3.5 w-3.5" />}
+            label="Remove from panel"
+            title={REMOVE_TITLE}
+            onClick={() => {
+              close();
+              onRemove();
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Header export-all menu.
+// ────────────────────────────────────────────────────────────────────────────
+
+function PanelMenu({
+  exportBusy,
+  onExportAll,
+}: {
+  exportBusy: boolean;
+  onExportAll?: (format: ExportFormat) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  const wrapperRef = useDismissable(open, close);
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={exportBusy}
+        title="Export all projects' sessions"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "rounded-md p-1.5 text-muted-foreground transition-colors",
+          "hover:bg-white/[0.06] hover:text-foreground",
+          open && "bg-white/[0.06] text-foreground",
+          exportBusy && "cursor-not-allowed opacity-40",
+        )}
+      >
+        <FolderDown className="h-4 w-4" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className={cn(
+            "absolute right-0 top-full mt-1 z-50 min-w-[196px]",
+            "rounded-xl border border-white/10 glass-strong",
+            "shadow-[0_16px_48px_-12px_rgba(0,0,0,0.8)] p-1.5 space-y-0.5",
+          )}
+        >
+          <MenuItem
+            icon={<Download className="h-3.5 w-3.5 text-blue-300/90" />}
+            label="Export all projects · JSONL"
+            onClick={() => {
+              close();
+              onExportAll?.("jsonl");
+            }}
+          />
+          <MenuItem
+            icon={<FileText className="h-3.5 w-3.5 text-blue-300/90" />}
+            label="Export all projects · TXT"
+            onClick={() => {
+              close();
+              onExportAll?.("txt");
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({
+  icon,
+  label,
+  onClick,
+  danger,
+  title,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      title={title ?? label}
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5",
+        "text-left text-xs transition-colors",
+        danger
+          ? "text-red-300 hover:bg-red-500/15"
+          : "text-white hover:bg-white/10",
+      )}
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+    </button>
   );
 }
 

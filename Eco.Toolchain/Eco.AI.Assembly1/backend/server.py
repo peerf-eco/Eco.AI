@@ -15,11 +15,12 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from typing import List, Dict, Any, AsyncGenerator, Set
+from typing import List, Dict, Any, AsyncGenerator
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from agent.config.loader import (
     load_config,
@@ -27,6 +28,13 @@ from agent.config.loader import (
     load_role_config,
 )
 from agent.internal.tools import binaries, paths
+from backend.session_export import (
+    build_project_export,
+    default_traces_root,
+    iter_project_jsonl,
+    render_export_text,
+    safe_export_name,
+)
 from eco_harness.worktrees import WorktreeError, create_worktree
 from eco_harness.roles import make_role_agent
 
@@ -67,15 +75,15 @@ app.mount("/files", StaticFiles(directory="output"), name="files")
 # ═══════════════════════════════════════════════════════════════════════════
 # PROJECT & SESSION REGISTRY — persisted at <output_root>/.harness-registry.json
 #
-# The web UI's left panel lists projects (folders registered by the user or
-# seen in output/) and each project's coding sessions (one per chat thread).
-# Shape:
+# The web UI's left panel lists whitelisted projects (folders explicitly
+# registered by the user) and each project's coding sessions (one per chat
+# thread). Shape:
 #   {"projects":  [{id, path, name, added_at}],
 #    "sessions":  [{id, thread_id, project_path, title, created_at,
 #                   updated_at, status}]}
 # Session ids are the first 8 chars of thread_id — matching the chat-<id8>
-# output directory convention. Legacy output/chat-* dirs are seeded as idle
-# sessions on read so history survives registry resets.
+# output directory convention. Removing a project from the panel deletes its
+# registry entry only — sessions, traces, and folders are never touched.
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _output_root() -> Path:
@@ -380,52 +388,24 @@ async def fs_search(
 
 @app.get("/api/projects")
 async def list_projects():
-    """Projects with their sessions; auto-seeds legacy output/chat-* runs."""
+    """Whitelisted projects with their grouped sessions.
+
+    Only folders explicitly registered by the user (registry["projects"]) are
+    visible in the panel — session paths and legacy output/chat-* dirs are no
+    longer materialized as projects. Sessions whose project_path is not
+    whitelisted simply don't render; their records stay in the registry."""
     registry = _load_registry()
-    projects: dict[str, dict] = {
+    whitelisted: dict[str, dict] = {
         entry["path"]: {**entry, "auto": False}
         for entry in registry["projects"]
     }
-    sessions: dict[str, dict] = {}
-    for session in registry["sessions"]:
-        sessions[session["id"]] = session
-
-    # Seed legacy/default chat-* dirs that have no session record yet.
-    known_dirs: set[str] = set()
-    for session in registry["sessions"]:
-        p = session.get("project_path")
-        if p:
-            known_dirs.add(p)
-    for d in sorted(_output_root().glob("chat-*")):
-        if not d.is_dir():
-            continue
-        project_path = str(d)
-        short_id = d.name.replace("chat-", "", 1)
-        if short_id in sessions or project_path in known_dirs:
-            continue
-        sessions[short_id] = {
-            "id": short_id,
-            "thread_id": short_id,
-            "project_path": project_path,
-            "title": "(previous run)",
-            "created_at": datetime.fromtimestamp(d.stat().st_ctime, timezone.utc).isoformat(),
-            "updated_at": datetime.fromtimestamp(d.stat().st_mtime, timezone.utc).isoformat(),
-            "status": "idle",
-        }
-        known_dirs.add(project_path)
-
-    # Every distinct session project becomes a visible project entry.
-    for session in sessions.values():
-        ppath = session.get("project_path")
-        if ppath and ppath not in projects:
-            projects[ppath] = {**_project_entry(Path(ppath)), "auto": True}
 
     grouped: dict[str, list[dict]] = {}
-    for session in sessions.values():
-        grouped.setdefault(session.get("project_path") or "", []).append(session)
+    for session in registry["sessions"]:
+        grouped.setdefault(_session_project_path(session), []).append(session)
 
     result = []
-    for ppath, entry in projects.items():
+    for ppath, entry in whitelisted.items():
         proj_sessions = sorted(
             grouped.get(ppath, []),
             key=lambda s: s.get("updated_at") or "",
@@ -459,6 +439,143 @@ async def register_project(request: ProjectRegisterRequest):
     return {**entry, "auto": False}
 
 
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    """Remove a project from the panel whitelist — a visual/UI operation only.
+
+    Deletes the registry["projects"] entry and nothing else: sessions, traces,
+    and the folder on disk are untouched (re-adding the folder via the browser
+    restores it). Returns 409 when any session of this project is still
+    running so the panel never hides live work."""
+    registry = _load_registry()
+    entry = next(
+        (p for p in registry["projects"] if p.get("id") == project_id), None,
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Unknown project: {project_id}")
+    for session in _sessions_for_project(registry, entry.get("path")):
+        if session.get("status") == "running":
+            raise HTTPException(
+                status_code=409,
+                detail="Project has a running session",
+            )
+    registry["projects"] = [
+        p for p in registry["projects"] if p.get("id") != project_id
+    ]
+    _save_registry(registry)
+    return {"status": "ok", "removed": project_id}
+
+
+# ── Session export (fine-tuning data) ────────────────────────────────────────
+# Turns are rebuilt from traces/chat-<id8>/ by backend/session_export.py:
+# JSONL = one training record per turn; TXT = human-readable labeled blocks.
+
+_EXPORT_MEDIA_TYPES = {
+    "jsonl": "application/x-ndjson",
+    "txt": "text/plain; charset=utf-8",
+}
+
+
+def _export_format(format_param: str) -> str:
+    fmt = (format_param or "").strip().lower()
+    if fmt not in ("jsonl", "txt"):
+        raise HTTPException(status_code=400, detail="format must be 'jsonl' or 'txt'")
+    return fmt
+
+
+_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _safe_id(value: str, fallback: str = "x") -> str:
+    """Fold an externally supplied id (e.g. the ``thread_id`` query param) to
+    a path-safe charset so it can never carry ``/`` or ``..`` into a filename
+    or directory built from it."""
+    folded = _SAFE_ID_RE.sub("-", value or "").strip("-")
+    return folded or fallback
+
+
+def _session_project_path(session: dict) -> str:
+    """Association key: a session belongs to the project whose registry path
+    matches its ``project_path``; the empty string groups orphaned sessions."""
+    return session.get("project_path") or ""
+
+
+def _sessions_for_project(registry: dict, project_path: str) -> list[dict]:
+    """All sessions of one project, most recently updated first."""
+    sessions = [
+        s for s in registry["sessions"]
+        if _session_project_path(s) == project_path
+    ]
+    return sorted(
+        sessions, key=lambda s: s.get("updated_at") or "", reverse=True,
+    )
+
+
+def _project_sessions(registry: dict, project: dict) -> list[dict]:
+    """The project's sessions, most recently updated first."""
+    return _sessions_for_project(registry, project.get("path"))
+
+
+def _export_streaming_response(
+    project_session_pairs: list[tuple[dict, list[dict]]], fmt: str, filename: str,
+):
+    """Stream the export without blocking the event loop: each project's trace
+    history is built in a worker thread and streamed incrementally, so memory
+    stays bounded to a single project and live websockets are not frozen."""
+
+    async def _iter():
+        for index, (project, sessions) in enumerate(project_session_pairs):
+            export = await run_in_threadpool(
+                build_project_export, project, sessions, default_traces_root(),
+            )
+            if fmt == "jsonl":
+                for line in iter_project_jsonl(export):
+                    yield line + "\n"
+            else:
+                if index:
+                    yield "\n"
+                yield render_export_text(export)
+
+    return StreamingResponse(
+        _iter(),
+        media_type=_EXPORT_MEDIA_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/projects/{project_id}/export")
+async def export_project(project_id: str, format: str = "jsonl"):
+    """Export one project's sessions as JSONL/TXT (question, context,
+    reasoning chain, final answer per turn)."""
+    fmt = _export_format(format)
+    registry = _load_registry()
+    project = next(
+        (p for p in registry["projects"] if p.get("id") == project_id), None,
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Unknown project: {project_id}")
+    filename = (
+        f"{safe_export_name(project.get('name') or 'project')}-sessions.{fmt}"
+    )
+    return _export_streaming_response(
+        [(project, _project_sessions(registry, project))], fmt, filename,
+    )
+
+
+@app.get("/api/export/all")
+async def export_all_projects(format: str = "jsonl"):
+    """Export every whitelisted project's sessions as one combined file."""
+    fmt = _export_format(format)
+    registry = _load_registry()
+    projects = sorted(
+        registry["projects"], key=lambda p: p.get("added_at") or "", reverse=True,
+    )
+    pairs = [(p, _project_sessions(registry, p)) for p in projects]
+    return _export_streaming_response(
+        pairs, fmt, f"harness-sessions-all.{fmt}",
+    )
+
+
 def _record_session_start(thread_id: str, project_dir: Path, title: str) -> None:
     """Upsert a session record when a user_request starts processing."""
     try:
@@ -484,8 +601,9 @@ def _record_session_start(thread_id: str, project_dir: Path, title: str) -> None
                 "updated_at": now,
                 "status": "running",
             })
-        if not any(p["path"] == project_path for p in registry["projects"]):
-            registry["projects"].append(_project_entry(project_dir.resolve()))
+        # Panel visibility is whitelist-only: a session against an
+        # unregistered dir is recorded here but never auto-added to
+        # registry["projects"] — the folder shows up once explicitly added.
         _save_registry(registry)
     except Exception:
         logger.exception("session start recording failed")
@@ -889,10 +1007,23 @@ async def _classify_intent(user_req: str, model) -> bool:
         return True  # on doubt, run the pipeline rather than mis-answer
 
 
-async def _chat_reply(user_req: str, model, attached_ctx: str | None = None) -> str:
-    """One-shot direct answer for plain chat questions (no pipeline)."""
+async def _chat_reply(
+    user_req: str,
+    model,
+    attached_ctx: str | None = None,
+    trace_dir: Path | None = None,
+    call_no: int = 0,
+) -> str:
+    """One-shot direct answer for plain chat questions (no pipeline).
+
+    When `trace_dir` is given the raw request/response pair is persisted via
+    ``write_call_trace`` as a ``NNN-chat.json`` file (same convention as
+    pipeline calls) so plain-chat turns show up in session exports. The file's
+    ``NNN`` sequence is assigned by ``write_call_trace`` from the on-disk file
+    count; ``call_no`` is recorded in the trace metadata for correlation."""
     from agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
     from agent.pi_ai.stream import complete
+    from agent.internal.call_trace import write_call_trace
     user_msg = user_req
     if attached_ctx:
         user_msg = attached_ctx + user_msg
@@ -903,6 +1034,18 @@ async def _chat_reply(user_req: str, model, attached_ctx: str | None = None) -> 
     msg = await complete(
         model, ctx, SimpleStreamOptions(reasoning="low", maxTokens=2000)
     )
+    if trace_dir is not None:
+        # write_call_trace never raises — observability must not break replies.
+        write_call_trace(
+            trace_dir=trace_dir,
+            label="chat",
+            call_no=call_no,
+            iteration=0,
+            model_id=getattr(model, "id", "") or "",
+            request_context=ctx,
+            response=msg,
+            error="",
+        )
     return _msg_text(msg)
 
 
@@ -1373,8 +1516,11 @@ async def chat_endpoint(websocket: WebSocket):
     make_env_path = os.getenv("ECO_MAKE_EXE") or "make"
     make_exe = Path(make_env_path)
 
+    # A caller-supplied thread_id becomes the session id and the chat-<id>
+    # trace folder; sanitize it so it can never carry "/" or ".." into a
+    # filesystem path. Reconnects send the same raw value and get the same id.
     requested_thread_id = websocket.query_params.get("thread_id")
-    thread_id = requested_thread_id or str(uuid.uuid4())
+    thread_id = _safe_id(requested_thread_id) if requested_thread_id else str(uuid.uuid4())
 
     def _default_project_dir() -> Path:
         return Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")) / f"chat-{thread_id[:8]}"
@@ -1407,6 +1553,12 @@ async def chat_endpoint(websocket: WebSocket):
     # Session bookkeeping for the UI project panel: flip the registry status
     # when this connection's run reaches any terminal state.
     session_open = False
+
+    # Per-connection counter passed to write_call_trace as metadata; the
+    # NNN-chat.json file sequence itself is assigned by write_call_trace from
+    # the on-disk file count, so chat replies interleave correctly with the
+    # pipeline's own trace writes to the same trace_dir.
+    chat_call_no = 0
 
     def finish_session(status: str) -> None:
         nonlocal session_open
@@ -1690,9 +1842,14 @@ async def chat_endpoint(websocket: WebSocket):
             if mode == "auto":
                 gate_model = _build_chat_model(connection_config)
                 if gate_model is not None and not await _classify_intent(user_req, gate_model):
+                    chat_call_no += 1  # per-connection plain-chat trace counter
                     try:
                         answer = await _chat_reply(
-                            user_req, gate_model, attached_ctx=attached_block
+                            user_req,
+                            gate_model,
+                            attached_ctx=attached_block,
+                            trace_dir=trace_dir,
+                            call_no=chat_call_no,
                         )
                     except Exception as error:
                         answer = f"(chat reply failed: {error})"

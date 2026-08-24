@@ -30,5 +30,5 @@ up:
 	docker compose up --build
 
 test:
-	.venv/bin/python -m pytest agent/internal/tests
+	.venv/bin/python -m pytest agent/internal/tests backend/tests
 	.venv/bin/python -m compileall -q agent backend eco_harness scripts
