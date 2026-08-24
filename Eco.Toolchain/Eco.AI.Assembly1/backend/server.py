@@ -7,6 +7,7 @@ import asyncio
 import logging
 import shutil
 import hashlib
+import base64
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -164,8 +165,9 @@ def _ensure_allowed(path: Path) -> Path:
 
 
 @app.get("/api/fs/browse")
-async def fs_browse(path: str | None = None):
-    """List subdirectories of `path` (home dir when omitted) for the folder picker."""
+async def fs_browse(path: str | None = None, files: bool = False):
+    """List subdirectories (and optionally files) of `path` (home when omitted)
+    for the folder / file picker."""
     try:
         target = Path(path).expanduser().resolve() if path else Path.home().resolve()
     except (OSError, RuntimeError) as error:
@@ -179,13 +181,201 @@ async def fs_browse(path: str | None = None):
     except PermissionError:
         children = []
     for child in children:
-        if child.is_dir() and not child.name.startswith(".") and not child.is_symlink():
+        if child.name.startswith(".") or child.is_symlink():
+            continue
+        if child.is_dir():
             entries.append({"name": child.name, "path": str(child), "type": "dir"})
+        elif files and child.is_file():
+            try:
+                size = child.stat().st_size
+            except OSError:
+                size = 0
+            entries.append(
+                {"name": child.name, "path": str(child), "type": "file", "size": size}
+            )
     # Hide the ".." escape hatch when the parent sits outside the allowlist.
     parent = None
     if target.parent != target and _is_within_allowed(target.parent):
         parent = str(target.parent)
     return {"path": str(target), "parent": parent, "entries": entries}
+
+
+# ── File search (the @-mention backend) ──────────────────────────────────────
+# Two swappable backends behind a single endpoint:
+#   • os_walk — zero-dependency recursive os.walk (default). Secure, adequate
+#     for the active-project root (the common case).
+#   • fff     — opt-in fff-search index (FILE_SEARCH_BACKEND=fff). Falls back to
+#     os_walk if the wheel is missing so the service stays functional with zero
+#     native deps by default.
+
+_SEARCH_SKIP_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv",
+    "marketplace_cache", ".eco-attachments",
+}
+_SEARCH_FILE_CAP = 20_000
+
+
+def _search_os_walk(q: str, root: Path, limit: int, depth: int) -> list[dict]:
+    """Hand-rolled recursive search. Returns a list of
+    {name, path, size, mtime}. Prunes hidden dirs, symlinks, and heavy dirs."""
+    ql = q.lower()
+    hits: list[dict] = []
+    seen_files = 0
+
+    def _emit(base: Path, rel_parts: tuple[str, ...]) -> None:
+        nonlocal seen_files
+        try:
+            children = sorted(base.iterdir(), key=lambda c: c.name.lower())
+        except (OSError, PermissionError):
+            # A single unreadable directory must not abort the whole walk (B4):
+            # skip it and let siblings continue.
+            return
+        for child in children:
+            if seen_files >= _SEARCH_FILE_CAP:
+                return
+            if child.name.startswith(".") or child.name.startswith("__"):
+                continue
+            if child.is_symlink():
+                continue
+            if child.is_dir():
+                if child.name in _SEARCH_SKIP_DIRS:
+                    continue
+                if len(rel_parts) < depth:
+                    _emit(child, rel_parts + (child.name,))
+                continue
+            seen_files += 1
+            fl = child.name.lower()
+            rel = "/".join(rel_parts + (child.name,))
+            if ql in fl:
+                rank = 0
+            elif ql in rel:
+                rank = 1
+            else:
+                continue
+            try:
+                st = child.stat()
+                size = st.st_size
+                mtime = st.st_mtime
+            except OSError:
+                size = mtime = 0
+            hits.append({
+                "name": child.name,
+                "path": str(child),
+                "size": size,
+                "mtime": mtime,
+                "_rank": rank,
+                "_rel": rel,
+            })
+
+    try:
+        _emit(root, ())
+    except (OSError, PermissionError):
+        pass
+    hits.sort(key=lambda h: (h["_rank"], h["_rel"]))
+    return [
+        {"name": h["name"], "path": h["path"], "size": h["size"], "mtime": h["mtime"]}
+        for h in hits[:limit]
+    ]
+
+
+_fff_indexes: dict[Path, Any] = {}
+
+
+def _search_fff(q: str, root: Path, limit: int) -> list[dict] | None:
+    """Typo-tolerant / frecency-ranked search via the opt-in fff-search wheel.
+    Returns None if FFF is unavailable or errors so the caller can fall back."""
+    try:
+        import fff  # type: ignore
+    except ImportError:
+        logger.warning("FILE_SEARCH_BACKEND=fff but fff-search is not installed; "
+                       "falling back to os_walk")
+        return None
+    try:
+        if root not in _fff_indexes:
+            _fff_indexes[root] = fff.FFFIndex(str(root))
+        index = _fff_indexes[root]
+        items = index.file_search(query=q)
+        out: list[dict] = []
+        for item in items[:limit]:
+            rel = getattr(item, "relative_path", None) or str(item)
+            full = root / rel if not Path(rel).is_absolute() else Path(rel)
+            try:
+                st = full.stat()
+                size = st.st_size
+                mtime = st.st_mtime
+            except OSError:
+                size = mtime = 0
+            out.append({
+                "name": full.name,
+                "path": str(full),
+                "size": size,
+                "mtime": mtime,
+            })
+        return out
+    except Exception as error:  # never crash the search on a missing index
+        logger.warning("fff search failed (%s); falling back to os_walk", error)
+        return None
+
+
+@app.get("/api/fs/search")
+async def fs_search(
+    q: str = "",
+    root: str | None = None,
+    limit: int = 50,
+    depth: int = 8,
+    backend: str = "os_walk",
+):
+    """Filename/path substring search backing the @-mention autocomplete.
+
+    `root` defaults to the first allowed root (home); when provided it must
+    resolve within the allowed roots. Returns files only:
+    {root, truncated, backend, results:[{name,path,size,mtime}]}."""
+    # The server owns backend selection (D1): FILE_SEARCH_BACKEND env wins, the
+    # query `backend` param is only a hint. This keeps the lean-dependency
+    # default in force unless an operator explicitly opts into fff.
+    env_backend = (os.getenv("FILE_SEARCH_BACKEND") or "").strip().lower()
+    effective = env_backend or backend or "os_walk"
+    if effective not in ("os_walk", "fff"):
+        effective = "os_walk"
+
+    # Home-root walks are the heaviest path (PRD risk note): require a longer
+    # query so we don't fs_walk all of $HOME on a single keystroke.
+    root_explicit = bool(root)
+    min_q = 2 if (not root_explicit) else 1
+    if len(q) < min_q:
+        return {"root": root or "", "truncated": False, "backend": effective, "results": []}
+    try:
+        if root_explicit:
+            target = _ensure_allowed(Path(root).expanduser().resolve())
+        else:
+            target = _allowed_roots()[0]
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if not target.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Search root is not a directory: {target}",
+        )
+    try:
+        limit = max(1, min(int(limit), 200))
+        depth = max(1, min(int(depth), 16))
+    except (TypeError, ValueError):
+        limit, depth = 50, 8
+
+    results: list[dict] | None = None
+    used_backend = effective
+    if effective == "fff":
+        results = _search_fff(q, target, limit)
+        if results is None:
+            used_backend = "os_walk"
+    if results is None:
+        results = _search_os_walk(q, target, limit, depth)
+    return {
+        "root": str(target),
+        "truncated": len(results) >= limit,
+        "backend": used_backend,
+        "results": results,
+    }
 
 
 @app.get("/api/projects")
@@ -324,8 +514,11 @@ async def health_check():
 
 @app.get("/config")
 async def harness_config():
+    # Serves the in-memory config. The global is swapped ONLY by
+    # PUT /config/workspace (after a validated save) — never mid-request — so
+    # in-flight WS pipelines cannot observe a config that changes under them.
+    # Out-of-band edits to workspace.yaml show up on the next save or restart.
     return {
-        "languages": ["C", "CPP", "Python", "Java"],
         "platforms": [
             {"os": "Linux", "arch": "x86_64", "label": "Linux · x86_64"},
             {"os": "Windows", "arch": "x86_64", "label": "Windows · x86_64"},
@@ -340,8 +533,15 @@ async def harness_config():
                 "reasoning": spec.reasoning,
                 "skill_versions": spec.skill_versions,
                 "budgets": spec.budgets.model_dump(),
+                "permissions": spec.permissions.model_dump(),
             }
             for name, spec in HARNESS_CONFIG.roles.items()
+        },
+        # Harness-level permission defaults. Per-role resolved policies are
+        # already serialized under roles[name].permissions — not duplicated
+        # here.
+        "permissions": {
+            "defaults": HARNESS_CONFIG.default_permissions.model_dump(),
         },
         "languages": {
             name: {
@@ -369,19 +569,97 @@ class WorkspaceConfigRequest(BaseModel):
     roles: dict[str, dict[str, Any]] = Field(default_factory=dict)
     languages: dict[str, dict[str, Any]] = Field(default_factory=dict)
     harness: dict[str, Any] = Field(default_factory=dict)
+    # User-managed model registry: named profiles merged over config/models.yaml
+    # on next load (see load_config). Shape mirrors ModelProfile plus the
+    # profile name as the mapping key; a None value REMOVES the profile.
+    models: dict[str, dict[str, Any] | None] = Field(default_factory=dict)
+    # LLM permission policy: {"defaults": {...}, "roles": {<role>: {...}}}.
+    permissions: dict[str, Any] = Field(default_factory=dict)
+
+
+def _validate_workspace_sections(provided: dict[str, Any]) -> None:
+    """Reject settings that would break (or poison) the next config load.
+
+    Each provided section is parsed through the same pydantic models the
+    loader uses, so a bad payload is answered with a 400 at save time instead
+    of a crashed harness at next restart.
+    """
+    from agent.config.loader import LanguageSpec, ModelProfile, PermissionSpec, RoleSpec
+    from pydantic import ValidationError
+
+    try:
+        for role_spec in (provided.get("roles") or {}).values():
+            RoleSpec(**role_spec)
+        for language_spec in (provided.get("languages") or {}).values():
+            LanguageSpec(**language_spec)
+        for profile in (provided.get("models") or {}).values():
+            if profile is not None:
+                ModelProfile(**profile)
+        permissions = provided.get("permissions") or {}
+        defaults = permissions.get("defaults")
+        if defaults is not None:
+            PermissionSpec(**defaults)
+        for role_delta in (permissions.get("roles") or {}).values():
+            PermissionSpec(**role_delta)
+    except (ValidationError, TypeError) as error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid workspace settings: {error}",
+        ) from error
 
 
 @app.put("/config/workspace")
 async def update_workspace_config(request: WorkspaceConfigRequest):
+    global HARNESS_CONFIG
+    # Trust model: this is a LOCAL dev harness — the whole API (including the
+    # chat WS, which runs agents with full tool access) is bound to
+    # 127.0.0.1 without auth by design. This endpoint is the single writer of
+    # workspace.yaml, validates every section against the loader's schema,
+    # and merges into the existing file so sections a client does not send
+    # (e.g. harness) are preserved. Exposing the port beyond localhost
+    # requires a fronting proxy with auth for the ENTIRE API, not just this
+    # route.
     workspace_path = HARNESS_CONFIG.workspace_override
     if workspace_path is None:
         raise HTTPException(status_code=500, detail="Workspace config path is unavailable")
-    workspace_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # exclude_unset: only sections present in the request body are merged.
+    # An absent section keeps its existing workspace value; an explicitly
+    # empty section (e.g. models: {}) clears it.
+    provided = request.model_dump(exclude_unset=True)
+    _validate_workspace_sections(provided)
+
     import yaml
+
+    existing: dict[str, Any] = {}
+    if workspace_path.exists():
+        try:
+            loaded = yaml.safe_load(workspace_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = loaded
+        except yaml.YAMLError:
+            logger.warning("existing workspace.yaml is unparseable; replacing provided sections")
+    existing.update(provided)
+
+    workspace_path.parent.mkdir(parents=True, exist_ok=True)
     workspace_path.write_text(
-        yaml.safe_dump(request.model_dump(), sort_keys=False),
+        yaml.safe_dump(existing, sort_keys=False),
         encoding="utf-8",
     )
+
+    # Single swap point for the global: reload OFF the event loop and only
+    # publish the new config if it parses — a rejected save never leaves a
+    # broken in-memory state behind.
+    try:
+        HARNESS_CONFIG = await asyncio.to_thread(
+            load_config, Path(__file__).resolve().parent.parent,
+        )
+    except Exception as error:
+        logger.exception("workspace config reload failed after save")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Settings were written but failed to load: {error}",
+        ) from error
     return {"status": "ok", "path": str(workspace_path)}
 
 
@@ -407,10 +685,7 @@ async def import_rag_documents(
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(await uploaded.read())
             input_paths.append(destination)
-        index_path = Path(os.getenv(
-            "MARKETPLACE_INDEX_PATH",
-            str(Path(__file__).resolve().parent.parent / "marketplace_index.sqlite"),
-        ))
+        index_path = _marketplace_index_path()
         try:
             stats = await asyncio.to_thread(
                 import_inputs,
@@ -437,6 +712,54 @@ async def export_rag_index():
         media_type="application/vnd.sqlite3",
         filename="marketplace_index.sqlite",
     )
+
+
+def _marketplace_index_path() -> Path:
+    return Path(os.getenv(
+        "MARKETPLACE_INDEX_PATH",
+        str(Path(__file__).resolve().parent.parent / "marketplace_index.sqlite"),
+    ))
+
+
+@app.get("/rag/status")
+async def rag_status():
+    """Index summary for the settings panel: size, chunk count, last import."""
+    index_path = _marketplace_index_path()
+    if not index_path.is_file():
+        return {"available": False, "chunks": 0, "size_bytes": 0, "last_import": None}
+
+    size_bytes = index_path.stat().st_size
+
+    def _read() -> dict:
+        import sqlite3
+
+        connection = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
+        try:
+            try:
+                chunks = connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            except sqlite3.Error:
+                chunks = 0
+            try:
+                row = connection.execute(
+                    "SELECT value FROM meta WHERE key = 'last_import'",
+                ).fetchone()
+                last_import = json.loads(row[0]) if row and row[0] else None
+            except (sqlite3.Error, ValueError):
+                last_import = None
+        finally:
+            connection.close()
+        return {
+            "available": True,
+            "chunks": chunks,
+            "size_bytes": size_bytes,
+            "last_import": last_import,
+        }
+
+    try:
+        return await asyncio.to_thread(_read)
+    except Exception:
+        logger.exception("RAG status read failed")
+        return {"available": True, "chunks": 0, "size_bytes": size_bytes, "last_import": None}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -566,13 +889,16 @@ async def _classify_intent(user_req: str, model) -> bool:
         return True  # on doubt, run the pipeline rather than mis-answer
 
 
-async def _chat_reply(user_req: str, model) -> str:
+async def _chat_reply(user_req: str, model, attached_ctx: str | None = None) -> str:
     """One-shot direct answer for plain chat questions (no pipeline)."""
     from agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
     from agent.pi_ai.stream import complete
+    user_msg = user_req
+    if attached_ctx:
+        user_msg = attached_ctx + user_msg
     ctx = Context(
         systemPrompt=_CHAT_ANSWER_SYS,
-        messages=[UserMessage(content=user_req, timestamp=0)],
+        messages=[UserMessage(content=user_msg, timestamp=0)],
     )
     msg = await complete(
         model, ctx, SimpleStreamOptions(reasoning="low", maxTokens=2000)
@@ -627,6 +953,235 @@ def _workspace_header(project_dir: Path, marketplace_cache_root: Path) -> str:
         f"the result is already in your tool-result history above.\n"
         f"\n"
     )
+
+
+# ── Attachment delivery (session-scoped user context) ────────────────────────
+# Small text files are inlined into the prompt; large text files and images are
+# copied into project_dir/.eco-attachments and referenced by path so the agent
+# can read them on demand. See COMMANDS_PRD.md §3.5.
+
+ATTACH_INLINE_LIMIT = 40_000         # per-file inline cap (bytes)
+ATTACH_TOTAL_INLINE_LIMIT = 200_000  # session-wide inline cap (bytes)
+ATTACH_MAX_CONTENT = 25_000_000       # hard cap on pasted disk content (B6)
+
+
+def _safe_attach_name(name: str) -> str:
+    """Strip directory components / make a filename safe for att_dir writes."""
+    clean = Path(name).name.strip() or "attachment"
+    return clean
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """True when two paths point at byte-identical files (size + mtime)."""
+    try:
+        sa, sb = a.stat(), b.stat()
+    except OSError:
+        return False
+    return sa.st_size == sb.st_size and sa.st_mtime == sb.st_mtime
+
+
+def _build_attached_block(attached, project_dir: Path) -> str:
+    """Build a prompt block describing the user's attached files.
+
+    `attached` is the list carried on UserRequestMessage.attached_files. Files
+    already inside project_dir are referenced by their real relative path (no
+    copy). Pasted content / outside-path files are either inlined (small text)
+    or copied into project_dir/.eco-attachments and referenced by path.
+
+    SECURITY: every item carrying a `path` is validated against the allowed
+    roots via _ensure_allowed before any read/copy; invalid items are skipped,
+    never errored (so one bad path can't sink the whole request). Pasted
+    `content` is client-provided bytes and is written without a disk read.
+    """
+    if not attached:
+        return ""
+    try:
+        project_dir = Path(project_dir).resolve(strict=False)
+    except (OSError, RuntimeError):
+        return ""
+    att_dir = project_dir / ".eco-attachments"
+    try:
+        att_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        att_dir = None
+
+    lines: list[str] = [
+        "=== Attached files (user-provided session context) ===",
+        "The user explicitly attached these files. They are available to you:",
+    ]
+    inline_budget = 0
+    written_names: set[str] = set()
+
+    def _dedupe(base: str) -> str:
+        # Unique name inside att_dir so two attachments sharing a basename
+        # (e.g. a mention `src/a.txt` and a pasted `a.txt`) never clobber
+        # each other (B3).
+        candidate = base
+        stem = Path(base).stem
+        suffix = Path(base).suffix
+        n = 2
+        while candidate in written_names:
+            candidate = f"{stem}-{n}{suffix}"
+            n += 1
+        written_names.add(candidate)
+        return candidate
+
+    for item in attached:
+        if not isinstance(item, dict):
+            continue
+        name = _safe_attach_name(str(item.get("name") or "attachment"))
+        kind = item.get("kind")
+        path = item.get("path")
+        content = item.get("content")
+
+        resolved: Path | None = None
+        if path:
+            try:
+                resolved = _ensure_allowed(Path(path).expanduser().resolve())
+            except Exception:
+                logger.warning("attachment skipped (outside allowed roots): %s", path)
+                continue
+
+        # Case 1 — already inside project_dir: reference the real relative path.
+        if resolved is not None and (
+            resolved == project_dir or project_dir in resolved.parents
+        ):
+            rel = resolved.relative_to(project_dir)
+            try:
+                size = resolved.stat().st_size
+            except OSError:
+                size = 0
+            tag = "image" if kind == "image" else "text"
+            lines.append(
+                f"- {name} [{tag}, {size} bytes] — path-only: "
+                f"read(path='{rel}')"
+            )
+            continue
+
+        # Resolve bytes / text from paste content or an outside-path file.
+        # For outside files we decide inline-vs-copy by stat() size and only
+        # read_bytes() when we actually inline — avoids a double read for the
+        # (common) copy path (optimization 2).
+        raw_bytes: bytes | None = None
+        text_content: str | None = None
+        file_size: int | None = None
+
+        if content is not None:
+            if kind == "image":
+                try:
+                    b64 = content.split(",", 1)[1] if content.startswith("data:") else content
+                    raw_bytes = base64.b64decode(b64)
+                except Exception:
+                    raw_bytes = None
+            else:
+                text_content = content
+                raw_bytes = content.encode("utf-8", errors="replace")
+            if raw_bytes is None:
+                continue
+            # Server-side cap on pasted content written to disk (B6). The
+            # frontend 5 MB client cap is bypassable, so guard here too.
+            if len(raw_bytes) > ATTACH_MAX_CONTENT:
+                logger.warning(
+                    "attachment skipped (pasted content %d bytes > %d cap): %s",
+                    len(raw_bytes), ATTACH_MAX_CONTENT, name,
+                )
+                continue
+        elif resolved is not None:
+            try:
+                file_size = resolved.stat().st_size
+            except OSError as error:
+                logger.warning("attachment stat failed: %s", error)
+                continue
+            if file_size > ATTACH_MAX_CONTENT:
+                logger.warning(
+                    "attachment skipped (file %d bytes > %d cap): %s",
+                    file_size, ATTACH_MAX_CONTENT, name,
+                )
+                continue
+            if (
+                kind != "image"
+                and file_size <= ATTACH_INLINE_LIMIT
+                and inline_budget + file_size <= ATTACH_TOTAL_INLINE_LIMIT
+            ):
+                try:
+                    raw_bytes = resolved.read_bytes()
+                    text_content = raw_bytes.decode("utf-8", errors="replace")
+                except OSError as error:
+                    logger.warning("attachment read failed: %s", error)
+                    continue
+            # else: copy-only — defer the read to shutil.copy2 below.
+        else:
+            continue
+
+        # Inline only when we actually have the decoded text and it fits the
+        # caps. Large pasted text falls through to the path-only branch.
+        is_text = (
+            kind != "image"
+            and text_content is not None
+            and raw_bytes is not None
+            and len(raw_bytes) <= ATTACH_INLINE_LIMIT
+            and inline_budget + len(raw_bytes) <= ATTACH_TOTAL_INLINE_LIMIT
+        )
+        if is_text:
+            inline_budget += len(raw_bytes)
+            # Dedupe FIRST: the truncation hint below must name the file that
+            # is actually written (a collision renames it to e.g. a-2.txt).
+            dest = _dedupe(name)
+            snippet = (
+                text_content[:4096]
+                + f"\n…(truncated, read full via read(path='.eco-attachments/{dest}'))"
+                if len(raw_bytes) > 4096
+                else text_content
+            )
+            lines.append(f"- {dest} [text, {len(raw_bytes)} bytes] — inline:\n{snippet}")
+            if att_dir is not None:
+                try:
+                    (att_dir / dest).write_bytes(raw_bytes)
+                except OSError:
+                    pass
+            continue
+
+        # Path-only: write (paste) or copy (outside file) into att_dir.
+        if att_dir is None:
+            logger.warning("attachment dropped (cannot create .eco-attachments): %s", name)
+            continue
+        dest = _dedupe(name)
+        if resolved is not None:
+            # Optimization 1: skip the copy when an identical file already sits
+            # in att_dir (session-scoped re-sends hit this every request).
+            dest_path = att_dir / dest
+            if not (dest_path.exists() and _same_file(dest_path, resolved)):
+                try:
+                    shutil.copy2(resolved, dest_path)
+                except OSError as error:
+                    logger.warning("attachment copy failed: %s", error)
+                    continue
+        else:
+            if raw_bytes is None:
+                continue
+            # Pasted content: always write. A size-only skip would silently
+            # keep stale bytes when a re-send carries different content of
+            # the same length, and the content is already in memory anyway.
+            dest_path = att_dir / dest
+            try:
+                dest_path.write_bytes(raw_bytes)
+            except OSError as error:
+                logger.warning("attachment write failed: %s", error)
+                continue
+        disp_size = file_size if file_size is not None else (len(raw_bytes) if raw_bytes is not None else 0)
+        if kind == "image":
+            lines.append(
+                f"- {dest} [image] — visual reference at .eco-attachments/{dest}"
+            )
+        else:
+            lines.append(
+                f"- {dest} [text, {disp_size} bytes] — path-only: "
+                f"read(path='.eco-attachments/{dest}')"
+            )
+
+    if len(lines) <= 2:
+        return ""
+    return "\n".join(lines) + "\n\n"
 
 
 def _save_mermaid_blocks(plan_md: str, project_dir: Path) -> list[Path]:
@@ -757,8 +1312,18 @@ def _project_manifest(project_dir: Path, max_entries: int = 60) -> str:
 
 @app.websocket("/ws/chat")
 async def chat_endpoint(websocket: WebSocket):
-    global HARNESS_CONFIG
-    HARNESS_CONFIG = load_config(Path(__file__).resolve().parent.parent)
+    # Per-connection config snapshot: reloaded fresh at connect so new
+    # sessions pick up settings saves, but bound to a LOCAL name — the global
+    # is only swapped by PUT /config/workspace, never mid-run, so a concurrent
+    # session's pipeline can never observe its config changing underneath it.
+    # A malformed workspace.yaml falls back to the last known good config.
+    try:
+        connection_config = await asyncio.to_thread(
+            load_config, Path(__file__).resolve().parent.parent,
+        )
+    except Exception:
+        logger.exception("config reload at WS connect failed; using last known good")
+        connection_config = HARNESS_CONFIG
     await websocket.accept()
 
     # Lazy imports — keep startup light even if the role layer churns.
@@ -774,7 +1339,7 @@ async def chat_endpoint(websocket: WebSocket):
     # candidate.
     def resolve_executable_path(config_attr: str, default_name: str):
         """Resolve an external tool binary via binaries.resolve_binary."""
-        configured = getattr(HARNESS_CONFIG, config_attr, None)
+        configured = getattr(connection_config, config_attr, None)
         resolved = binaries.resolve_binary(default_name, explicit=configured)
         if resolved is None:
             logger.warning(
@@ -1006,9 +1571,9 @@ async def chat_endpoint(websocket: WebSocket):
                 project_dir = _default_project_dir()
                 project_dir.mkdir(parents=True, exist_ok=True)
 
-            language = str(payload.get("language") or HARNESS_CONFIG.default_language)
+            language = str(payload.get("language") or connection_config.default_language)
             mode = str(payload.get("mode") or "auto").lower()
-            if mode not in HARNESS_CONFIG.modes:
+            if mode not in connection_config.modes:
                 await websocket.send_json({
                     "type": "error",
                     "content": f"Unsupported working mode: {mode}",
@@ -1017,10 +1582,10 @@ async def chat_endpoint(websocket: WebSocket):
             if payload.get("use_worktree") and not use_worktree:
                 try:
                     worktree = create_worktree(
-                        HARNESS_CONFIG.root,
+                        connection_config.root,
                         thread_id,
                         name=payload.get("worktree_name"),
-                        root=HARNESS_CONFIG.worktree_root,
+                        root=connection_config.worktree_root,
                     )
                 except WorktreeError as error:
                     await websocket.send_json({
@@ -1049,6 +1614,13 @@ async def chat_endpoint(websocket: WebSocket):
             _record_session_start(thread_id, project_dir, user_req)
             session_open = True
 
+            # Attachments are session-scoped: the client sends attached_files on
+            # every user_request. Build the prompt block once project_dir is
+            # finalized (post worktree) so both planner + coder seeds see it.
+            attached_block = _build_attached_block(
+                payload.get("attached_files"), project_dir
+            )
+
             # ── One-shot modes: no automatic pipeline (test / review / code / plan) ──
             if mode in {"test", "review", "code", "plan"}:
                 one_shot_role = {
@@ -1058,13 +1630,13 @@ async def chat_endpoint(websocket: WebSocket):
                     "plan": "architect",
                 }[mode]
                 _, role_spec, role_profile = load_role_config(
-                    one_shot_role, HARNESS_CONFIG.root,
+                    one_shot_role, connection_config.root,
                 )
                 from agent.main import get_model as _get_model
                 role_backend = role_spec.backend.removesuffix("_cli")
                 one_shot = make_role_agent(
                     one_shot_role,
-                    config=HARNESS_CONFIG,
+                    config=connection_config,
                     model=(
                         _get_model(role_profile, role=one_shot_role)
                         if role_backend in {"internal", "builtin", "eco"}
@@ -1083,7 +1655,8 @@ async def chat_endpoint(websocket: WebSocket):
                     result = await _run_agent(
                         one_shot.run,
                         ev_queue,
-                        _workspace_header(project_dir, marketplace_cache_root) + user_req,
+                        _workspace_header(project_dir, marketplace_cache_root)
+                        + attached_block + user_req,
                     )
                 except Exception as error:
                     await websocket.send_json({
@@ -1115,10 +1688,12 @@ async def chat_endpoint(websocket: WebSocket):
             # AUTO mode: a short intent gate keeps plain chat questions out of
             # the build loop. migrate is always a task, so it skips the gate.
             if mode == "auto":
-                gate_model = _build_chat_model(HARNESS_CONFIG)
+                gate_model = _build_chat_model(connection_config)
                 if gate_model is not None and not await _classify_intent(user_req, gate_model):
                     try:
-                        answer = await _chat_reply(user_req, gate_model)
+                        answer = await _chat_reply(
+                            user_req, gate_model, attached_ctx=attached_block
+                        )
                     except Exception as error:
                         answer = f"(chat reply failed: {error})"
                     await websocket.send_json({
@@ -1140,20 +1715,20 @@ async def chat_endpoint(websocket: WebSocket):
 
             # ── AUTO/MIGRATE: full plan→implement→verify pipeline ──
             workspace = _workspace_header(project_dir, marketplace_cache_root)
-            planner_seed = workspace + user_req
+            planner_seed = workspace + attached_block + user_req
             approved_plan_md: str | None = None
             terminate_chat = False
 
             while True:
                 ev_queue: asyncio.Queue = asyncio.Queue()
                 _, architect_spec, architect_profile = load_role_config(
-                    "architect", HARNESS_CONFIG.root,
+                    "architect", connection_config.root,
                 )
                 from agent.main import get_model as _get_model
                 architect_backend = architect_spec.backend.removesuffix("_cli")
                 planner = make_role_agent(
                     "architect",
-                    config=HARNESS_CONFIG,
+                    config=connection_config,
                     model=(
                         _get_model(architect_profile, role="architect")
                         if architect_backend in {"internal", "builtin", "eco"}
@@ -1254,9 +1829,9 @@ async def chat_endpoint(websocket: WebSocket):
                         break
                     # Rejected — re-run planner with feedback appended.
                     reason = (p2.get("reason") or "").strip()
-                    planner_seed = workspace + user_req
+                    planner_seed = workspace + attached_block + user_req
                     if reason:
-                        planner_seed = workspace + (
+                        planner_seed = workspace + attached_block + (
                             user_req
                             + "\n\n=== Feedback on your previous plan ===\n"
                             + reason
@@ -1290,7 +1865,7 @@ async def chat_endpoint(websocket: WebSocket):
             #   HARNESS_WARM_SEED=1 — re-attach workspace+plan+manifest on retry hops
             scaffold_note = ""
             wizard_configured = bool(
-                HARNESS_CONFIG.eco_wizard_path
+                connection_config.eco_wizard_path
                 or shutil.which("eco-wizard")
                 or shutil.which("eco-wizard.exe")
             )
@@ -1324,14 +1899,14 @@ async def chat_endpoint(websocket: WebSocket):
 
             ev_queue = asyncio.Queue()
             _, coder_spec, coder_profile = load_role_config(
-                "coder", HARNESS_CONFIG.root,
+                "coder", connection_config.root,
             )
             _, tester_spec, tester_profile = load_role_config(
-                "tester", HARNESS_CONFIG.root,
+                "tester", connection_config.root,
             )
             coder = make_role_agent(
                 "coder",
-                config=HARNESS_CONFIG,
+                config=connection_config,
                 model=(
                     _get_model(coder_profile, role="coder")
                     if coder_spec.backend.removesuffix("_cli")
@@ -1349,7 +1924,7 @@ async def chat_endpoint(websocket: WebSocket):
             )
             tester = make_role_agent(
                 "tester",
-                config=HARNESS_CONFIG,
+                config=connection_config,
                 model=(
                     _get_model(tester_profile, role="tester")
                     if tester_spec.backend.removesuffix("_cli")
@@ -1375,12 +1950,12 @@ async def chat_endpoint(websocket: WebSocket):
                 agents={"coder": coder, "tester": tester},
                 edges=EXECUTION_EDGES,
                 entry=EXECUTION_ENTRY,
-                max_hops=HARNESS_CONFIG.max_hops,
+                max_hops=connection_config.max_hops,
                 seed_builders=seed_builders,
             )
 
             try:
-                coder_seed = workspace + approved_plan_md + scaffold_note
+                coder_seed = workspace + attached_block + approved_plan_md + scaffold_note
                 result = await _run_agent(sub_orch.run, ev_queue, coder_seed)
             except Exception as e:
                 logger.exception(f"[CHAT WS] sub_orch crashed thread_id={thread_id}")
@@ -1474,7 +2049,7 @@ async def chat_endpoint(websocket: WebSocket):
                 "reason":           reason_code,
                 "failure_origin":   NODE_OF.get(result.last_agent, result.last_agent),
                 "retry_count":      test_retries,
-                "max_retries":      HARNESS_CONFIG.max_hops,
+                "max_retries":      connection_config.max_hops,
                 "build_log":        last_coder_msg[-4000:],
                 "tester_report_md": last_tester_msg[-8000:],
                 "plan_md":          approved_plan_md or "",

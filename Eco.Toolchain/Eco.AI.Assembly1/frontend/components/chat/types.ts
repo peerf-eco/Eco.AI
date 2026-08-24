@@ -186,12 +186,31 @@ export type Block =
 
 export type MessageRole = "user" | "assistant";
 
+// ────────────────────────────────────────────────────────────────────────────
+// Attachments — session-scoped files the user pins to every message.
+// ────────────────────────────────────────────────────────────────────────────
+
+export type AttachmentKind = "text" | "image";
+
+export interface Attachment {
+  id: string;                 // crypto.randomUUID()
+  name: string;              // display name / file name
+  path?: string;             // absolute path (mention / picker); absent for paste
+  kind: AttachmentKind;
+  mime?: string;
+  size?: number;
+  content?: string;          // pasted payload (base64 data URL for images, or text)
+  previewUrl?: string;       // object URL for image thumbnail in chip
+  source: "mention" | "picker" | "paste" | "drop";
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
   // User messages use this; assistant messages aggregate blocks.
   text?: string;
   blocks: Block[];
+  attachments?: Attachment[];
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -342,6 +361,15 @@ export interface UserRequestMessage {
   language?: string;
   mode?: WorkingMode;
   use_worktree?: boolean;
+  // Session-scoped user attachments (see Attachment). Sent on every request.
+  attached_files?: Array<{
+    name: string;
+    path?: string;
+    kind: AttachmentKind;
+    mime?: string;
+    size?: number;
+    content?: string;   // for paste-only attachments (no path)
+  }>;
 }
 
 export type WorkingMode = "auto" | "plan" | "code" | "migrate" | "test" | "review";
@@ -396,7 +424,8 @@ export interface ProjectInfo {
 export interface FsEntry {
   name: string;
   path: string;
-  type: "dir";
+  type: "dir" | "file";
+  size?: number;
 }
 
 export interface FsListing {

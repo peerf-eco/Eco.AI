@@ -21,6 +21,9 @@ class ModelProfile(BaseModel):
     # When set it overrides the global OPENROUTER_PROVIDER_PIN env; when omitted
     # the env default is used. Keeps a model's pin matched to its provider so
     # different roles using different models don't get mismatched pin 404s.
+    # NOTE: this is an OpenRouter ROUTING hint (upstream provider slug), not a
+    # credential — real secrets (API keys) live in .env and are never part of
+    # the config surface.
     provider_pin: str | None = None
 
 
@@ -34,6 +37,33 @@ class BudgetSpec(BaseModel):
     max_wall_s: int = 900
 
 
+class PermissionSpec(BaseModel):
+    """What a role is allowed to do, enforced at tool level.
+
+    Booleans gate whole tool groups (the tools are removed from the role's
+    toolset before prompt assembly, so the model never sees a denied tool).
+    ``commands`` is an allowlist of executable tokens (make target, artifact
+    basename, eco-cli subcommand); ``["*"]`` allows everything.
+
+    Granularity is PER-ROLE on purpose: roles are the trust boundary of the
+    harness (a tester may run binaries, an architect should not write files),
+    while models are interchangeable capability providers. Harness-level
+    defaults live in ``HarnessConfig.default_permissions``; per-role entries
+    override them.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    fs_read: bool = True
+    fs_write: bool = True
+    build: bool = True
+    execute: bool = True
+    rag_search: bool = True
+    skills: bool = True
+    network: bool = True
+    commands: list[str] = Field(default_factory=lambda: ["*"])
+
+
 class RoleSpec(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -44,6 +74,7 @@ class RoleSpec(BaseModel):
     skill_versions: dict[str, str] = Field(default_factory=dict)
     tools: list[str] = Field(default_factory=list)
     budgets: BudgetSpec = Field(default_factory=BudgetSpec)
+    permissions: PermissionSpec = Field(default_factory=PermissionSpec)
 
 
 class LanguageSpec(BaseModel):
@@ -74,6 +105,8 @@ class HarnessConfig(BaseModel):
     roles: dict[str, RoleSpec] = Field(default_factory=dict)
     languages: dict[str, LanguageSpec] = Field(default_factory=dict)
     modes: dict[str, ModeSpec] = Field(default_factory=dict)
+    # Harness-level permission defaults; per-role overrides live on RoleSpec.
+    default_permissions: PermissionSpec = Field(default_factory=PermissionSpec)
     worktree_root: Path | None = None
     source_max_bytes: int = 300_000
     dynamic_tail_items: int = 5
@@ -124,6 +157,21 @@ def _role_files(config_root: Path) -> dict[str, dict[str, Any]]:
     return roles
 
 
+def _resolve_permissions(*layers: Any) -> PermissionSpec:
+    """Merge permission layers key-by-key (later layers win).
+
+    Only keys that are actual PermissionSpec fields are considered, so a typo
+    or a stale workspace key can neither crash the loader nor silently become
+    part of the policy.
+    """
+    known = set(PermissionSpec.model_fields)
+    merged: dict[str, Any] = {}
+    for layer in layers:
+        if isinstance(layer, dict):
+            merged.update({key: value for key, value in layer.items() if key in known})
+    return PermissionSpec(**merged)
+
+
 def load_config(root: Path | None = None) -> HarnessConfig:
     project_root = _project_root(root)
     config_root = project_root / "config"
@@ -155,6 +203,41 @@ def load_config(root: Path | None = None) -> HarnessConfig:
         merged_roles[role_name] = merged_role
     merged_harness = dict(harness)
     merged_harness.update(workspace.get("harness", {}))
+    # Workspace model registry: user-defined/overridden profiles win per key,
+    # so a workspace entry can tweak one field (e.g. reasoning) of a repo
+    # profile or declare a brand-new named profile for the settings UI.
+    # A ``null`` entry REMOVES the profile (how the settings UI deletes a
+    # repo-provided model); the "default" profile is always re-created below
+    # from LLM_MODEL/env when missing, so deleting it resets to the env model.
+    workspace_models = workspace.get("models", {})
+    if isinstance(workspace_models, dict):
+        models = deepcopy(models)
+        for model_name, profile in workspace_models.items():
+            if profile is None:
+                models.pop(model_name, None)
+                continue
+            if not isinstance(profile, dict):
+                continue
+            base_profile = models.get(model_name)
+            base_profile = base_profile if isinstance(base_profile, dict) else {}
+            models[model_name] = {**base_profile, **profile}
+    # Workspace permissions: defaults + per-role deltas. Resolution chain per
+    # role (later wins, key-by-key over PermissionSpec fields only):
+    #   code defaults < workspace defaults < repo roles.yaml role baseline
+    #   < workspace per-role delta
+    # The repo per-role baseline is MORE SPECIFIC than the workspace defaults,
+    # so it must be applied after them (a global workspace default cannot
+    # silently re-enable what roles.yaml restricted for one role).
+    workspace_permissions = workspace.get("permissions", {})
+    if not isinstance(workspace_permissions, dict):
+        workspace_permissions = {}
+    permission_defaults_layer = workspace_permissions.get("defaults")
+    permission_defaults_layer = (
+        permission_defaults_layer if isinstance(permission_defaults_layer, dict) else {}
+    )
+    workspace_role_permissions = workspace_permissions.get("roles", {})
+    if not isinstance(workspace_role_permissions, dict):
+        workspace_role_permissions = {}
     workspace_languages = workspace.get("languages", {})
     if isinstance(workspace_languages, dict):
         languages = deepcopy(languages)
@@ -209,6 +292,14 @@ def load_config(root: Path | None = None) -> HarnessConfig:
         for name, value in merged_roles.items()
         if isinstance(value, dict)
     }
+    for role_name, role_spec in role_specs.items():
+        role_spec.permissions = _resolve_permissions(
+            permission_defaults_layer,
+            # Repo roles.yaml may carry a per-role baseline in the role dict
+            # itself; it outranks the workspace-wide defaults above.
+            merged_roles[role_name].get("permissions"),
+            workspace_role_permissions.get(role_name),
+        )
     language_specs = {
         name: LanguageSpec(**value)
         for name, value in languages.items()
@@ -225,6 +316,7 @@ def load_config(root: Path | None = None) -> HarnessConfig:
         roles=role_specs,
         languages=language_specs,
         modes=mode_specs,
+        default_permissions=_resolve_permissions(permission_defaults_layer),
         worktree_root=(
             Path(
                 os.getenv(

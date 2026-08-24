@@ -29,6 +29,8 @@ with `coder.to_architect` terminated).
 
 - `adapters/` — built-in and external agent backends
 - `roles.py` — role configuration and backend construction
+- `permissions.py` — role permission enforcement (tool-group filtering +
+  command allowlist; see §5)
 - `interfaces/cli.py` — headless runner
 - `interfaces/mcp.py` — MCP-compatible tool-provider boundary
 - `tools/router.py` — domain-tool registration boundary
@@ -165,6 +167,8 @@ config; it overrides or extends it at load time. Per artifact type:
 | Skill body (on-demand) | `config/skills/<skill>/SKILL.md` + frontmatter | same override rule | Only the manifest description enters the prompt; full body via `read_skill` / direct file read |
 | Skill, new name | — | `.eco-harness/skills/<skill>/…` | Additional skill — but ONLY if a `skill_versions` entry references it |
 | Role settings | `config/roles.yaml`, `languages.yaml`, `harness.yaml` | `.eco-harness/workspace.yaml` | Deep-merged per role/language; `budgets` merge key-by-key |
+| Model registry | `config/models.yaml` | `workspace.yaml` `models:` | Per-key deep-merge over repo profiles; `models: {name: null}` **removes** a profile; `default` is re-created from `LLM_MODEL` when absent |
+| Permission policy | `config/roles.yaml` `permissions:` per-role baseline | `workspace.yaml` `permissions:` (`defaults` + `roles` deltas) | Layered key-by-key — see §5 for the chain |
 | AGENTS.md rules | `config/agents/<role>/AGENTS.md` | `.eco-harness/agents/<role>/AGENTS.md` | All layers found are concatenated (repo root first), not either/or |
 
 Two mechanics matter and are easy to get wrong:
@@ -285,6 +289,82 @@ Overall precedence:
 environment variables > .eco-harness/workspace.yaml > config/*.yaml > code defaults
 ```
 
+### workspace.yaml schema (Settings panel write path)
+
+`PUT /config/workspace` is the single writer. It validates every provided
+section against the loader's pydantic models (`RoleSpec`, `LanguageSpec`,
+`ModelProfile`, `PermissionSpec` → 400 on garbage), merges section-wise into
+the existing file (absent sections are preserved — the UI never sends
+`harness`), reloads the config off the event loop, and only then publishes
+the new in-memory global. A rejected save never leaves a broken state.
+
+```yaml
+roles:                      # UI sends ONLY backend/model/reasoning per role —
+  coder:                    # budgets, prompt, skill_versions and permissions
+    backend: internal       # snapshots are deliberately NOT pinned, so repo
+    model: coding_balanced  # config stays authoritative for what the UI does
+    reasoning: medium       # not manage
+languages: {…}              # full language specs (prompt, skill_versions, eco_wizard)
+models:                     # user-added/edited profiles only (diff vs baseline)
+  my_model:
+    id: provider/model-id   # required; provider, reasoning, temperature,
+    provider_pin: tencent   # max_tokens optional; pin is an OpenRouter
+  retired_model: null       # ROUTING hint, not a secret; null = delete marker
+permissions:
+  defaults: {fs_write: false, commands: ["make"]}   # harness-wide layer
+  roles:                    # per-role DELTAS over the defaults (key-by-key)
+    architect: {fs_write: true}
+harness: {…}                # never written by the UI; preserved on merge
+```
+
+Model-registry merge (`load_config`): workspace profiles deep-merge over
+`config/models.yaml` per key; a `null` value removes the profile; the
+`default` profile is re-created from `LLM_MODEL` when missing, so deleting it
+resets to the env model instead of breaking resolution. `GET /config` returns
+the merged registry, which becomes the UI's next diff baseline — so repo
+profiles the UI never touched stay owned by `config/models.yaml`.
+
+### Permission model (roles are the trust boundary)
+
+Permissions are configured per ROLE with harness-level defaults — models are
+interchangeable providers and must not carry policy. Resolution per role
+(`agent/config/loader.py::_resolve_permissions`, later wins key-by-key,
+unknown keys filtered so typos can neither crash nor silently alter policy):
+
+```text
+code defaults < workspace permissions.defaults
+             < repo roles.yaml roles.<role>.permissions   (specific beats general)
+             < workspace permissions.roles.<role>         (UI delta)
+```
+
+`PermissionSpec` fields: `fs_read`, `fs_write`, `build`, `execute`,
+`rag_search`, `skills`, `network` (booleans) and `commands` (allowlist,
+default `["*"]`).
+
+Enforcement (`eco_harness/permissions.py::apply_role_permissions`, called
+from `make_role_agent` AFTER skill wiring and BEFORE prompt assembly, so the
+tool contract the model sees matches the enforced toolset):
+
+1. **Tool-group filtering** — denied groups remove concrete tools from
+   `agent.tools` before the system prompt is built: the model never sees a
+   tool it may not call (no injection surface, no wasted tokens).
+   `fs_read` → grep/glob/read/read_file/list_dir/read_component_profile;
+   `fs_write` → write_file; `build` → run_build; `execute` → run_artifact;
+   `rag_search` → search_marketplace; `skills` → read_skill;
+   `network` → eco_cli/eco_wizard.
+2. **Command allowlist** — `run_build`, `run_artifact`, `eco_cli` are wrapped
+   (frozen-dataclass `replace`) with a token check. Tokens: run_build → the
+   make TARGET (or `"make"` for a default build), run_artifact → the artifact
+   BASENAME, eco_cli → the SUBCOMMAND. `["*"]` allows everything; an EMPTY
+   list denies every gated command; `None`/blank tokens are tool no-ops and
+   pass. Handoff/stop tools are never gated.
+
+This is a POLICY layer on top of the tools' own sandboxes (project_dir
+containment, eco-cli's internal subcommand whitelist), not a replacement for
+them. It applies to INTERNAL backends only: external CLI backends
+(pi/codex/claude/grok) execute in their own process with their own tool
+policy — the settings UI marks those roles `ext` instead of pretending.
+
 Prompt and skill resolution order is stable (§4 has the detailed logic):
 
 1. framework header
@@ -389,11 +469,15 @@ sqlite-vec vectors, and provenance metadata. Sources can be:
 - Markdown/text documentation
 - compatible SQLite index dumps
 
-The UI supports individual files and browser directory selection. The import
-endpoint stages uploads, calls `scripts/import_rag.py`, updates
-`marketplace_index.sqlite`, and reports chunk statistics. The export endpoint
-downloads the current index; `scripts/export_rag.py` creates a named team
-copy.
+The UI supports individual files and browser directory selection, shows live
+index stats, and can export the index. The import endpoint stages uploads,
+calls `scripts/import_rag.py`, updates `marketplace_index.sqlite`, and
+reports chunk statistics. The status endpoint reports chunk count, file size,
+and the stored `last_import` meta (read-only SQLite connection). The export
+endpoint downloads the current index — the download is itself a valid import
+source (dump re-import re-extracts `chunks.text`), which makes the UI
+round-trip a usable backup/restore path; `scripts/export_rag.py` creates a
+named team copy.
 
 The architecture intentionally leaves room for:
 
@@ -410,11 +494,111 @@ The UI uses `NEXT_PUBLIC_API_URL` with `http://localhost:8100` as the local
 default. The server exposes:
 
 - `GET /health`
-- `GET /config`
-- `PUT /config/workspace`
+- `GET /config` — full config snapshot (platforms, roles incl. resolved
+  permissions, permission defaults, languages, merged model registry, modes).
+  Serves the in-memory global; the global is swapped ONLY by a successful
+  `PUT /config/workspace`, never mid-request, so in-flight WS pipelines
+  cannot observe a config change underneath them. Out-of-band workspace.yaml
+  edits show up on the next save, the next WS connect (per-connection
+  snapshot with last-known-good fallback), or a restart.
+- `PUT /config/workspace` — single writer of workspace.yaml. Section-wise
+  merge (`exclude_unset`: absent sections preserved), pydantic validation of
+  every provided section (400 on invalid), then reload + publish. See §5 for
+  the schema and merge semantics.
+- `GET /rag/status` — index availability, chunk count, size, last import
 - `POST /rag/import`
 - `GET /rag/export`
+- `GET /api/fs/browse` — directory listing for the folder/project picker; pass
+  `files=1` to also list files (used by the attachment file picker). Root must
+  resolve within the allowed roots.
+- `GET /api/fs/search` — filename/path substring search backing the `@`-mention
+  autocomplete. See "File search" below.
 - `WS /ws/chat`
+
+### File search (@-mention backend)
+
+`GET /api/fs/search?q=<str>&root=<path>&limit=50&depth=8&backend=os_walk`
+returns `{root, truncated, backend, results:[{name,path,size,mtime}]}`
+(files only). The `root` defaults to the first allowed root (home); when given
+it must resolve within the allowed roots (`_is_within_allowed` /
+`_ensure_allowed`). A path that is **not a directory** (e.g. a file) returns
+`400`. Home-root walks are the heaviest path, so when `root` is omitted the
+query requires **≥ 2 characters**; an explicit root requires ≥ 1.
+
+Two swappable backends behind one endpoint:
+
+- **`os_walk` (default, zero-dependency)** — `_search_os_walk` does a recursive
+  `os.walk` with a hard `_SEARCH_FILE_CAP` (20 000 files) and `limit` cap (max
+  200) and `depth` cap (max 16). It prunes hidden dirs, `__`-prefixed dirs,
+  symlinks, and a skip-list (`_SEARCH_SKIP_DIRS`: `.git`, `node_modules`,
+  `__pycache__`, `.venv`, `marketplace_cache`, `.eco-attachments`) to mirror
+  `fs_browse` / `read` behavior. Each directory's `iterdir()` is wrapped in its
+  own try/except so a single unreadable directory is skipped instead of
+  aborting the whole walk. Results are ranked: basename substring (rank 0)
+  beats relative-path substring (rank 1), then sorted by rank + path.
+- **`fff` (opt-in)** — `FILE_SEARCH_BACKEND=fff` selects the `fff-search` wheel
+  (typo-tolerant / frecency-ranked). The index builds lazily on first query and
+  is cached per root. If the wheel is absent or errors, the call falls back to
+  `os_walk` and the `backend` field reflects the actual backend used.
+
+**Server owns backend selection (D1):** `FILE_SEARCH_BACKEND` (env) wins over
+the query `backend` param (which is only a hint). This keeps the lean,
+dependency-free default in force unless an operator explicitly opts into `fff`.
+The default image is `python:3.11-slim-bookworm` with **no Rust toolchain**, so
+`fff-search` must stay an opt-in prebuilt `abi3` wheel (no build step) to avoid
+breaking the image.
+
+### Attachment delivery
+
+The chat input sends session-scoped attachments on every `user_request` via
+`UserRequestMessage.attached_files`, an array of
+`{name, path?, kind: "text"|"image", mime?, size?, content?}`. `path` is set for
+`@`-mention and `+`-picker attachments; `content` carries pasted text or a
+base64 data URL for pasted images. The server builds a prompt block with
+`_build_attached_block(attached, project_dir)` — computed **once after
+`project_dir` is finalized** (post worktree) so both the planner and coder seeds
+see it — and injects it into **every** seed in the fixed order
+`workspace + attached_block + user_req` (the workspace header must lead; volatile
+attachment content follows it, then the task). The five injection sites are the
+one-shot run, the chat-reply branch, the AUTO planner seed, the planner-retry
+seed, and the coder seed.
+
+Delivery rules (security-first):
+
+1. **File already inside `project_dir`** → referenced by its real relative path
+   `read(path='<rel>')`; no copy (the agent's `read` anchors relative paths at
+   `project_dir`).
+2. **Small pasted text** (≤ `ATTACH_INLINE_LIMIT` 40 KB, within the session-wide
+   `ATTACH_TOTAL_INLINE_LIMIT` 200 KB) → **inlined** into the prompt (and a copy
+   is still stashed in `.eco-attachments/` so `read(path=...)` yields the full
+   content if the model wants it).
+3. **Large text / images** → copied into `project_dir/.eco-attachments/` and
+   referenced by path (`read(path='.eco-attachments/<name>')`); images get a
+   visual-reference note.
+
+Hard limits: `ATTACH_MAX_CONTENT` (~25 MB) caps what is **written to disk**
+(server-side, because the 5 MB client paste cap is trivially bypassable); larger
+items are skipped with a warning. **Basename collisions** are de-duplicated on
+write (`a.txt` → `a-2.txt`) so a mention `src/a.txt` and a pasted `a.txt` never
+clobber the same file. **Re-send optimization:** the copy is skipped when an
+identical file (size + mtime) already exists in `.eco-attachments`, since the
+block is rebuilt on every request.
+
+**Security (mandatory):** every item carrying a `path` is validated through
+`_ensure_allowed(Path(path).expanduser().resolve())` before any read/copy; paths
+outside the allowed roots (home / output root / `HARNESS_ALLOWED_ROOTS`) are
+**skipped with a warning** — never read, never errored — so one bad path can't
+sink the request. Pasted `content` is client-provided bytes written without a
+disk read. `_safe_attach_name` strips directory components and defuses `..` /
+`/` so attachment writes can't escape `.eco-attachments/`.
+
+Frontend settings live in `components/chat/agent-settings.tsx`
+(`AgentSettings`, four tabs: Roles / Models / Access / RAG; sticky save bar
+with dirty-state Discard) with the RAG tab implemented in
+`components/chat/rag-import.tsx` (`RagSection`). Per-role permission
+overrides are stored as DELTAS over the harness defaults in the UI state, so
+resolved values always follow later default changes instead of freezing a
+stale snapshot.
 
 The event schema remains compatible with the current streaming UI:
 heartbeats, phase changes, node events, plan review, and pipeline completion.
@@ -527,11 +711,21 @@ volume policy rather than exposing arbitrary write access.
 ## 15. Security and trust
 
 - CORS defaults to local UI origins and is configurable with `CORS_ORIGINS`.
-- Secrets are environment/secret-store data only.
+- Secrets are environment/secret-store data only. `provider_pin` in model
+  profiles is an OpenRouter ROUTING hint (upstream provider slug), not a
+  credential.
 - CLI subprocesses use argument arrays, `shell=False`, allowlists, timeouts,
   and bounded output.
 - Project filesystem tools enforce project-root containment.
 - Tester has no write/build tools.
+- The role permission layer (`eco_harness/permissions.py`, §5) adds the
+  operator-configurable policy on top: denied tool groups never reach the
+  model's toolset, and gated execution tools check the command allowlist.
+  It is defense-in-depth, not a sandbox boundary.
+- The whole API — including `PUT /config/workspace` and the chat WS — is an
+  unauthenticated LOCAL dev surface bound to `127.0.0.1` by design; exposing
+  it beyond localhost requires a fronting proxy with auth for the ENTIRE API,
+  not a single route.
 - Retrieved documents, marketplace descriptions, source files, runtime output,
   and build logs are untrusted data.
 - WebSocket authentication remains an optional deployment extension and

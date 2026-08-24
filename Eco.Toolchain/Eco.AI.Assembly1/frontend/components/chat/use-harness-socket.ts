@@ -9,6 +9,7 @@ import type {
   ServerEvent,
   HarnessPhase,
   WorkingMode,
+  Attachment,
 } from "./types";
 
 export interface WorktreeRef {
@@ -140,6 +141,7 @@ export interface UseHarnessSocketResult {
       language?: string;
       mode?: WorkingMode;
       useWorktree?: boolean;
+      attachedFiles?: Attachment[];
     },
   ) => void;
   sendPlanDecision: (blockId: string, approved: boolean, opts?: { modifiedPlanMd?: string; reason?: string }) => void;
@@ -519,13 +521,15 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
       language?: string;
       mode?: WorkingMode;
       useWorktree?: boolean;
+      attachedFiles?: Attachment[];
     },
   ) => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    const attachments = opts?.attachedFiles;
     setMessages((prev) => [
       ...prev,
-      { id: newId("msg"), role: "user", text: trimmed, blocks: [] },
+      { id: newId("msg"), role: "user", text: trimmed, blocks: [], attachments },
     ]);
     setIsProcessing(true);
     setCurrentPhase("planning");
@@ -537,9 +541,17 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
       max_retries: opts?.maxRetries,
       target_os: opts?.targetOs,
       target_arch: opts?.targetArch,
-      language: opts?.language,
+      language: opts?.language ?? undefined,
       mode: opts?.mode,
       use_worktree: opts?.useWorktree,
+      attached_files: attachments?.map((a) => ({
+        name: a.name,
+        path: a.path,
+        kind: a.kind,
+        mime: a.mime,
+        size: a.size,
+        content: a.content,
+      })) ?? [],
     });
   }, [send]);
 

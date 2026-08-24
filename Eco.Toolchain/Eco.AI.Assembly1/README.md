@@ -196,6 +196,7 @@ does not override already-set variables).
 | `HARNESS_TOOL_DEDUP` | read-only tool memo-dedup | on | `0` disables dedup kill-switch (consistent name across code/.env/env.example) |
 | `HARNESS_WARM_SEED` | server warm-retry | `0` | `1` enables warm retry seeds |
 | `HARNESS_SCAFFOLD` | server scaffold | on | `0` disables pre-seeding src/EcoMain.c + Makefile |
+| `FILE_SEARCH_BACKEND` | server `/api/fs/search` | `os_walk` | File-search backend for the `@`-mention picker: `os_walk` (zero-dependency recursive walk, default) or `fff` (opt-in `fff-search` wheel; automatically falls back to `os_walk` if the wheel is absent). The query `backend` param is only a hint. |
 | `ECO_WORKTREE_ROOT` | worktrees | repo default | Isolated git-worktree root |
 | `ECO_HARNESS_WORKSPACE_CONFIG` | config loader | `.eco-harness/workspace.yaml` | Workspace override file |
 | `ECO_ROLE_<ROLE>_BACKEND` / `_MODEL` / `_REASONING` / `_MAX_TOKENS` | config loader | `roles.yaml` | Per-role overrides (e.g. `ECO_ROLE_CODER_BACKEND=pi`) |
@@ -328,7 +329,7 @@ export ECO_WIZARD_PATH=/home/user/tools/eco-wizard
 | --- | --- |
 | `harness.yaml` | defaults, cache limits, hop limits, executable paths |
 | `models.yaml` | named model profiles |
-| `roles.yaml` | backend, model profile, reasoning, tools, budgets |
+| `roles.yaml` | backend, model profile, reasoning, tools, budgets, per-role permission baseline |
 | `languages.yaml` | supported languages and language skill profiles |
 | `prompts/` | stable role and framework prompt fragments |
 | `skills/` | ACOM, generator, and language skills |
@@ -340,10 +341,12 @@ export ECO_WIZARD_PATH=/home/user/tools/eco-wizard
 Model selection (important): the working chat model is `tencent/hy3` — the older
 `tencent/hy3-preview` slug was removed from OpenRouter's standard routing (it now
 only exists on Tencent's own TokenHub endpoint). The provider **pin** is resolved
-per model, with this precedence:
+per model, with this precedence (workspace profiles merge over
+`config/models.yaml` per key; a workspace `models: {name: null}` entry removes a
+profile):
 
 ```text
-model profile's provider_pin (config/models.yaml)  >  OPENROUTER_PROVIDER_PIN (.env)
+model profile's provider_pin (workspace models > config/models.yaml)  >  OPENROUTER_PROVIDER_PIN (.env)
 ```
 
 So each role's model carries its own `provider_pin` (see `config/models.yaml`,
@@ -366,9 +369,9 @@ the system prompt is included, preventing HTTP 400 overflow. `harness.yaml:
 source_roots` / `max_source_bytes` (300000) now drive the curated `Eco.Core1`
 stitch (see context injection below).
 
-Live vs baked config: `./agent`, `./backend`, and `./config` are bind-mounted into
-the api container, so edits apply on reload / next request. `eco_harness/` is still
-`COPY`'d into the image, so edits there require `docker compose build api`.
+Live vs baked config: `./agent`, `./backend`, `./config`, `./eco_harness`, and
+`./scripts` are bind-mounted into the api container, so edits apply on
+uvicorn reload / next request (dev compose).
 
 Precedence is:
 
@@ -376,8 +379,10 @@ Precedence is:
 environment variables > .eco-harness/workspace.yaml > config/*.yaml > code defaults
 ```
 
-UI role settings are stored in `.eco-harness/workspace.yaml`. Keep API keys
-and secrets in `.env` or a secret manager, never in YAML.
+UI role settings are stored in `.eco-harness/workspace.yaml` (written by the
+Settings panel via `PUT /config/workspace`; sections a client does not send —
+e.g. `harness` — are preserved). Keep API keys and secrets in `.env` or a
+secret manager, never in YAML.
 
 Each role can select an internal or external backend:
 
@@ -401,6 +406,86 @@ Model profiles may use a named profile or a provider model ID. Per-role
 budgets include token limits, iteration limits, wall-clock limits, and
 optional cost ceilings.
 
+## Settings panel
+
+The gear icon opens the settings sidebar with four tabs. Everything it saves
+lands in `.eco-harness/workspace.yaml` (the workspace override layer) and is
+picked up by new sessions — running pipelines keep the config they started
+with. One **Save settings** button persists all tabs; **Discard** reloads the
+server state.
+
+### Roles — per-role backend, model, reasoning
+
+Each role (architect, coder, tester, reviewer) is a card with three selects:
+
+- **backend** — `internal` or an external CLI (`pi`, `codex`, `claude`, `grok`)
+- **model** — any profile from the model registry, or **Custom…** for an
+  ad-hoc `provider/model-id` string (no registry entry needed)
+- **reasoning** — `minimal` … `xhigh` (overrides the profile default)
+
+### Models — the model registry
+
+Lists every configured model profile with provider/reasoning/PIN badges and
+which roles use it. From here you can add, edit, or remove profiles:
+
+- **Add model** takes a profile name, the model ID (`provider/model-id`), a
+  provider, the default reasoning level, an optional OpenRouter **provider
+  PIN** (a routing hint — which upstream provider serves the model, e.g.
+  `tencent`; *not* a secret), and optional `max_tokens` / `temperature`.
+- Profiles still owned by `config/models.yaml` can be edited (the edit is
+  persisted as a workspace override) or deleted (persisted as a removal
+  marker). A profile referenced by a role cannot be deleted.
+- The `default` profile always exists — deleting it resets it to the
+  `LLM_MODEL` env value.
+
+### Access — LLM permissions
+
+Permissions are bound to **roles**, not models: models are interchangeable
+capability providers, roles are the harness's trust boundary. There are two
+layers, resolved per role (later wins, key-by-key):
+
+```text
+code defaults < workspace defaults < repo roles.yaml per-role baseline < workspace per-role override
+```
+
+- **Harness defaults** — seven tool groups plus a command allowlist applied
+  to every role:
+
+  | Group | Gates |
+  | --- | --- |
+  | File read | `grep` `glob` `read` `read_file` `list_dir` `read_component_profile` |
+  | File write | `write_file` |
+  | Build | `run_build` (make) |
+  | Run binaries | `run_artifact` |
+  | RAG search | `search_marketplace` |
+  | Skills | `read_skill` |
+  | Network | `eco_cli` `eco_wizard` |
+
+  The **command allowlist** narrows execution tokens: make targets (or
+  `make` for a default build), artifact basenames for `run_artifact`, and
+  eco-cli subcommands. `*` (default) allows everything; an **empty list
+  denies all** gated commands.
+
+- **Per-role overrides** — a matrix of the same groups per role. Toggle a
+  cell to deviate from the defaults; a `reset` link clears a role's
+  deviations. Handoff/stop tools (`to_*`, `fail`) are pipeline plumbing and
+  are never gated.
+
+Enforcement is real: denied tools are removed from the role's toolset before
+the system prompt is built (the model never sees them), and gated execution
+tools are wrapped with the allowlist check (`eco_harness/permissions.py`).
+It is a policy layer on top of the tools' own sandboxes (project_dir
+containment, eco-cli subcommand whitelist), not a replacement for them —
+and it applies to **internal** backends only: external CLI backends
+(pi/codex/claude/grok, marked `ext` in the matrix) run in their own process
+with their own tool policy.
+
+### RAG — index import, export, status
+
+Shows live index stats (chunks, size, last import), imports files/folders,
+and **exports** `marketplace_index.sqlite` for backup or another workspace.
+See [RAG import and export](#rag-import-and-export) for formats and endpoints.
+
 ## Language and platform selection
 
 The UI exposes `C`, `CPP`, `Python`, and `Java` beside the platform selector.
@@ -411,12 +496,17 @@ model.
 
 ## RAG import and export
 
-The Settings panel accepts individual files, browser-selected folders, source
-documents, Markdown/text documentation, and compatible SQLite dumps. Imports
-update `marketplace_index.sqlite` through `scripts/import_rag.py`.
+The Settings panel (RAG tab) shows live index stats — chunk count, size, and
+the last import summary — and accepts individual files, browser-selected
+folders, source documents, Markdown/text documentation, and compatible SQLite
+dumps. Imports update `marketplace_index.sqlite` through
+`scripts/import_rag.py`; **Export** downloads the current index (a valid
+SQLite file that can be re-imported as a dump or dropped into another
+workspace as-is).
 
 The API endpoints are:
 
+- `GET /rag/status` — chunk count, size, last-import summary
 - `POST /rag/import`
 - `GET /rag/export`
 
@@ -666,6 +756,33 @@ never auto-trigger the cross-role pipeline, so you can switch roles freely from
 the mode menu. Each mode selects its own system prompt and capability set from
 `config/modes.yaml`.
 
+## Attaching files & @-mention
+
+The chat input supports **session-scoped file attachments** so the agent can
+read your files directly. Attachments ride on **every** message in the current
+session (until you start a New Session) — they are not cleared after a single
+send, so the planner *and* the coder both see them.
+
+- **@-mention a file** — type `@` anywhere in the message to open a file
+  autocomplete. It searches from the active project root (or your home when no
+  project is selected) and inserts a `@relative/path` token. The file is added
+  to the attachment list and the agent reads it by its real path.
+- **`+` button** — opens a file picker rooted at the active project. Select one
+  or many files across folders (selections accumulate as you navigate); they are
+  attached by absolute path.
+- **Paste / drag-and-drop** — paste or drop images and text. Pasted content is
+  attached inline (images ≤ 5 MB; larger files should use the `+` picker).
+- **Chips** — attached files appear as removable chips above the input. Remove
+  any one with its `×`, or clear everything with **New Session** (which keeps
+  your platform / language / mode / worktree / project settings).
+
+> **How delivery works:** small text files are inlined into the prompt; large
+> text files and images are copied into `project_dir/.eco-attachments/` and
+> referenced by path so the agent can `read()` them on demand; files already
+> inside the project are referenced by their real relative path (no copy).
+> The total attachment payload per message is capped at ~12 MB to protect the
+> WebSocket connection.
+
 ## Worktree isolation
 
 Enable **Worktree** beside the chat input, or pass `--worktree` to the CLI.
@@ -713,8 +830,9 @@ The harness has **no UI "open folder" picker** — the workspace
 All file tools are **sandboxed to `project_dir`** for writes: the coder's
 `write_file` / `build` / `runtime` can only touch `project_dir`, while
 `read` / `glob` / `grep` / `read_file` / `list_dir` may also read the
-read-only `marketplace_cache`. UI role/model/language selections are persisted
-in `.eco-harness/workspace.yaml`.
+read-only `marketplace_cache`. UI role/model/language selections and the
+permission policy are persisted in `.eco-harness/workspace.yaml` (see
+[Settings panel](#settings-panel)).
 
 ### Per-agent space limits (budgets)
 

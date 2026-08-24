@@ -47,6 +47,8 @@ services:
       # Монтируем код для разработки (hot reload)
       - ./agent:/app/agent
       - ./backend:/app/backend
+      - ./eco_harness:/app/eco_harness
+      - ./scripts:/app/scripts
       - ./config:/app/config:ro
       - ./.eco-harness:/app/.eco-harness
     ports:

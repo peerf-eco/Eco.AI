@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Send, Bot, User, Settings, X, Sparkles, StopCircle, RotateCcw,
-  GitBranch, Workflow,
+  Send, Bot, User, Settings, X, Sparkles, StopCircle,
+  GitBranch, Workflow, Plus, File as FileIcon, Image as ImageIcon,
+  FolderClosed as FolderClosedIcon, AlertCircle as AlertCircleIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,8 +20,27 @@ import { ProjectsPanel } from "./project-panel";
 import { FolderBrowser } from "./folder-browser";
 import { EcoosLogo } from "./ecoos-logo";
 import { AgentSettings } from "./agent-settings";
-import { RagImport } from "./rag-import";
-import type { ChatMessage, ProjectInfo, WorkingMode } from "./types";
+import type {
+  Attachment, AttachmentKind, ChatMessage, FsEntry, ProjectInfo, WorkingMode,
+} from "./types";
+
+const MAX_PASTE_BYTES = 5 * 1024 * 1024; // 5 MB cap on pasted/base64 content
+
+function guessKind(name: string): AttachmentKind {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name) ? "image" : "text";
+}
+
+// Relative path of `absPath` against the active project root for the @-mention
+// token. Files inside the root become relative; everything else stays absolute.
+function relativePath(absPath: string, root?: string | null): string {
+  if (!root) return absPath;
+  const base = root.endsWith("/") ? root : `${root}/`;
+  if (absPath === root) {
+    return absPath.split("/").filter(Boolean).pop() ?? absPath;
+  }
+  if (absPath.startsWith(base)) return absPath.slice(base.length);
+  return absPath;
+}
 
 const PLATFORM_STORAGE_KEY = "eco_harness.target_platform";
 const LANGUAGE_STORAGE_KEY = "eco_harness.language";
@@ -29,6 +49,10 @@ const ACTIVE_PROJECT_STORAGE_KEY = "eco_harness.active_project";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
 const WS_BASE = API_URL.replace(/^http/, "ws");
+// Optimization 3: cap total per-message attachment bytes. Pasted images are
+// base64 in the JSON WS frame; a few large ones can blow past uvicorn's 16 MB
+// default and silently drop the connection. Keep a safe headroom under that.
+const MAX_TOTAL_ATTACH_BYTES = 12 * 1024 * 1024;
 
 const MODE_OPTIONS: DropdownOption<WorkingMode>[] = [
   { value: "auto", label: "Auto · loop" },
@@ -60,6 +84,21 @@ export function ChatInterface() {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+
+  // Session-scoped attachments (decision #1): available to every message in the
+  // current session, cleared on New Session. Kept in component state so the
+  // in-flight run and the next message both carry them.
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [pasteError, setPasteError] = useState<string | null>(null);
+
+  // @-mention autocomplete state machine.
+  const [mention, setMention] = useState<{
+    active: boolean; query: string; start: number; index: number;
+  } | null>(null);
+  const [mentionHits, setMentionHits] = useState<FsEntry[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const mentionPopoverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try {
@@ -142,6 +181,197 @@ export function ChatInterface() {
     handleSelectProject(mostRecent);
   }, [projects, activeProjectId, handleSelectProject]);
 
+  // ── Attachments ────────────────────────────────────────────────────────────
+  // Revoke a blob: URL so pasted-image previews don't leak (optimization 4).
+  const revokeAttachment = useCallback((a: Attachment) => {
+    if (a.previewUrl && a.previewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(a.previewUrl);
+    }
+  }, []);
+
+  const addAttachment = useCallback((a: Attachment) => {
+    setAttachments((prev) => {
+      const key = a.path ?? `${a.name}:${a.size ?? 0}`;
+      if (prev.some((p) => (p.path ?? `${p.name}:${p.size ?? 0}`) === key)) return prev;
+      return [...prev, a];
+    });
+  }, []);
+
+  // Removing a chip does NOT revoke its previewUrl: sent message bubbles share
+  // the same Attachment object, so an early revoke would break their
+  // thumbnails. Blob URLs are reclaimed on New Session (chat cleared) and on
+  // unmount — bounded and leak-free.
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const attachmentBytes = attachments.reduce((sum, a) => sum + (a.size ?? 0), 0);
+
+  // Unmount cleanup for any blob: previews still alive (New Session already
+  // revokes; this covers navigation away mid-session).
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  useEffect(() => {
+    return () => {
+      attachmentsRef.current.forEach(revokeAttachment);
+    };
+  }, [revokeAttachment]);
+
+  // ── @-mention autocomplete ──────────────────────────────────────────────────
+  const detectMention = useCallback((value: string, caret: number) => {
+    let i = caret - 1;
+    while (i >= 0 && !/\s/.test(value[i])) i--;
+    const atPos = i + 1;
+    if (atPos < caret && value[atPos] === "@") {
+      setMention({ active: true, query: value.slice(atPos + 1, caret), start: atPos, index: 0 });
+    } else {
+      setMention(null);
+    }
+  }, []);
+
+  const selectMention = useCallback((hit: FsEntry) => {
+    if (!mention) return;
+    const before = input.slice(0, mention.start);
+    const after = input.slice(mention.start + 1 + mention.query.length);
+    const rel = relativePath(hit.path, activeProject?.path);
+    const token = `@${rel} `;
+    const newInput = before + token + after;
+    setInput(newInput);
+    const caretPos = (before + token).length;
+    requestAnimationFrame(() => {
+      const el = scrollAnchorRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(caretPos, caretPos);
+      }
+    });
+    addAttachment({
+      id: crypto.randomUUID(),
+      name: hit.name,
+      path: hit.path,
+      kind: guessKind(hit.name),
+      size: hit.size,
+      source: "mention",
+    });
+    setMention(null);
+  }, [mention, input, activeProject?.path, addAttachment]);
+
+  // Debounced fetch of mention hits from /api/fs/search.
+  useEffect(() => {
+    if (!mention?.active || mention.query.length < 1) {
+      setMentionHits([]);
+      return;
+    }
+    const q = mention.query;
+    const root = activeProject?.path ?? "";
+    const ctrl = new AbortController();
+    const t = setTimeout(async () => {
+      setMentionLoading(true);
+      try {
+        const params = new URLSearchParams({ q, limit: "50", depth: "8", backend: "os_walk" });
+        if (root) params.set("root", root);
+        const res = await fetch(`${API_URL}/api/fs/search?${params.toString()}`, {
+          signal: ctrl.signal,
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        // Search returns files only; tag each as "file" to satisfy FsEntry.
+        setMentionHits(
+          (data.results ?? []).map((r: { name: string; path: string; size?: number }) => ({
+            ...r,
+            type: "file" as const,
+          })),
+        );
+      } catch {
+        // aborted or network error — keep prior hits
+      } finally {
+        setMentionLoading(false);
+      }
+    }, 150);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [mention?.active, mention?.query, activeProject?.path]);
+
+  // B5: close the @-mention popover on any outside mousedown (Escape and typing
+  // already close it). Clicking inside the textarea or the popover keeps it.
+  useEffect(() => {
+    if (!mention?.active) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (
+        scrollAnchorRef.current?.contains(t) ||
+        mentionPopoverRef.current?.contains(t)
+      ) {
+        return;
+      }
+      setMention(null);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [mention?.active]);
+
+  // ── Paste & drop ───────────────────────────────────────────────────────────
+  const addPastedFile = useCallback((file: File, kind: AttachmentKind) => {
+    if (file.size > MAX_PASTE_BYTES) {
+      setPasteError(
+        `"${file.name || "file"}" is larger than 5 MB — add it with the + picker instead.`,
+      );
+      return;
+    }
+    const id = crypto.randomUUID();
+    const name = file.name ||
+      (kind === "image" ? `pasted-${Date.now()}.png` : `pasted-${Date.now()}.txt`);
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (kind === "image") {
+        const dataUrl = reader.result as string;
+        addAttachment({
+          id, name, kind, mime: file.type, size: file.size,
+          content: dataUrl, previewUrl: URL.createObjectURL(file), source: "paste",
+        });
+      } else {
+        addAttachment({
+          id, name, kind, mime: file.type, size: file.size,
+          content: reader.result as string, source: "paste",
+        });
+      }
+    };
+    reader.onerror = () => {
+      setPasteError(`Failed to read "${name}" — try the + picker instead.`);
+    };
+    if (kind === "image") reader.readAsDataURL(file);
+    else reader.readAsText(file);
+  }, [addAttachment]);
+
+  const onPaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData.items);
+    let handled = false;
+    for (const it of items) {
+      if (it.kind === "file" && it.type.startsWith("image/")) {
+        const file = it.getAsFile();
+        if (file) { addPastedFile(file, "image"); handled = true; }
+      } else if (it.kind === "file" && it.type.startsWith("text/")) {
+        const file = it.getAsFile();
+        if (file) { addPastedFile(file, "text"); handled = true; }
+      }
+    }
+    // Plain text paste: let default insertion happen (do not preventDefault).
+    if (handled) e.preventDefault();
+  }, [addPastedFile]);
+
+  const onDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    e.preventDefault();
+    for (const file of files) addPastedFile(file, guessKind(file.name));
+  }, [addPastedFile]);
+
+  const onDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer?.files?.length) e.preventDefault();
+  }, []);
+
   const {
     messages,
     isConnected,
@@ -156,6 +386,17 @@ export function ChatInterface() {
     sendAbort,
     clearMessages,
   } = useHarnessSocket(WS_BASE);
+
+  // New Session: clear messages (rolls a fresh thread) and drop attachments.
+  // Settings (platform/language/mode/useWorktree/project) intentionally persist.
+  const handleNewSession = useCallback(() => {
+    if (isProcessing) return;
+    attachments.forEach(revokeAttachment);
+    setAttachments([]);
+    setMention(null);
+    setPasteError(null);
+    clearMessages();
+  }, [isProcessing, clearMessages, attachments, revokeAttachment]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -182,6 +423,15 @@ export function ChatInterface() {
 
   const onSend = () => {
     if (!input.trim() || !isConnected || isProcessing) return;
+    // Optimization 3: refuse oversized attachment payloads before they can
+    // silently drop the WS connection.
+    if (attachmentBytes > MAX_TOTAL_ATTACH_BYTES) {
+      setPasteError(
+        "Attachments are too large for a single message (max ~12 MB). " +
+        "Remove some or add them via the + picker instead.",
+      );
+      return;
+    }
     sendUserRequest(input, {
       targetOs: platform.os,
       targetArch: platform.arch,
@@ -189,8 +439,12 @@ export function ChatInterface() {
       mode,
       useWorktree,
       projectDir: activeProject?.path,
+      attachedFiles: attachments,
     });
     setInput("");
+    // B1: close any open @-mention popover so it can't inject a stale hit into
+    // the next message.
+    setMention(null);
   };
 
   const handleLanguageChange = (next: ProgrammingLanguage) => {
@@ -237,39 +491,57 @@ export function ChatInterface() {
             <motion.div
               initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="fixed inset-y-0 right-0 z-50 w-80 glass-strong p-5 shadow-2xl overflow-y-auto thin-scroll"
+              className="fixed inset-y-0 right-0 z-50 flex w-[26rem] flex-col glass-strong shadow-2xl"
             >
-              <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center justify-between px-5 pb-4 pt-5">
                 <h2 className="text-lg font-semibold text-gradient">Settings</h2>
                 <Button variant="ghost" size="icon" onClick={() => setShowSettings(false)} className="hover:bg-white/10">
                   <X className="h-4 w-4" />
                 </Button>
               </div>
               {threadId && (
-                <div className="mt-6 pt-4 border-t border-white/[0.06] text-xs text-muted-foreground">
-                  <div className="uppercase tracking-wide text-[10px] mb-1">Thread</div>
-                  <div className="font-mono text-foreground/80 break-all">{threadId}</div>
+                <div className="mx-5 mb-4 flex items-center gap-2 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground/60">Thread</div>
+                    <div className="truncate font-mono text-[11px] text-foreground/70">{threadId}</div>
+                  </div>
                 </div>
               )}
-              <div className="mt-6 pt-4 border-t border-white/[0.06] space-y-5">
-                <div>
-                  <div className="uppercase tracking-wide text-[10px] mb-2 text-muted-foreground">Agent configuration</div>
-                  <AgentSettings />
-                </div>
-                <div className="border-t border-white/[0.06] pt-4">
-                  <div className="uppercase tracking-wide text-[10px] mb-2 text-muted-foreground">Marketplace RAG</div>
-                  <RagImport />
-                </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-2 thin-scroll">
+                <AgentSettings />
               </div>
             </motion.div>
           </>
         )}
       </AnimatePresence>
 
-      {/* Folder browser */}
+      {/* Folder browser (project picker) */}
       <AnimatePresence>
         {browserOpen && (
           <FolderBrowser onClose={() => setBrowserOpen(false)} onAdded={handleProjectAdded} />
+        )}
+      </AnimatePresence>
+
+      {/* File browser (attachment picker) */}
+      <AnimatePresence>
+        {fileBrowserOpen && (
+          <FolderBrowser
+            mode="file"
+            allowMultiple
+            initialPath={activeProject?.path}
+            onClose={() => setFileBrowserOpen(false)}
+            onFilesSelected={(files) => {
+              files.forEach((f) => addAttachment({
+                id: crypto.randomUUID(),
+                name: f.name,
+                path: f.path,
+                kind: guessKind(f.name),
+                size: f.size,
+                source: "picker",
+              }));
+              setFileBrowserOpen(false);
+            }}
+          />
         )}
       </AnimatePresence>
 
@@ -318,12 +590,12 @@ export function ChatInterface() {
             {messages.length > 0 && (
               <Button
                 variant="ghost"
-                size="icon"
-                onClick={clearMessages}
-                className="hover:bg-white/10 rounded-lg"
-                title="New session"
+                onClick={handleNewSession}
+                disabled={isProcessing}
+                className="rounded-lg hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Start a fresh session (clears messages and attachments, keeps your settings)"
               >
-                <RotateCcw className="h-4 w-4" />
+                New Session
               </Button>
             )}
             <Button
@@ -391,23 +663,147 @@ export function ChatInterface() {
         {/* Input dock — message box on top, selector row inside the frame below */}
         <div className="px-4 pb-4 pt-2">
           <div className="mx-auto max-w-3xl">
-            <div className="rounded-2xl glass-strong shadow-2xl transition-colors focus-within:border-blue-500/30 focus-within:glow-blue border border-transparent">
+            <div
+              className="relative rounded-2xl glass-strong shadow-2xl transition-colors focus-within:border-blue-500/30 focus-within:glow-blue border border-transparent"
+              onDrop={onDrop}
+              onDragOver={onDragOver}
+            >
+              {/* Attachment chips + @-mention popover live inside the frame,
+                  above the textarea. */}
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+                  {attachments.map((a) => (
+                    <AttachmentChip
+                      key={a.id}
+                      attachment={a}
+                      onRemove={() => removeAttachment(a.id)}
+                    />
+                  ))}
+                </div>
+              )}
+              {attachmentBytes > 150 * 1024 && (
+                <p className="px-3 pt-1 text-[10px] text-amber-300/80">
+                  Large context — big files will be referenced, not inlined.
+                </p>
+              )}
+              {pasteError && (
+                <div className="flex items-center gap-2 px-3 pt-1 text-[10px] text-red-300/90">
+                  <AlertCircleIcon className="h-3 w-3 shrink-0" />
+                  <span>{pasteError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPasteError(null)}
+                    className="ml-auto rounded p-0.5 hover:bg-white/10"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+
               <textarea
                 ref={scrollAnchorRef}
                 rows={1}
-                placeholder="Type a message…"
+                placeholder="Type a message…  Use @ to attach a file, drag & drop or paste images."
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  const caret = e.target.selectionStart ?? e.target.value.length;
+                  detectMention(e.target.value, caret);
+                }}
                 onKeyDown={(e) => {
+                  if (mention?.active && mentionHits.length > 0) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setMention((m) => m && { ...m, index: (m.index + 1) % mentionHits.length });
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setMention((m) => m && {
+                        ...m,
+                        index: (m.index - 1 + mentionHits.length) % mentionHits.length,
+                      });
+                      return;
+                    }
+                    if (e.key === "Enter" || e.key === "Tab") {
+                      e.preventDefault();
+                      selectMention(mentionHits[mention.index] ?? mentionHits[0]);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setMention(null);
+                      return;
+                    }
+                  }
                   if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                     e.preventDefault();
                     onSend();
                   }
                 }}
+                onPaste={onPaste}
                 disabled={!isConnected || isProcessing}
                 className="block w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-sm outline-none placeholder:text-muted-foreground/60 disabled:opacity-50"
               />
+
+              {/* @-mention autocomplete popover — absolutely positioned above
+                  the textarea. onMouseDown preventDefault keeps the textarea
+                  focused so the click reaches selectMention. Only shown once a
+                  query is typed so we don't flash "No matches" on a bare "@". */}
+              {mention?.active && mention.query.length >= 1 && (
+                <div
+                  ref={mentionPopoverRef}
+                  className="absolute bottom-full left-0 z-30 mb-2 w-80 max-w-[90%] max-h-64 overflow-y-auto rounded-xl border border-white/[0.08] glass-strong shadow-2xl thin-scroll"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  {mentionLoading && mentionHits.length === 0 && (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>
+                  )}
+                  {mentionHits.length === 0 && !mentionLoading && (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">No matches</div>
+                  )}
+                  {mentionHits.map((hit, i) => {
+                    const rel = relativePath(hit.path, activeProject?.path);
+                    return (
+                      <button
+                        key={hit.path}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          selectMention(hit);
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors",
+                          i === mention.index ? "bg-blue-500/15" : "hover:bg-white/[0.05]",
+                        )}
+                      >
+                        {hit.type === "file" ? (
+                          <FileIcon className="h-3.5 w-3.5 shrink-0 text-amber-300/80" />
+                        ) : (
+                          <FolderClosedIcon className="h-3.5 w-3.5 shrink-0 text-blue-400/80" />
+                        )}
+                        <span className="min-w-0 flex-1 truncate">{hit.name}</span>
+                        <span className="shrink-0 font-mono text-[10px] text-muted-foreground/50">
+                          {rel}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               <div className="flex items-center gap-1.5 px-2 pb-2 pt-1.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setFileBrowserOpen(true)}
+                  disabled={isProcessing}
+                  className="shrink-0 rounded-lg hover:bg-white/10 disabled:opacity-40"
+                  title="Attach files from the project"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
                 <PlatformSelector
                   value={platform}
                   onChange={handlePlatformChange}
@@ -527,9 +923,61 @@ function UserBubble({ message }: { message: ChatMessage }) {
       <div className="flex max-w-[80%] flex-col gap-2">
         <div className="rounded-xl px-4 py-3 bg-gradient-to-r from-blue-600/80 to-violet-600/80 text-white shadow-lg shadow-blue-500/10">
           <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.text}</div>
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {message.attachments.map((a) => (
+                <AttachmentChip key={a.id} attachment={a} />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function AttachmentChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: Attachment;
+  onRemove?: () => void;
+}) {
+  const isImage = attachment.kind === "image";
+  return (
+    <span
+      className="inline-flex max-w-[12rem] items-center gap-1.5 rounded-md border border-white/[0.08] bg-black/25 px-2 py-1 text-[11px]"
+      title={attachment.path ?? attachment.name}
+    >
+      {isImage && attachment.previewUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={attachment.previewUrl}
+          alt={attachment.name}
+          className="h-4 w-4 shrink-0 rounded object-cover"
+        />
+      ) : isImage ? (
+        <ImageIcon className="h-3.5 w-3.5 shrink-0 text-violet-300/80" />
+      ) : (
+        <FileIcon className="h-3.5 w-3.5 shrink-0 text-amber-300/80" />
+      )}
+      <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+      {attachment.size != null && (
+        <span className="shrink-0 font-mono text-[9px] text-muted-foreground/50">
+          {(attachment.size / 1024).toFixed(attachment.size < 1024 ? 0 : 1)}K
+        </span>
+      )}
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+          aria-label={`Remove ${attachment.name}`}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </span>
   );
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertCircle,
@@ -9,37 +9,61 @@ import {
   ChevronRight,
   CornerDownLeft,
   FolderClosed,
+  File as FileIcon,
   Loader2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { FsListing } from "./types";
+import type { FsListing, FsEntry } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
 
 interface FolderBrowserProps {
   onClose: () => void;
   // POST /api/projects returns the bare registry entry (no sessions yet).
-  onAdded: (project: { path: string; name: string; id: string }) => void;
+  onAdded?: (project: { path: string; name: string; id: string }) => void;
+  // When "file", the modal lists files alongside dirs and lets the user pick
+  // one or many; onFilesSelected fires with the chosen file paths.
+  mode?: "dir" | "file";
+  allowMultiple?: boolean;
+  onFilesSelected?: (files: { path: string; name: string; size: number }[]) => void;
+  // D2: open at this path instead of home (used to root the attachment picker
+  // at the active project directory).
+  initialPath?: string;
 }
 
 // Modal folder picker backed by GET /api/fs/browse (directories only) and
-// POST /api/projects to register the chosen folder. Starts in the user's
-// home directory; breadcrumb segments jump back up the tree.
-export function FolderBrowser({ onClose, onAdded }: FolderBrowserProps) {
+// POST /api/projects to register the chosen folder. In file mode it also lists
+// files and emits onFilesSelected instead of registering a project. Starts in
+// the user's home directory; breadcrumb segments jump back up the tree.
+export function FolderBrowser({
+  onClose,
+  onAdded,
+  mode = "dir",
+  allowMultiple = false,
+  onFilesSelected,
+  initialPath,
+}: FolderBrowserProps) {
   const [listing, setListing] = useState<FsListing | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pathDraft, setPathDraft] = useState("");
+  // B2: accumulate selections across folder navigation in a Map<path, entry>
+  // (not just the current directory) so multi-folder picks aren't lost.
+  const [selected, setSelected] = useState<Map<string, FsEntry>>(new Map());
+  const isFileMode = mode === "file";
 
   const fetchListing = useCallback(async (path?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const qs = path ? `?path=${encodeURIComponent(path)}` : "";
-      const res = await fetch(`${API_URL}/api/fs/browse${qs}`);
+      const params = new URLSearchParams();
+      if (path) params.set("path", path);
+      if (isFileMode) params.set("files", "1");
+      const qs = params.toString();
+      const res = await fetch(`${API_URL}/api/fs/browse${qs ? `?${qs}` : ""}`);
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.detail || `Request failed (${res.status})`);
@@ -50,11 +74,13 @@ export function FolderBrowser({ onClose, onAdded }: FolderBrowserProps) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isFileMode]);
 
   useEffect(() => {
-    if (!listing && loading) void fetchListing();
-  }, [listing, loading, fetchListing]);
+    // D2: when an initialPath is supplied (e.g. the active project root for
+    // the attachment picker) open there; otherwise fall back to home.
+    if (!listing && loading) void fetchListing(initialPath);
+  }, [listing, loading, fetchListing, initialPath]);
 
   // Keep the editable path field in sync with wherever the user navigates.
   useEffect(() => {
@@ -83,11 +109,24 @@ export function FolderBrowser({ onClose, onAdded }: FolderBrowserProps) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.detail || `Request failed (${res.status})`);
       }
-      onAdded((await res.json()) as { path: string; name: string; id: string });
+      onAdded?.((await res.json()) as { path: string; name: string; id: string });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add project");
       setSubmitting(false);
     }
+  };
+
+  const toggleFile = (entry: FsEntry) => {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      if (next.has(entry.path)) {
+        next.delete(entry.path);
+      } else {
+        if (!allowMultiple) next.clear();
+        next.set(entry.path, entry);
+      }
+      return next;
+    });
   };
 
   // "/home/nick/Dev" → ["/", "home", "nick", "Dev"] clickable crumbs.
@@ -121,7 +160,9 @@ export function FolderBrowser({ onClose, onAdded }: FolderBrowserProps) {
       >
         {/* Title bar */}
         <div className="flex items-center justify-between px-5 pt-4 pb-3">
-          <h2 className="text-sm font-semibold">Choose project folder</h2>
+          <h2 className="text-sm font-semibold">
+            {isFileMode ? "Choose files to attach" : "Choose project folder"}
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -178,7 +219,7 @@ export function FolderBrowser({ onClose, onAdded }: FolderBrowserProps) {
           </form>
         </div>
 
-        {/* Directory list */}
+        {/* Directory / file list */}
         <div className="mx-5 h-64 overflow-y-auto rounded-xl border border-white/[0.06] bg-white/[0.02] thin-scroll">
           {loading ? (
             <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -196,20 +237,40 @@ export function FolderBrowser({ onClose, onAdded }: FolderBrowserProps) {
                   ..
                 </button>
               )}
-              {listing?.entries.map((entry) => (
-                <button
-                  key={entry.path}
-                  type="button"
-                  onClick={() => void fetchListing(entry.path)}
-                  className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-xs transition-colors hover:bg-white/[0.05]"
-                >
-                  <FolderClosed className="h-3.5 w-3.5 shrink-0 text-blue-400/80" />
-                  <span className="truncate">{entry.name}</span>
-                </button>
-              ))}
+              {listing?.entries.map((entry) => {
+                const isFile = entry.type === "file";
+                const isChecked = isFile && selected.has(entry.path);
+                return (
+                  <button
+                    key={entry.path}
+                    type="button"
+                    onClick={() => {
+                      if (isFile) toggleFile(entry);
+                      else void fetchListing(entry.path);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 px-4 py-2 text-left text-xs transition-colors hover:bg-white/[0.05]",
+                      isChecked && "bg-blue-500/10",
+                    )}
+                  >
+                    {isFile ? (
+                      <FileIcon className="h-3.5 w-3.5 shrink-0 text-amber-300/80" />
+                    ) : (
+                      <FolderClosed className="h-3.5 w-3.5 shrink-0 text-blue-400/80" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                    {isFile && entry.size != null && (
+                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground/50">
+                        {(entry.size / 1024).toFixed(entry.size < 1024 ? 0 : 1)} KB
+                      </span>
+                    )}
+                    {isChecked && <Check className="h-3.5 w-3.5 shrink-0 text-blue-300" />}
+                  </button>
+                );
+              })}
               {listing && listing.entries.length === 0 && !listing.parent && (
                 <p className="p-6 text-center text-xs text-muted-foreground/60">
-                  No subfolders here.
+                  {isFileMode ? "No files or subfolders here." : "No subfolders here."}
                 </p>
               )}
             </>
@@ -229,19 +290,44 @@ export function FolderBrowser({ onClose, onAdded }: FolderBrowserProps) {
           <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground/60">
             {listing?.path ?? ""}
           </span>
-          <Button
-            onClick={() => void selectFolder()}
-            disabled={!listing || submitting}
-            size="sm"
-            className="shrink-0 rounded-lg bg-gradient-to-r from-blue-500 to-violet-500 hover:from-blue-600 hover:to-violet-600 shadow-lg shadow-blue-500/20 disabled:opacity-40 disabled:shadow-none transition-all"
-          >
-            {submitting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Check className="h-3.5 w-3.5" />
-            )}
-            Select this folder
-          </Button>
+          {isFileMode ? (
+            <Button
+              onClick={() => {
+                // B2: build the payload from the accumulated selection map,
+                // not just the current directory's entries.
+                const files = Array.from(selected.values()).map((e) => ({
+                  path: e.path,
+                  name: e.name,
+                  size: e.size ?? 0,
+                }));
+                onFilesSelected?.(files);
+              }}
+              disabled={selected.size === 0}
+              size="sm"
+              className="shrink-0 rounded-lg bg-gradient-to-r from-blue-500 to-violet-500 hover:from-blue-600 hover:to-violet-600 shadow-lg shadow-blue-500/20 disabled:opacity-40 disabled:shadow-none transition-all"
+            >
+              {submitting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
+              Add {selected.size > 0 ? selected.size : ""} file{selected.size === 1 ? "" : "s"}
+            </Button>
+          ) : (
+            <Button
+              onClick={() => void selectFolder()}
+              disabled={!listing || submitting}
+              size="sm"
+              className="shrink-0 rounded-lg bg-gradient-to-r from-blue-500 to-violet-500 hover:from-blue-600 hover:to-violet-600 shadow-lg shadow-blue-500/20 disabled:opacity-40 disabled:shadow-none transition-all"
+            >
+              {submitting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
+              Select this folder
+            </Button>
+          )}
         </div>
       </motion.div>
     </motion.div>

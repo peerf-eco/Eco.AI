@@ -12,6 +12,7 @@ from agent.context.assembler import build_static_system_prompt
 from agent.pi_ai import SimpleStreamOptions
 from eco_harness.adapters.eco_agent_bridge import ExternalEcoAgent
 from eco_harness.adapters.factory import make_external_backend
+from eco_harness.permissions import apply_role_permissions
 
 
 def _backend_name(spec: RoleSpec) -> str:
@@ -294,6 +295,10 @@ def make_role_agent(
     # tool contract includes it (external backends skip this — their manifest
     # entries carry source paths for their own file tools).
     _wire_on_demand_skill_tool(agent, config=config, role=role, language=language)
+    # Permission policy (settings panel → workspace.yaml): denied tool groups
+    # are dropped and execution tools get the command allowlist — both BEFORE
+    # prompt assembly so the tool contract matches the enforced toolset.
+    apply_role_permissions(agent, config=config, role=role)
     _configure_context(
         agent,
         config=config,
