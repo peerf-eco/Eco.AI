@@ -17,9 +17,18 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
   interface contract specifies them.
 - Use EcoOS types resolved from `Eco.Core1/SharedFiles`: `int16_t`, `int32_t`,
   `char_t`, `byte_t`, `voidptr_t`, `UGUID`, plus `ECOCALLMETHOD` calling conv.
-- **No `malloc`/`calloc`/`free`.** Allocate only via `IEcoMemoryAllocator1`
-  reached through the component's `m_pIMem` field:
-  `pCMe->m_pIMem->pVTbl->Alloc(pCMe->m_pIMem, size);`
+- **No `malloc`/`calloc`/`free`.** Allocate only via `IEcoMemoryAllocator1`.
+  - *Inside a component implementation*: reach it through the object's `m_pIMem`
+    field: `pCMe->m_pIMem->pVTbl->Alloc(pCMe->m_pIMem, size);`
+  - *Inside an application (`EcoMain` glue)*: obtain it by **`QueryInterface`**,
+    never by calling a method on the manager. `IEcoMemoryManager1` exposes only
+    `Init` / `get_Status` / `get_UsedBlocks` — it has **no `GetAllocator`**.
+    Get the manager via the bus
+    (`QueryComponent(&CID_EcoMemoryManager1, 0, &IID_IEcoMemoryManager1, …)`),
+    then
+    `pIMemMgr->pVTbl->QueryInterface(pIMemMgr, &IID_IEcoMemoryAllocator1, (void**)&pIAlloc)`.
+    On constrained targets the bus memory extension `IEcoInterfaceBus1MemExt`
+    may be used instead; either way, acquisition is always via `QueryInterface`.
 
 # 3. ACOM SHAPES (naming)
 - Interfaces: `IEco` prefix, PascalCase, major version digit (e.g. `IEcoMathC89`).
@@ -63,6 +72,9 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
 - The required framework stack (`Eco.Core1` base + minimum system components,
   `Eco.System1` for applications) is declared once in the STATIC ACOM DOMAIN
   block above — encode it exactly as written there.
+- Link the platform `Eco.System1` **system library** for applications — default
+  `StaticRelease` (see the ACOM domain block for the two variants). It has no
+  CID and is never registered on the bus.
 
 # 8. HEADER / DOC DISCIPLINE
 - Every file starts with the standard file-header comment block (author,
@@ -70,7 +82,7 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
 - Every function and vtable method has a function-header comment.
 - Every interface method validates `me` and output pointers vs `NULL` first:
   `if (me == NULL || ppv == NULL) return ERR_ECO_POINTER;`
-- Return `ERR_ECO_SUCCESES`, `ERR_ECO_POINTER`, `ERR_ECO_NOINTERFACE` as fitting.
+- Return `ERR_ECO_SUCCES`, `ERR_ECO_POINTER`, `ERR_ECO_NOINTERFACE` as fitting.
 
 # 9. GENERATION PROTOCOL
 - Prefer `eco-wizard` for project/component/app scaffolding when available.
@@ -78,3 +90,91 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
   per-file path, (3) mandatory file header, (4) function docs.
 - Process template conditionals: `[!if ADD_CONNECTION_POINTS]`,
   `[!if ADD_AGGREGATION_INNER/OUTER]`, `[!if ADD_CONTAINMENT_OUTER]`.
+
+# 10. REFERENCE — ACOM application bootstrap (prior art)
+
+Embedded from `eco_framework/Lessons/Lesson04/Eco.DemoCalculator1` so the
+canonical System → Bus → Component → Release flow is always in context. The
+allocator is acquired by `QueryInterface` — **never** by calling
+`GetAllocator` on `IEcoMemoryManager1` (that method does not exist).
+
+```cpp
+/*
+ * <character encoding> Cyrillic (UTF-8 with signature) - Codepage 65001 </character encoding>
+ * <summary> Reference: ACOM application entry (EcoMain) </summary>
+ * <description> Canonical bootstrap for a console calculator using
+ *   Eco.Math.C89 (pow/sqrt) and Eco.StdIO.C89. Memory is obtained via
+ *   QueryInterface, NOT via GetAllocator. </description>
+ * <author> Copyright (c) 2026 [AUTHOR]. All rights reserved. </author>
+ */
+
+#include "IEcoSystem1.h"
+#include "IEcoInterfaceBus1.h"
+#include "IEcoMemoryManager1.h"
+#include "IEcoMemoryAllocator1.h"
+#include "IEcoMathC89.h"
+#include "IEcoStdIOC89.h"
+#include "IdEcoInterfaceBus1.h"
+#include "IdEcoMemoryManager1.h"
+#include "IdEcoMathC89.h"
+#include "IdEcoStdIOC89.h"
+
+int16_t EcoMain(IEcoUnknown* pIUnk) {
+    int16_t result = -1;
+    IEcoSystem1* pISys = 0;
+    IEcoInterfaceBus1* pIBus = 0;
+    IEcoMemoryManager1* pIMemMgr = 0;
+    IEcoMemoryAllocator1* pIAlloc = 0;
+    IEcoMathC89* pIMath = 0;
+    IEcoStdIOC89* pIStdIO = 0;
+    double x = 0.0, y = 0.0, res_pow = 0.0, res_sqrt = 0.0;
+
+    if (pIUnk == 0) {
+        return ERR_ECO_POINTER;
+    }
+    /* 1. System -> Bus (IEcoSystem1 comes from Eco.Core1, via pIUnk) */
+    result = pIUnk->pVTbl->QueryInterface(pIUnk, &GID_IEcoSystem, (void**)&pISys);
+    if (result != ERR_ECO_SUCCES || pISys == 0) {
+        goto Release;
+    }
+    result = pISys->pVTbl->QueryInterface(pISys, &IID_IEcoInterfaceBus1, (void**)&pIBus);
+    if (result != ERR_ECO_SUCCES || pIBus == 0) {
+        goto Release;
+    }
+    /* 2. Register statically-linked components (factory symbols, no CID for Eco.System1) */
+    pIBus->pVTbl->RegisterComponent(pIBus, &CID_EcoMemoryManager1,
+        (IEcoUnknown*)GetIEcoComponentFactoryPtr_0000000000000000000000004D656D31);
+    pIBus->pVTbl->RegisterComponent(pIBus, &CID_EcoMathC89,
+        (IEcoUnknown*)GetIEcoComponentFactoryPtr_61C988E21B7041378C5BDAFBB68A3FA0);
+    pIBus->pVTbl->RegisterComponent(pIBus, &CID_EcoStdIOC89,
+        (IEcoUnknown*)GetIEcoComponentFactoryPtr_00000000000000000000000053494F31);
+    /* 3. Component -> acquire interfaces */
+    pIBus->pVTbl->QueryComponent(pIBus, &CID_EcoMemoryManager1, 0,
+        &IID_IEcoMemoryManager1, (void**)&pIMemMgr);
+    /* Allocator via QueryInterface — NOT GetAllocator */
+    pIMemMgr->pVTbl->QueryInterface(pIMemMgr, &IID_IEcoMemoryAllocator1, (void**)&pIAlloc);
+    pIBus->pVTbl->QueryComponent(pIBus, &CID_EcoMathC89, 0,
+        &IID_IEcoMathC89, (void**)&pIMath);
+    pIBus->pVTbl->QueryComponent(pIBus, &CID_EcoStdIOC89, 0,
+        &IID_IEcoStdIOC89, (void**)&pIStdIO);
+    /* 4. Use (pow/sqrt) */
+    pIStdIO->pVTbl->scanf(pIStdIO, "%lf %lf", &x, &y);
+    res_pow = pIMath->pVTbl->pow(pIMath, x, y);
+    res_sqrt = pIMath->pVTbl->sqrt(pIMath, x);
+    pIStdIO->pVTbl->printf(pIStdIO, "pow=%lf sqrt=%lf\n", res_pow, res_sqrt);
+
+Release:
+    /* Release in reverse order, one per successful QueryInterface/QueryComponent */
+    if (pIStdIO != 0) { pIStdIO->pVTbl->Release(pIStdIO); }
+    if (pIMath != 0) { pIMath->pVTbl->Release(pIMath); }
+    if (pIAlloc != 0) { pIAlloc->pVTbl->Release(pIAlloc); }
+    if (pIMemMgr != 0) { pIMemMgr->pVTbl->Release(pIMemMgr); }
+    if (pIBus != 0) { pIBus->pVTbl->Release(pIBus); }
+    if (pISys != 0) { pISys->pVTbl->Release(pISys); }
+    return result;
+}
+```
+
+On constrained targets the bus memory extension `IEcoInterfaceBus1MemExt`
+(`QueryInterface` on the bus) can supply the allocator instead; the acquisition
+rule is identical — **always `QueryInterface`, never `GetAllocator`**.

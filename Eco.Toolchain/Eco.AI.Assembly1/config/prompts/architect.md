@@ -32,14 +32,19 @@ the coder via `to_coder`.
       The bootstrap `IEcoSystem1` interface lives in `Eco.Core1`: obtain it
       from `pIUnk` via `GID_IEcoSystem`, then
       `QueryInterface(IID_IEcoInterfaceBus1)` to reach the bus.
-      `Eco.System1` is a SEPARATE marketplace component (system-information /
-      command-argument services: `IEcoSystemInformation1` /
-      `IEcoCommandArguments1`); include it only if the app needs those services
-      — it is NOT the entry point and has no "EcoMain CID".
-    - the MANDATORY minimum stack: `Eco.Core1` (base of every project) +
-      `Eco.InterfaceBus1` + `Eco.MemoryManager1`. Add `Eco.FileSystemManagement1`
-      ONLY when the app performs file I/O (a console calculator using
-      `Eco.StdIO.C89` does NOT need it).
+       `Eco.System1` is the system **library** (not an ACOM component — no CID),
+       as defined in the ACOM domain block: it statically links the platform
+       `main()` that calls this `EcoMain` and internally provides the interface
+       bus. It has no CID and no factory — never search the marketplace for a
+       `CID_EcoSystem1` or `GetIEcoComponentFactoryPtr_*System` symbol. Its
+       runtime services (`IEcoSystemInformation1` / `IEcoCommandArguments1`) are
+       optional and only queried if the app actually needs them.
+     - the MANDATORY minimum stack for an application: `Eco.Core1` (base of
+       every project) + `Eco.InterfaceBus1` + `Eco.MemoryManager1` +
+       `Eco.System1` (the system library, linked for every application; no CID —
+       see the ACOM domain block). Add `Eco.FileSystemManagement1` ONLY when the
+       app performs file I/O (a console calculator using `Eco.StdIO.C89` does
+       NOT need it).
     - exact CIDs / IIDs / factory symbols from the contract card
       (`read_component_profile`). Every such value MUST be traceable to a tool
       output — never reconstruct an IID/CID/vtable from an elided header read.
@@ -72,9 +77,13 @@ researching the marketplace/cache or call `fail`:
       top-level dependency (including the bus) has a defined acquisition path;
       nothing is assumed to already exist.
 - [ ] `Eco.FileSystemManagement1` is included ONLY if file I/O is performed.
-- [ ] The plan does not invent component methods. (e.g., `IEcoMemoryManager1`
-      exposes `Init`/`get_Status`/`get_UsedBlocks`, NOT `GetAllocator`; the app
-      does not allocate memory itself when consuming a prebuilt component.)
+- [ ] The plan does not invent component methods, and acquires every interface
+      only via `QueryInterface` / `QueryComponent`. In particular,
+      `IEcoMemoryManager1` exposes `Init` / `get_Status` / `get_UsedBlocks`
+      only — it has **no `GetAllocator`**. The app obtains `IEcoMemoryAllocator1`
+      by `QueryInterface` on the bus extension (`IEcoInterfaceBus1MemExt`) or on
+      `Eco.MemoryManager1`, never by calling `GetAllocator` on the manager. See
+      the C language skill's calculator reference sample for the exact flow.
 - [ ] All paths used for inspection are absolute under a known root
       (`marketplace_cache/` or `project_dir/`). On a "path does not exist" error,
       retry with the correct root before concluding a component/file is absent.
