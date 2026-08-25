@@ -73,6 +73,17 @@ app.mount("/files", StaticFiles(directory="output"), name="files")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# ACTIVE SESSIONS — in-memory map of thread_id -> WebSocket for sessions that
+# currently have a live connection. Lets the UI stop (abort) a running or
+# suspended session from the projects panel even when that session is not the
+# one currently displayed in the main chat area. Populated on connect and
+# cleared on disconnect / abort.
+# ═══════════════════════════════════════════════════════════════════════════
+
+ACTIVE_SESSIONS: dict[str, "WebSocket"] = {}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # PROJECT & SESSION REGISTRY — persisted at <output_root>/.harness-registry.json
 #
 # The web UI's left panel lists whitelisted projects (folders explicitly
@@ -464,6 +475,99 @@ async def delete_project(project_id: str):
     ]
     _save_registry(registry)
     return {"status": "ok", "removed": project_id}
+
+
+# ── Session inspection & control ─────────────────────────────────────────────
+# The left panel lists sessions but the main chat area only ever shows the
+# live connection's thread. These endpoints let the UI (1) replay a session's
+# reconstructed transcript into the main view and (2) stop a running/suspended
+# session so it can be removed from the panel.
+
+def _find_session(registry: dict, session_id: str) -> dict | None:
+    """Look up a session record by its 8-char short id."""
+    for session in registry["sessions"]:
+        if session.get("id") == session_id:
+            return session
+    return None
+
+
+@app.get("/api/sessions/{session_id}/messages")
+async def session_messages(session_id: str):
+    """Reconstruct a session's conversation as a flat, renderable transcript.
+
+    Reuses backend.session_export.session_turns: each turn becomes a user
+    message (the question) followed by an assistant message (reasoning + the
+    final/stop-tool answer), in the order they occurred. Sessions without
+    usable traces yield an empty message list with the metadata intact so the
+    UI can still show "no recorded transcript"."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    registry = _load_registry()
+    session = _find_session(registry, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+
+    from backend.session_export import session_turns, default_traces_root
+
+    turns = session_turns(session, default_traces_root())
+    messages: list[dict] = []
+    for turn in turns:
+        question = (turn.get("question") or "").strip()
+        if question:
+            messages.append({"role": "user", "text": question})
+        reasoning = (turn.get("reasoning_chain") or "").strip()
+        answer = (turn.get("final_answer") or "").strip()
+        parts: list[str] = []
+        if reasoning:
+            parts.append(f"**Reasoning**\n\n{reasoning}")
+        if answer:
+            parts.append(answer)
+        body = "\n\n".join(parts)
+        if body:
+            messages.append({"role": "assistant", "text": body})
+
+    return {
+        "session": {k: session.get(k) for k in (
+            "id", "thread_id", "project_path", "title",
+            "created_at", "updated_at", "status",
+        )},
+        "messages": messages,
+    }
+
+
+@app.post("/api/sessions/{session_id}/abort")
+async def abort_session(session_id: str):
+    """Stop a running or suspended session.
+
+    Marks the session finished in the registry (so it becomes removable from
+    the panel) and, when the session still has a live WebSocket, closes that
+    connection — which makes the handler's disconnect path record the abort
+    too. Idempotent: re-aborting an already-finished session is a no-op."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    registry = _load_registry()
+    session = _find_session(registry, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+
+    thread_id = session.get("thread_id") or ""
+    # Flip registry status so the panel stops treating it as live work.
+    if session.get("status") == "running":
+        try:
+            _record_session_end(thread_id, Path(session.get("project_path") or "."), "aborted")
+        except Exception:
+            logger.exception("abort_session: failed to record end")
+
+    # Signal the live connection (if any) to tear down.
+    ws = ACTIVE_SESSIONS.get(thread_id)
+    if ws is not None:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+        ACTIVE_SESSIONS.pop(thread_id, None)
+
+    return {"status": "ok", "aborted": session_id}
 
 
 # ── Session export (fine-tuning data) ────────────────────────────────────────
@@ -1548,6 +1652,8 @@ async def chat_endpoint(websocket: WebSocket):
         f"[CHAT WS] connected thread_id={thread_id} "
         f"project_dir={project_dir} trace_dir={trace_dir}"
     )
+    # Register so the UI can stop this session from the panel.
+    ACTIVE_SESSIONS[thread_id] = websocket
     await websocket.send_json({"type": "heartbeat", "protocol": "chat", "thread_id": thread_id})
 
     # Session bookkeeping for the UI project panel: flip the registry status
@@ -2256,6 +2362,11 @@ async def chat_endpoint(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+    finally:
+        # Drop the live-connection registration so a later abort cannot try to
+        # close an already-dead socket.
+        if ACTIVE_SESSIONS.get(thread_id) is websocket:
+            ACTIVE_SESSIONS.pop(thread_id, None)
 
 
 if __name__ == "__main__":

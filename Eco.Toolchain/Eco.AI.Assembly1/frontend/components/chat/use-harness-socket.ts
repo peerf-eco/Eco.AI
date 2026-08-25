@@ -148,6 +148,12 @@ export interface UseHarnessSocketResult {
   sendEscalationDecision: (blockId: string, cont: boolean) => void;
   sendAbort: () => void;
   clearMessages: () => void;
+  // Load a reconstructed transcript (from /api/sessions/{id}/messages) into the
+  // chat area — used when the user opens a past session from the panel.
+  loadMessages: (messages: ChatMessage[]) => void;
+  // Re-point the live WebSocket at a specific thread (to re-attach to a session
+  // the user opened) or null for a fresh thread (return to live).
+  connectThread: (threadId: string | null) => void;
 }
 
 export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
@@ -435,7 +441,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
   }, [handleEvent]);
 
   // ── connect with exponential backoff + ?thread_id resume ────────────────
-  const connect = useCallback(() => {
+  const connect = useCallback((explicitThread?: string | null) => {
     if (
       wsRef.current?.readyState === WebSocket.OPEN ||
       wsRef.current?.readyState === WebSocket.CONNECTING
@@ -444,7 +450,9 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     intentionalClose.current = false;
 
     let tid: string | null = null;
-    if (typeof window !== "undefined") {
+    if (explicitThread !== undefined) {
+      tid = explicitThread;
+    } else if (typeof window !== "undefined") {
       tid = sessionStorage.getItem(THREAD_ID_KEY);
     }
     const qs = tid ? `?thread_id=${encodeURIComponent(tid)}` : "";
@@ -593,6 +601,24 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     setIsProcessing(false);
   }, [send]);
 
+  // Re-point the live socket at a specific thread (re-attach to a session the
+  // user opened from the panel) or null for a brand-new thread. Sessions are
+  // loaded separately via loadMessages; this only (re)opens the channel so a
+  // still-running session streams live events and the panel's Stop can reach it.
+  const connectThread = useCallback((threadId: string | null) => {
+    intentionalClose.current = true;
+    wsRef.current?.close();
+    setThreadId(threadId);
+    if (typeof window !== "undefined") {
+      if (threadId) sessionStorage.setItem(THREAD_ID_KEY, threadId);
+      else sessionStorage.removeItem(THREAD_ID_KEY);
+    }
+    setTimeout(() => {
+      intentionalClose.current = false;
+      connect(threadId);
+    }, 60);
+  }, [connect]);
+
   const clearMessages = useCallback(() => {
     setMessages([]);
     setCurrentPhase(null);
@@ -611,6 +637,15 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     }, 50);
   }, [connect]);
 
+  // Inject a reconstructed transcript (past session) into the chat area.
+  const loadMessages = useCallback((msgs: ChatMessage[]) => {
+    setMessages(msgs);
+    setIsProcessing(false);
+    setCurrentPhase(null);
+    setCompletedPhases([]);
+    setWorktree(null);
+  }, []);
+
   return {
     messages,
     isConnected,
@@ -624,5 +659,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     sendEscalationDecision,
     sendAbort,
     clearMessages,
+    loadMessages,
+    connectThread,
   };
 }

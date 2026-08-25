@@ -21,7 +21,7 @@ import { FolderBrowser } from "./folder-browser";
 import { EcoosLogo } from "./ecoos-logo";
 import { AgentSettings } from "./agent-settings";
 import type {
-  Attachment, AttachmentKind, ChatMessage, FsEntry, ProjectInfo, WorkingMode,
+  Attachment, AttachmentKind, ChatMessage, FsEntry, ProjectInfo, SessionInfo, WorkingMode,
 } from "./types";
 
 const MAX_PASTE_BYTES = 5 * 1024 * 1024; // 5 MB cap on pasted/base64 content
@@ -461,7 +461,61 @@ export function ChatInterface() {
     sendEscalationDecision,
     sendAbort,
     clearMessages,
+    loadMessages,
+    connectThread,
   } = useHarnessSocket(WS_BASE);
+
+  // Session being inspected from the left panel (read-only transcript view).
+  const [viewing, setViewing] = useState<SessionInfo | null>(null);
+
+  // ── Open a past/suspended session from the panel into the main view ──────
+  // Fetches the reconstructed transcript and re-points the live socket at that
+  // session's thread so a still-running one streams live events (and the
+  // panel "Stop" / banner "Stop" can reach it).
+  const handleSelectSession = useCallback(async (session: SessionInfo) => {
+    setViewing(session);
+    try {
+      const res = await fetch(`${API_URL}/api/sessions/${session.id}/messages`);
+      if (res.ok) {
+        const data = await res.json();
+        const converted: ChatMessage[] = (data.messages ?? []).map((m: { role: string; text: string }) => {
+          const id = `hist_${Math.random().toString(36).slice(2, 10)}`;
+          if (m.role === "user") {
+            return { id, role: "user", text: m.text, blocks: [] };
+          }
+          return {
+            id,
+            role: "assistant",
+            blocks: [{ id: `${id}_b`, type: "text", content: m.text }],
+          };
+        });
+        loadMessages(converted);
+      }
+    } catch {
+      // network error — keep whatever we had; the banner still lets them return
+    }
+    if (session.thread_id) connectThread(session.thread_id);
+  }, [loadMessages, connectThread]);
+
+  // Stop a running/suspended session from the panel or the viewing banner.
+  // Goes through the backend abort endpoint (which closes the session's live
+  // connection) rather than this socket, since opening a session only attaches
+  // an idle viewer — the real run lives on its own connection.
+  const handleStopSession = useCallback(async (session: SessionInfo) => {
+    try {
+      await fetch(`${API_URL}/api/sessions/${session.id}/abort`, { method: "POST" });
+    } catch {
+      // backend unreachable — panel will refresh and show current state
+    }
+    if (viewing && viewing.id === session.id) setViewing(null);
+    await refreshProjects();
+  }, [refreshProjects, viewing]);
+
+  // Return from a session transcript view to a fresh live thread.
+  const handleReturnToLive = useCallback(() => {
+    setViewing(null);
+    clearMessages();
+  }, [clearMessages]);
 
   // New Session: clear messages (rolls a fresh thread) and drop attachments.
   // Settings (platform/language/mode/useWorktree/project) intentionally persist.
@@ -471,6 +525,7 @@ export function ChatInterface() {
     setAttachments([]);
     setMention(null);
     setPasteError(null);
+    setViewing(null);
     clearMessages();
   }, [isProcessing, clearMessages, attachments, revokeAttachment]);
 
@@ -556,6 +611,9 @@ export function ChatInterface() {
         onRemoveProject={handleRemoveProject}
         onExportProject={handleExportProject}
         onExportAll={handleExportAll}
+        onSelectSession={handleSelectSession}
+        onStopSession={handleStopSession}
+        activeSessionId={viewing?.id ?? null}
         exportBusy={exportBusy}
         notice={panelNotice}
         onDismissNotice={() => setPanelNotice(null)}
@@ -716,9 +774,40 @@ export function ChatInterface() {
         )}
 
         {/* Chat area */}
+        {viewing && (
+          <div className="flex items-center gap-2 px-6 py-2 border-b border-white/[0.06] bg-blue-500/[0.05] text-xs">
+            <span className="shrink-0 rounded-full bg-blue-500/15 px-2 py-0.5 text-blue-200 font-medium">
+              Viewing session
+            </span>
+            <span className="min-w-0 flex-1 truncate text-foreground/80" title={viewing.title}>
+              {viewing.title || "(untitled)"}
+            </span>
+            <span className="shrink-0 text-muted-foreground/60">{viewing.status}</span>
+            {viewing.status === "running" && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => handleStopSession(viewing)}
+                className="shrink-0 rounded-full hover:bg-red-500/10 hover:text-red-400"
+                title="Stop session"
+              >
+                <StopCircle size={16} />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleReturnToLive}
+              className="shrink-0 rounded-lg hover:bg-white/10"
+              title="Return to live session"
+            >
+              Return to live
+            </Button>
+          </div>
+        )}
         <ScrollArea className="flex-1">
           <div className="mx-auto max-w-3xl px-4 py-6 space-y-5">
-            {messages.length === 0 && !isProcessing && (
+            {messages.length === 0 && !isProcessing && !viewing && (
               <EmptyState onPick={setInput} />
             )}
 
@@ -743,6 +832,7 @@ export function ChatInterface() {
         </ScrollArea>
 
         {/* Input dock — message box on top, selector row inside the frame below */}
+        {!viewing && (
         <div className="px-4 pb-4 pt-2">
           <div className="mx-auto max-w-3xl">
             <div
@@ -949,6 +1039,7 @@ export function ChatInterface() {
             </p>
           </div>
         </div>
+          )}
       </div>
     </div>
   );

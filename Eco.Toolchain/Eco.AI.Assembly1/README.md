@@ -273,11 +273,28 @@ docker compose up --build
 - WebSocket: ws://localhost:8100/ws/chat
 
 **Volume Mounts in Docker Compose:**
-- `./marketplace_index.sqlite:/app/marketplace_index.sqlite` - RAG index (read-write)
-- `./marketplace_cache:/app/marketplace_cache` - Component cache (read-only)
+- `../..:/app:rw` - the **entire monorepo** (the dir owning `.git`) as one
+  unit, so the harness's git operations (`git worktree add`, etc.) resolve.
+  Mount the repo root, not `.git` alone. `working_dir` points at the nested
+  project, so the code is still reached correctly. Relative to this compose
+  file, so it works on any machine with the same checkout layout.
+- `${ECO_WORKTREE_HOST_DIR:-../../../Eco.AI.worktrees}:/repo-worktrees:rw` -
+  host worktree root; paired with `ECO_WORKTREE_ROOT=/repo-worktrees` so
+  created worktrees persist on disk. Default lands next to the monorepo root,
+  same as harness host runs; override per machine via `.env`. Note: host
+  `git worktree list` shows these entries as *prunable* (container-side paths
+  are recorded) — see the Worktree-mode setup note below.
+- `marketplace_index.sqlite` (read-write) plus read-only `marketplace_cache`,
+  `eco_framework`, and `config` overlays are mounted at their nested paths on
+  top of the monorepo mount (`config/:ro` keeps agent write tools away from
+  prompts/permission baselines; the UI settings pane writes
+  `.eco-harness/workspace.yaml`, which stays writable).
 - `../../../../Dist/eco-cli/eco-cli:/opt/eco-cli:ro` - eco-cli executable
 - `../../../../Dist/eco-cli/libaws-crt-jni.so:/opt/libaws-crt-jni.so:ro` - AWS CRT JNI library for eco-cli (no space before the colon)
 - `../../../../Dist/eco-wizard/eco-wizard:/opt/eco-wizard:ro` - eco-wizard executable
+- `api.environment` also sets `GIT_CONFIG_*=safe.directory=/app` so
+  root-in-container can operate on the host-owned repo (alternatively run as
+  your host uid — see the commented `user:` line in the compose).
 
 **Important:** The RAG index (`marketplace_index.sqlite`) is mounted read-write because the UI can update it through import functionality. The component cache (`marketplace_cache/`) is read-only as it contains pre-downloaded components.
 
@@ -369,9 +386,10 @@ the system prompt is included, preventing HTTP 400 overflow. `harness.yaml:
 source_roots` / `max_source_bytes` (300000) now drive the curated `Eco.Core1`
 stitch (see context injection below).
 
-Live vs baked config: `./agent`, `./backend`, `./config`, `./eco_harness`, and
-`./scripts` are bind-mounted into the api container, so edits apply on
-uvicorn reload / next request (dev compose).
+Live vs baked config: the **entire monorepo** is bind-mounted into the api
+container (see `docker-compose.yml`), so edits to `./agent`, `./backend`,
+`./config`, `./eco_harness`, and `./scripts` apply on uvicorn reload / next
+request (dev compose). `working_dir` targets the nested project dir.
 
 Precedence is:
 
@@ -798,9 +816,53 @@ directory search. The name and full path appear on a reference strip below
 the progress bar as soon as the worktree is created and stay visible until
 you press New session.
 
-> **Note:** the compose `api` container ships without `.git`, so Worktree
-> mode requires either a host-run backend or bind-mounting `.git` into
-> `/app` in `docker-compose.yml`.
+> **Container setup (Worktree mode):** the `api` container runs as **root**
+> while the repo is owned by your host user, so Worktree mode needs two things
+> in `docker-compose.yml` (all paths below are compose-relative, so the file
+> stays portable across machines):
+>
+> 1. Mount the **whole git repo root** (the directory that *contains* `.git`),
+>    not `.git` alone, as one volume — `../..:/app:rw`. A lone `.git` mount
+>    has no working tree beside it, so `git worktree add` fails. The nested
+>    project code is reached via `working_dir`.
+> 2. Bypass git's ownership check by setting in `api.environment`:
+>    `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=safe.directory`,
+>    `GIT_CONFIG_VALUE_0=/app` (scope it to the mounted repo path; `*` would
+>    disable the check for every path git touches). Alternatively run the
+>    container as your host uid — set `UID`/`GID` in `.env` and uncomment the
+>    `user:` line in the compose (note: wine re-inits its root-baked prefix on
+>    first use; `chown -R` any dirs a root-run container created first).
+>    Worktrees land under `/repo-worktrees`, backed by a host bind whose
+>    location is chosen per machine via `.env`: `ECO_WORKTREE_HOST_DIR=/abs/path`
+>    (default: `<monorepo>.worktrees` sibling of the repo root).
+>    **Pre-create that directory as your own user before the first
+>    `docker compose up`** (`mkdir -p ...`) — Docker silently auto-creates
+>    missing bind sources as root:root, and a typo'd path materializes an
+>    unintended root-owned dir with no error.
+>
+> **Host visibility caveat:** worktree metadata inside `.git/worktrees/`
+> records the *container* path (`/repo-worktrees/<name>`). On the host,
+> `git worktree list` shows those entries as **prunable** ("gitdir file points
+> to non-existent location") and host-side git operations against them fail.
+> The files themselves persist on disk at `ECO_WORKTREE_HOST_DIR`. Do NOT run
+> `git worktree prune` on the host — and know that automatic `git gc` prunes
+> missing-worktree entries older than `gc.worktreePruneExpire`
+> (default: 3.months.ago) too, silently orphaning container-created worktrees.
+> If you want host gc to keep them, set `git config gc.worktreePruneExpire
+> never`. For fully valid host-side entries, mount the host dir at an
+> identical absolute path inside the container and point the api service's
+> `ECO_WORKTREE_ROOT` env at that same path — override it via `.env` with
+> `ECO_WORKTREE_CONTAINER_ROOT=/that/same/path` (compose interpolates it;
+> editing `.env` is enough, no compose edit needed).
+
+> **Monorepo scoping:** `eco_harness.worktrees.create_worktree` always
+> resolves the **git toplevel** (the monorepo root that owns `.git`) — never
+> the nested project folder. The worktree is therefore a *full checkout of the
+> monorepo* and the session `project_dir` points at the worktree root, so the
+> agent operates at **monorepo scope**, not the nested-project scope. If you
+> need the agent confined to the nested project, scope `project_dir` to the
+> nested sub-path inside the worktree (a harness enhancement); the worktree
+> itself is always repo-wide.
 
 ```cmd
 python -m eco_harness run "Review this component" --mode review --worktree

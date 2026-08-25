@@ -48,6 +48,7 @@ frontend/node_modules/
 # Agent output
 output/
 traces/
+.playwright-mcp/
 
 # EcoOS CLI (193MB binary)
 eco.cli/

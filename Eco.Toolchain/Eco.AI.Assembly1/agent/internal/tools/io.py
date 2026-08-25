@@ -13,12 +13,12 @@ distinction that prevents the test-fudging anti-pattern.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from agent.internal.eco_agent import EcoTool, ToolResult
+from agent.internal.tools import paths
 from agent.internal.tools.common import (
     ensure_inside,
     ensure_inside_any,
@@ -152,7 +152,10 @@ def make_read_tools(project_dir: Path) -> list[EcoTool]:
     agents can inspect component headers there without falling back to the
     project_dir-only sandbox error. Write access stays strictly project_dir.
     """
-    cache_root = Path(os.environ.get("MARKETPLACE_CACHE_ROOT", "/app/marketplace_cache"))
+    # Same layered resolution as code_search (env override → repo-root cache
+    # → /app mount) so host runs and the nested-project container layout both
+    # resolve without env vars.
+    cache_root = paths.marketplace_cache_root()
     extra_roots = [cache_root] if cache_root.exists() else []
     return [
         EcoTool(

@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  StopCircle,
   Trash2,
   X,
 } from "lucide-react";
@@ -30,6 +31,12 @@ interface ProjectsPanelProps {
   onRemoveProject?: (project: ProjectInfo) => void;
   onExportProject?: (project: ProjectInfo, format: ExportFormat) => void;
   onExportAll?: (format: ExportFormat) => void;
+  // Open a session's transcript in the main view.
+  onSelectSession?: (session: SessionInfo) => void;
+  // Stop a running/suspended session (backend abort).
+  onStopSession?: (session: SessionInfo) => void;
+  // Currently opened session (highlighted in the list).
+  activeSessionId?: string | null;
   exportBusy?: boolean;
   notice?: string | null;
   onDismissNotice?: () => void;
@@ -53,6 +60,9 @@ export function ProjectsPanel({
   onRemoveProject,
   onExportProject,
   onExportAll,
+  onSelectSession,
+  onStopSession,
+  activeSessionId,
   exportBusy = false,
   notice,
   onDismissNotice,
@@ -234,7 +244,13 @@ export function ProjectsPanel({
                   className="ml-5 mt-1 space-y-0.5 overflow-hidden border-l border-white/[0.06] pl-3"
                 >
                   {project.sessions.map((session) => (
-                    <SessionRow key={session.id} session={session} />
+                    <SessionRow
+                      key={session.id}
+                      session={session}
+                      active={session.id === activeSessionId}
+                      onSelect={onSelectSession}
+                      onStop={onStopSession}
+                    />
                   ))}
                 </motion.div>
               )}
@@ -250,8 +266,7 @@ export function ProjectsPanel({
 // Card 3-dot menu: session export + remove-from-panel (visual only).
 // ────────────────────────────────────────────────────────────────────────────
 
-const REMOVE_BLOCKED_TITLE =
-  "Cannot remove the active project or one with running sessions";
+const REMOVE_BLOCKED_TITLE = "Cannot remove a project with a running session";
 const REMOVE_TITLE = "Projects can be re-added anytime; nothing is deleted";
 
 function useDismissable(open: boolean, close: () => void) {
@@ -290,8 +305,7 @@ function ProjectCardMenu({
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
   const wrapperRef = useDismissable(open, close);
-  const removeBlocked =
-    active || project.sessions.some((s) => s.status === "running");
+  const removeBlocked = project.sessions.some((s) => s.status === "running");
 
   return (
     <div ref={wrapperRef} className="absolute right-1.5 top-1.5 z-10">
@@ -478,19 +492,53 @@ function RailButton({
   );
 }
 
-function SessionRow({ session }: { session: SessionInfo }) {
+function SessionRow({
+  session,
+  active,
+  onSelect,
+  onStop,
+}: {
+  session: SessionInfo;
+  active?: boolean;
+  onSelect?: (session: SessionInfo) => void;
+  onStop?: (session: SessionInfo) => void;
+}) {
+  const running = session.status === "running";
   return (
     <div
-      className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/[0.04] transition-colors"
+      className={cn(
+        "group/session flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors",
+        active ? "bg-blue-500/[0.10]" : "hover:bg-white/[0.04]",
+      )}
       title={`${session.title}\nthread ${session.thread_id}`}
     >
-      <StatusDot status={session.status} />
-      <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/70">
-        {session.title || "(untitled)"}
-      </span>
-      <span className="shrink-0 text-[9px] uppercase tracking-wide text-muted-foreground/50">
-        {relativeTime(session.updated_at)}
-      </span>
+      <button
+        type="button"
+        onClick={() => onSelect?.(session)}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      >
+        <StatusDot status={session.status} />
+        <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/70">
+          {session.title || "(untitled)"}
+        </span>
+        <span className="shrink-0 text-[9px] uppercase tracking-wide text-muted-foreground/50">
+          {relativeTime(session.updated_at)}
+        </span>
+      </button>
+      {running && onStop && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onStop(session);
+          }}
+          title="Stop this session"
+          aria-label="Stop session"
+          className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-red-500/10 hover:text-red-400 group-hover/session:opacity-100"
+        >
+          <StopCircle className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }

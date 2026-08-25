@@ -1,3 +1,11 @@
 {
-  "$schema": "https://app.kilo.ai/config.json"
+  "$schema": "https://app.kilo.ai/config.json",
+  "workspace": {
+    // Укажите относительный путь вверх до корня монорепозитория, где лежит папка .git
+    "root_dir": "../../..", 
+    
+    // Включает принудительный поиск git-конфигурации строго от указанного корня
+    "git_fallback": true 
+  }
 }
+
