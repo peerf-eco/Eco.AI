@@ -98,7 +98,7 @@ canonical System → Bus → Component → Release flow is always in context. Th
 allocator is acquired by `QueryInterface` — **never** by calling
 `GetAllocator` on `IEcoMemoryManager1` (that method does not exist).
 
-```cpp
+```c
 /*
  * <character encoding> Cyrillic (UTF-8 with signature) - Codepage 65001 </character encoding>
  * <summary> Reference: ACOM application entry (EcoMain) </summary>
