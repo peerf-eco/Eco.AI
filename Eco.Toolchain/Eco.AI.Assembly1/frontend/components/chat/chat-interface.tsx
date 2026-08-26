@@ -519,6 +519,20 @@ export function ChatInterface() {
     clearMessages();
   }, [clearMessages]);
 
+  // Cancel/dismiss a historic or suspended session view and clear the window.
+  // If the session is still running, abort it first; otherwise just refresh the
+  // panel so its status reflects reality. Lets the user recover from a stuck or
+  // rejected run (e.g. one that never started) without a leftover spinner.
+  const handleCancelView = useCallback(() => {
+    if (viewing && viewing.status === "running") {
+      void handleStopSession(viewing);
+    } else {
+      void refreshProjects();
+    }
+    setViewing(null);
+    clearMessages();
+  }, [viewing, handleStopSession, refreshProjects, clearMessages]);
+
   // New Session: clear messages (rolls a fresh thread) and drop attachments.
   // Settings (platform/language/mode/useWorktree/project) intentionally persist.
   const handleNewSession = useCallback(() => {
@@ -802,6 +816,15 @@ export function ChatInterface() {
                 <StopCircle size={16} />
               </Button>
             )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCancelView}
+              className="shrink-0 rounded-lg hover:bg-white/10"
+              title="Cancel and clear this session view"
+            >
+              Cancel
+            </Button>
             <Button
               variant="ghost"
               size="sm"

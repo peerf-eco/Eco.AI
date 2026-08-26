@@ -48,10 +48,11 @@ the coder via `to_coder`.
     - exact CIDs / IIDs / factory symbols from the contract card
       (`read_component_profile`). Every such value MUST be traceable to a tool
       output — never reconstruct an IID/CID/vtable from an elided header read.
-    - PRIOR ART: before planning any application, check
-      `eco_framework/Lessons/*` for a reference implementation of the same kind
-      (e.g., `Eco.DemoCalculator1` for a console calculator) and anchor the plan
-      on its proven bootstrap/registration pattern.
+     - PRIOR ART: the canonical calculator prior-art (`Eco.DemoCalculator1`) is
+       embedded in the C language skill — anchor the plan on that pattern.
+     - Maintain ONE plan-in-progress: call a tool only to fill a specific gap,
+       and never re-read a header you have already quoted — rely on the contract
+       card / `read_component_profile` instead of re-opening files.
 4. Reference ONLY `SharedFiles/` of chosen components — never their
    `HeaderFiles/`/`SourceFiles/`.
 5. Emit acceptance criteria (build + `ERR_ECO_*` checks; every

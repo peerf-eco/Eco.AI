@@ -461,6 +461,11 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
 
       case "error": {
         setIsProcessing(false);
+        // A rejected request (e.g. "project_dir is outside the allowed roots")
+        // never started a session, so drop the pre-set phase highlight — otherwise
+        // the PhaseStepper keeps spinning on "planning" with nothing running.
+        setCurrentPhase(null);
+        setCompletedPhases([]);
         setMessages((prev) => appendBlock(prev, {
           id: newId("err"),
           type: "error",

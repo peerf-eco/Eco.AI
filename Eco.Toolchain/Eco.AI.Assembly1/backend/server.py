@@ -111,10 +111,40 @@ def _load_registry() -> dict:
         if isinstance(data, dict):
             data.setdefault("projects", [])
             data.setdefault("sessions", [])
+            # Repair paths recorded with a stale output-root prefix so the panel
+            # and subsequent runs point at the harness's current output root.
+            if _heal_registry_paths(data):
+                _save_registry(data)
             return data
     except (OSError, json.JSONDecodeError):
         pass
     return {"projects": [], "sessions": []}
+
+
+def _heal_registry_paths(registry: dict) -> bool:
+    """Re-anchor stored project/session paths that only differ from the current
+    output root by a stale prefix (cwd drift). Returns True if anything changed.
+
+    See ``_remap_to_output_root`` for the security reasoning: the remapped path
+    always lands inside the output root."""
+    changed = False
+    for entry in registry.get("projects", []):
+        raw = entry.get("path")
+        if not raw:
+            continue
+        fixed = str(_remap_to_output_root(Path(raw).expanduser()))
+        if fixed != str(raw):
+            entry["path"] = fixed
+            changed = True
+    for sess in registry.get("sessions", []):
+        raw = sess.get("project_path")
+        if not raw:
+            continue
+        fixed = str(_remap_to_output_root(Path(raw).expanduser()))
+        if fixed != str(raw):
+            sess["project_path"] = fixed
+            changed = True
+    return changed
 
 
 def _save_registry(registry: dict) -> None:
@@ -181,6 +211,31 @@ def _ensure_allowed(path: Path) -> Path:
                    f"HARNESS_ALLOWED_ROOTS): {path}",
         )
     return path.resolve()
+
+
+def _remap_to_output_root(candidate: Path) -> Path:
+    """Repair a project path recorded with a stale output-root prefix.
+
+    The output root resolves relative to the server's CWD, which can change
+    between runs (e.g. a container ``working_dir`` moved, or
+    ``HARNESS_OUTPUT_ROOT`` was overridden). Projects/sessions registered under
+    the old prefix (e.g. ``/app/output/chat-x``) then fall outside the allowed
+    roots and every new run that selects them is rejected before it starts —
+    surfacing as "project_dir is outside the allowed roots".
+
+    We only repair the specific drift where the path is ``<X>/output/<name>`` but
+    the harness now resolves its output root to a different ``<Y>/output``. This
+    keeps the security boundary intact: genuinely foreign paths (e.g.
+    ``/etc/secrets``) are left untouched and still rejected, while the remapped
+    result always lands inside the current output root."""
+    candidate = candidate.resolve()
+    if _is_within_allowed(candidate):
+        return candidate
+    if candidate.parent.name == "output":
+        alt = _output_root() / candidate.name
+        if _is_within_allowed(alt):
+            return alt
+    return candidate
 
 
 @app.get("/api/fs/browse")
@@ -777,6 +832,10 @@ async def harness_config():
             name: profile.model_dump()
             for name, profile in HARNESS_CONFIG.models.items()
         },
+        "providers": {
+            name: profile.model_dump()
+            for name, profile in HARNESS_CONFIG.providers.items()
+        },
         "modes": {
             name: {
                 "roles": spec.roles,
@@ -795,6 +854,10 @@ class WorkspaceConfigRequest(BaseModel):
     # on next load (see load_config). Shape mirrors ModelProfile plus the
     # profile name as the mapping key; a None value REMOVES the profile.
     models: dict[str, dict[str, Any] | None] = Field(default_factory=dict)
+    # User-defined LLM endpoints (local inference servers, self-hosted
+    # gateways). Named and referenced by ModelProfile.provider; a None value
+    # REMOVES the provider.
+    providers: dict[str, dict[str, Any] | None] = Field(default_factory=dict)
     # LLM permission policy: {"defaults": {...}, "roles": {<role>: {...}}}.
     permissions: dict[str, Any] = Field(default_factory=dict)
 
@@ -806,7 +869,7 @@ def _validate_workspace_sections(provided: dict[str, Any]) -> None:
     loader uses, so a bad payload is answered with a 400 at save time instead
     of a crashed harness at next restart.
     """
-    from agent.config.loader import LanguageSpec, ModelProfile, PermissionSpec, RoleSpec
+    from agent.config.loader import LanguageSpec, ModelProfile, PermissionSpec, ProviderProfile, RoleSpec
     from pydantic import ValidationError
 
     try:
@@ -817,6 +880,9 @@ def _validate_workspace_sections(provided: dict[str, Any]) -> None:
         for profile in (provided.get("models") or {}).values():
             if profile is not None:
                 ModelProfile(**profile)
+        for provider in (provided.get("providers") or {}).values():
+            if provider is not None:
+                ProviderProfile(**provider)
         permissions = provided.get("permissions") or {}
         defaults = permissions.get("defaults")
         if defaults is not None:
@@ -1052,7 +1118,7 @@ def _build_chat_model(config) -> Any:
     if profile is None:
         return None
     try:
-        return get_model(profile, role=None)
+        return get_model(profile, role=None, providers=config.providers)
     except Exception:
         logger.exception("chat model init failed")
         return None
@@ -1627,7 +1693,10 @@ async def chat_endpoint(websocket: WebSocket):
     thread_id = _safe_id(requested_thread_id) if requested_thread_id else str(uuid.uuid4())
 
     def _default_project_dir() -> Path:
-        return Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")) / f"chat-{thread_id[:8]}"
+        # Resolve to an absolute path under the output root so the stored
+        # project_path is stable regardless of the server's CWD.
+        return (Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")).resolve()
+                / f"chat-{thread_id[:8]}")
 
     project_dir = _default_project_dir()
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -1822,7 +1891,11 @@ async def chat_endpoint(websocket: WebSocket):
             # project by accident.
             requested_project = str(payload.get("project_dir") or "").strip()
             if requested_project:
-                candidate = Path(requested_project).expanduser().resolve()
+                # Tolerate a stale output-root prefix (cwd drift) — re-anchor to
+                # the current output root instead of rejecting the run before it
+                # even starts. Security boundary is preserved: the remapped path
+                # always stays inside the output root.
+                candidate = _remap_to_output_root(Path(requested_project).expanduser())
                 if not _is_within_allowed(candidate):
                     await websocket.send_json({
                         "type": "error",
@@ -1912,7 +1985,7 @@ async def chat_endpoint(websocket: WebSocket):
                     one_shot_role,
                     config=connection_config,
                     model=(
-                        _get_model(role_profile, role=one_shot_role)
+                        _get_model(role_profile, role=one_shot_role, providers=connection_config.providers)
                         if role_backend in {"internal", "builtin", "eco"}
                         else None
                     ),
@@ -2010,7 +2083,7 @@ async def chat_endpoint(websocket: WebSocket):
                     "architect",
                     config=connection_config,
                     model=(
-                        _get_model(architect_profile, role="architect")
+                        _get_model(architect_profile, role="architect", providers=connection_config.providers)
                         if architect_backend in {"internal", "builtin", "eco"}
                         else None
                     ),
@@ -2188,7 +2261,7 @@ async def chat_endpoint(websocket: WebSocket):
                 "coder",
                 config=connection_config,
                 model=(
-                    _get_model(coder_profile, role="coder")
+                        _get_model(coder_profile, role="coder", providers=connection_config.providers)
                     if coder_spec.backend.removesuffix("_cli")
                     in {"internal", "builtin", "eco"}
                     else None
@@ -2206,7 +2279,7 @@ async def chat_endpoint(websocket: WebSocket):
                 "tester",
                 config=connection_config,
                 model=(
-                    _get_model(tester_profile, role="tester")
+                        _get_model(tester_profile, role="tester", providers=connection_config.providers)
                     if tester_spec.backend.removesuffix("_cli")
                     in {"internal", "builtin", "eco"}
                     else None
@@ -2245,7 +2318,7 @@ async def chat_endpoint(websocket: WebSocket):
                     "reviewer",
                     config=connection_config,
                     model=(
-                        _get_model(reviewer_profile, role="reviewer")
+                        _get_model(reviewer_profile, role="reviewer", providers=connection_config.providers)
                         if reviewer_spec.backend.removesuffix("_cli")
                         in {"internal", "builtin", "eco"}
                         else None

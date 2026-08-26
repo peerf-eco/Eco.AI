@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import {
   Save, RotateCcw, DraftingCompass, Code2, FlaskConical, ScanEye, Cpu,
   ShieldCheck, Plus, Trash2, Pencil, Check, X, FileSearch, PenLine, Hammer,
-  Play, BookOpen, Layers, Globe, Terminal, Info, Bot,
+  Play, BookOpen, Layers, Globe, Terminal, Info, Bot, Server,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,15 @@ interface ModelProfile {
   provider_pin?: string | null;
 }
 
+// A custom LLM endpoint (local LM Studio / Ollama / vLLM server, self-hosted
+// gateway). Named and referenced from a ModelProfile.provider so a model can
+// route to a self-hosted inference server instead of OpenRouter.
+interface ProviderProfile {
+  base_url: string;
+  type?: string;
+  api_key_env?: string | null;
+}
+
 interface PermissionSpec {
   fs_read: boolean;
   fs_write: boolean;
@@ -76,6 +85,7 @@ interface ConfigResponse {
   roles?: Record<string, RoleSetting>;
   languages?: Record<string, LanguageSetting>;
   models?: Record<string, ModelProfile>;
+  providers?: Record<string, ProviderProfile>;
   permissions?: {
     defaults?: Partial<PermissionSpec>;
   };
@@ -104,13 +114,33 @@ const PERMISSION_GROUPS = [
 
 type PermissionKey = (typeof PERMISSION_GROUPS)[number]["key"];
 
-type TabId = "roles" | "models" | "access" | "rag";
+// Tooltip for the command allowlist (Harness defaults + per-role matrix).
+// Semantics mirror eco_harness/permissions.py: exact-token verbatim match,
+// comma-separated, "*" = allow all, empty = deny all.
+const COMMAND_ALLOWLIST_HELP = [
+  "Comma-separated list of allowed command tokens (e.g. make, build, eco-cli-find).",
+  "",
+  "• *  → allow every gated command (default).",
+  "• empty → deny every gated command.",
+  "• otherwise each token is matched VERBATIM — no prefixes, no wildcards, no regex",
+  "  (other than the single * above).",
+  "",
+  "Token checked per tool:",
+  "• run_build → the make TARGET (or 'make' for a default build).",
+  "• run_artifact → the artifact file's BASENAME.",
+  "• eco_cli → the SUBCOMMAND (first arg).",
+  "",
+  "Applies only to internal-backend roles; external CLI backends use their own policy.",
+].join("\n");
+
+type TabId = "roles" | "models" | "access" | "rag" | "providers";
 
 const TABS: { id: TabId; label: string; icon: typeof Code2 }[] = [
   { id: "roles", label: "Roles", icon: Code2 },
   { id: "models", label: "Models", icon: Cpu },
   { id: "access", label: "Access", icon: ShieldCheck },
   { id: "rag", label: "RAG", icon: BookOpen },
+  { id: "providers", label: "Providers", icon: Server },
 ];
 
 function clonePermissions(value: Partial<PermissionSpec> | undefined): PermissionSpec {
@@ -180,6 +210,10 @@ export function AgentSettings() {
   // ones) and repo-provided config/models.yaml stays authoritative for the
   // untouched entries.
   const [baselineModels, setBaselineModels] = useState<Record<string, ModelProfile>>({});
+  const [providers, setProviders] = useState<Record<string, ProviderProfile>>({});
+  // Server-provided provider registry snapshot — same diff/delta baseline as
+  // models: only user-added/edited/removed providers are persisted on save.
+  const [baselineProviders, setBaselineProviders] = useState<Record<string, ProviderProfile>>({});
   const [permDefaults, setPermDefaults] = useState<PermissionSpec>(DEFAULT_PERMISSIONS);
   const [permOverrides, setPermOverrides] = useState<Record<string, Partial<PermissionSpec>>>({});
   const [dirty, setDirty] = useState(false);
@@ -192,6 +226,8 @@ export function AgentSettings() {
     setLanguages(body.languages || {});
     setModels(body.models || {});
     setBaselineModels(body.models || {});
+    setProviders(body.providers || {});
+    setBaselineProviders(body.providers || {});
     const defaults = clonePermissions(body.permissions?.defaults);
     setPermDefaults(defaults);
     setPermOverrides(seedOverrides(body.roles || {}, defaults));
@@ -334,6 +370,21 @@ export function AgentSettings() {
       for (const name of Object.keys(baselineModels)) {
         if (!models[name]) modelPayload[name] = null;
       }
+      // Providers: same diff/delta baseline as models — new/edited endpoints
+      // are persisted, deleted ones are marked null, untouched stay owned by
+      // the workspace config on disk.
+      const providerPayload: Record<string, ProviderProfile | null> = {};
+      const canonicalProvider = (p: ProviderProfile) =>
+        JSON.stringify([p.base_url, p.type ?? "openai-compat", p.api_key_env ?? null]);
+      for (const [name, profile] of Object.entries(providers)) {
+        const baseline = baselineProviders[name];
+        if (!baseline || canonicalProvider(baseline) !== canonicalProvider(profile)) {
+          providerPayload[name] = profile;
+        }
+      }
+      for (const name of Object.keys(baselineProviders)) {
+        if (!providers[name]) providerPayload[name] = null;
+      }
       const response = await fetch(`${API_URL}/config/workspace`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -341,6 +392,7 @@ export function AgentSettings() {
           roles: rolePayload,
           languages,
           models: modelPayload,
+          providers: providerPayload,
           permissions: { defaults: permDefaults, roles: permOverrides },
         }),
       });
@@ -424,6 +476,7 @@ export function AgentSettings() {
           <ModelsSection
             models={models}
             modelUsage={modelUsage}
+            providers={providers}
             onChange={(next) => {
               setModels(next);
               markDirty();
@@ -459,7 +512,15 @@ export function AgentSettings() {
                 <div className="flex items-center gap-2.5 pt-1">
                   <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs font-medium">Command allowlist</div>
+                    <div className="flex items-center gap-1 text-xs font-medium">
+                      Command allowlist
+                      <span
+                        className="cursor-help text-muted-foreground/60"
+                        title={COMMAND_ALLOWLIST_HELP}
+                      >
+                        <Info className="h-3 w-3" />
+                      </span>
+                    </div>
                     <div className="truncate text-[10px] text-muted-foreground/60">
                       make targets · artifact names · eco-cli subcommands
                     </div>
@@ -506,6 +567,16 @@ export function AgentSettings() {
         )}
 
         {tab === "rag" && <RagSection onImported={markDirty} />}
+
+        {tab === "providers" && (
+          <ProvidersSection
+            providers={providers}
+            onChange={(next) => {
+              setProviders(next);
+              markDirty();
+            }}
+          />
+        )}
       </div>
 
       {/* Sticky save bar */}
@@ -648,12 +719,16 @@ function RoleCard({
 function ModelsSection({
   models,
   modelUsage,
+  providers,
   onChange,
 }: {
   models: Record<string, ModelProfile>;
   // model name → roles using it, precomputed by the parent (single pass over
   // roles) so each card renders without rescanning the role map.
   modelUsage: Map<string, string[]>;
+  // user-defined providers (custom local endpoints) — offered alongside the
+  // built-in PROVIDERS so a model can target a self-hosted inference server.
+  providers: Record<string, ProviderProfile>;
   onChange: (next: Record<string, ModelProfile>) => void;
 }) {
   const [adding, setAdding] = useState(false);
@@ -669,6 +744,7 @@ function ModelsSection({
             name={name}
             profile={profile}
             usedBy={modelUsage.get(name) || []}
+            providers={providers}
             editing={editing === name}
             onEdit={(open) => setEditing(open ? name : null)}
             onChange={(next) => onChange({ ...models, [name]: next })}
@@ -681,16 +757,17 @@ function ModelsSection({
           />
         ))}
 
-      {adding ? (
-        <ModelForm
-          existingNames={Object.keys(models)}
-          onCancel={() => setAdding(false)}
-          onSubmit={(name, profile) => {
-            onChange({ ...models, [name]: profile });
-            setAdding(false);
-          }}
-        />
-      ) : (
+        {adding ? (
+          <ModelForm
+            existingNames={Object.keys(models)}
+            providers={providers}
+            onCancel={() => setAdding(false)}
+            onSubmit={(name, profile) => {
+              onChange({ ...models, [name]: profile });
+              setAdding(false);
+            }}
+          />
+        ) : (
         <Button
           type="button"
           variant="outline"
@@ -706,11 +783,233 @@ function ModelsSection({
   );
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Providers
+// ────────────────────────────────────────────────────────────────────────────
+
+function ProvidersSection({
+  providers,
+  onChange,
+}: {
+  providers: Record<string, ProviderProfile>;
+  onChange: (next: Record<string, ProviderProfile>) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+
+  return (
+    <>
+      <p className="flex items-start gap-1.5 px-1 text-[11px] leading-relaxed text-muted-foreground/70">
+        <Info className="mt-0.5 h-3 w-3 shrink-0" />
+        <span>
+          Custom LLM endpoints for local inference (LM Studio, Ollama, vLLM) or
+          self-hosted gateways. Give a provider a name, point it at its OpenAI-compatible{" "}
+          <span className="font-mono text-foreground/70">/v1</span> URL, then pick it in a
+          model&apos;s <span className="font-mono text-foreground/70">Provider</span> field to route
+          that model there instead of OpenRouter.
+        </span>
+      </p>
+
+      {Object.entries(providers)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, profile]) => (
+          <ProviderCard
+            key={name}
+            name={name}
+            profile={profile}
+            editing={editing === name}
+            onEdit={(open) => setEditing(open ? name : null)}
+            onChange={(next) => onChange({ ...providers, [name]: next })}
+            onDelete={() => {
+              const next = { ...providers };
+              delete next[name];
+              onChange(next);
+              setEditing(null);
+            }}
+          />
+        ))}
+
+      {adding ? (
+        <ProviderForm
+          existingNames={Object.keys(providers)}
+          onCancel={() => setAdding(false)}
+          onSubmit={(name, profile) => {
+            onChange({ ...providers, [name]: profile });
+            setAdding(false);
+          }}
+        />
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setAdding(true)}
+          className="h-8 w-full rounded-lg border-dashed border-white/[0.12] bg-transparent text-xs text-muted-foreground hover:border-blue-500/40 hover:bg-blue-500/[0.06] hover:text-blue-200"
+        >
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          Add provider
+        </Button>
+      )}
+    </>
+  );
+}
+
+function ProviderCard({
+  name,
+  profile,
+  editing,
+  onEdit,
+  onChange,
+  onDelete,
+}: {
+  name: string;
+  profile: ProviderProfile;
+  editing: boolean;
+  onEdit: (open: boolean) => void;
+  onChange: (next: ProviderProfile) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+      <div className="flex items-center gap-2">
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-500/15">
+          <Server className="h-3.5 w-3.5 text-blue-300" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-semibold">{name}</div>
+          <div className="truncate font-mono text-[10px] text-muted-foreground/60">{profile.base_url}</div>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={() => onEdit(!editing)}
+          className="h-7 w-7 rounded-lg hover:bg-white/[0.08]"
+          aria-label={`Edit provider ${name}`}
+        >
+          {editing ? <X className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onDelete}
+          className="h-7 w-7 rounded-lg hover:bg-red-500/10 hover:text-red-400"
+          aria-label={`Remove provider ${name}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        <Badge>{profile.type || "openai-compat"}</Badge>
+        {profile.api_key_env && <Badge accent>key: {profile.api_key_env}</Badge>}
+      </div>
+      {editing && (
+        <div className="mt-3 space-y-2 border-t border-white/[0.06] pt-3">
+          <ProviderFormFields profile={profile} onChange={onChange} submitLabel="Done" onSubmit={() => onEdit(false)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProviderForm({
+  existingNames,
+  onCancel,
+  onSubmit,
+}: {
+  existingNames: string[];
+  onCancel: () => void;
+  onSubmit: (name: string, profile: ProviderProfile) => void;
+}) {
+  const [name, setName] = useState("");
+  const [profile, setProfile] = useState<ProviderProfile>({
+    base_url: "",
+    type: "openai-compat",
+    api_key_env: "",
+  });
+  const valid = name.trim().length > 0 && profile.base_url.trim().length > 0 && !existingNames.includes(name.trim());
+
+  return (
+    <div className="rounded-xl border border-blue-500/25 bg-blue-500/[0.04] p-3">
+      <div className="mb-2 text-xs font-semibold text-blue-200">New LLM provider</div>
+      <div className="space-y-2">
+        <Input
+          autoFocus
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Provider name (e.g. lm_studio)"
+          className={cn(fieldClass, "h-8")}
+          aria-label="Provider name"
+        />
+        <ProviderFormFields
+          profile={profile}
+          onChange={setProfile}
+          submitLabel="Add provider"
+          onSubmit={() => valid && onSubmit(name.trim(), { ...profile, api_key_env: profile.api_key_env || null })}
+        />
+        {!valid && name.trim() && existingNames.includes(name.trim()) && (
+          <p className="text-[10px] text-red-400">A provider with this name already exists.</p>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="mt-2 text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+function ProviderFormFields({
+  profile,
+  onChange,
+  onSubmit,
+  submitLabel,
+}: {
+  profile: ProviderProfile;
+  onChange: (next: ProviderProfile) => void;
+  onSubmit: () => void;
+  submitLabel: string;
+}) {
+  return (
+    <>
+      <Input
+        value={profile.base_url}
+        onChange={(event) => onChange({ ...profile, base_url: event.target.value })}
+        placeholder="Base URL (e.g. http://localhost:1234/v1)"
+        className={cn(fieldClass, "h-8 font-mono")}
+        aria-label="Provider base URL"
+      />
+      <Input
+        value={profile.api_key_env || ""}
+        onChange={(event) => onChange({ ...profile, api_key_env: event.target.value || null })}
+        placeholder="API key env var (optional, e.g. LM_STUDIO_KEY)"
+        className={cn(fieldClass, "h-8 font-mono")}
+        aria-label="Provider API key env var"
+        title="Name of the env var (in .env) holding the bearer token. Leave blank for local servers that need no key."
+      />
+      <Button
+        type="button"
+        size="sm"
+        onClick={onSubmit}
+        className="h-7 w-full rounded-lg bg-white/[0.08] text-xs hover:bg-white/[0.14]"
+      >
+        <Check className="mr-1.5 h-3 w-3" />
+        {submitLabel}
+      </Button>
+    </>
+  );
+}
+
 function ModelCard({
   name,
   profile,
   usedBy,
   editing,
+  providers,
   onEdit,
   onChange,
   onDelete,
@@ -719,6 +1018,7 @@ function ModelCard({
   profile: ModelProfile;
   usedBy: string[];
   editing: boolean;
+  providers: Record<string, ProviderProfile>;
   onEdit: (open: boolean) => void;
   onChange: (next: ModelProfile) => void;
   onDelete: () => void;
@@ -770,7 +1070,7 @@ function ModelCard({
       )}
       {editing && (
         <div className="mt-3 space-y-2 border-t border-white/[0.06] pt-3">
-          <ModelFormFields profile={profile} onChange={onChange} submitLabel="Done" onSubmit={() => onEdit(false)} />
+          <ModelFormFields profile={profile} providers={providers} onChange={onChange} submitLabel="Done" onSubmit={() => onEdit(false)} />
         </div>
       )}
     </div>
@@ -779,10 +1079,12 @@ function ModelCard({
 
 function ModelForm({
   existingNames,
+  providers,
   onCancel,
   onSubmit,
 }: {
   existingNames: string[];
+  providers: Record<string, ProviderProfile>;
   onCancel: () => void;
   onSubmit: (name: string, profile: ModelProfile) => void;
 }) {
@@ -811,6 +1113,7 @@ function ModelForm({
         />
         <ModelFormFields
           profile={profile}
+          providers={providers}
           onChange={setProfile}
           submitLabel="Add model"
           onSubmit={() => valid && onSubmit(name.trim(), { ...profile, provider_pin: profile.provider_pin || null })}
@@ -832,11 +1135,13 @@ function ModelForm({
 
 function ModelFormFields({
   profile,
+  providers,
   onChange,
   onSubmit,
   submitLabel,
 }: {
   profile: ModelProfile;
+  providers: Record<string, ProviderProfile>;
   onChange: (next: ModelProfile) => void;
   onSubmit: () => void;
   submitLabel: string;
@@ -860,6 +1165,11 @@ function ModelFormFields({
           {PROVIDERS.map((provider) => (
             <option key={provider} value={provider}>{provider}</option>
           ))}
+          {Object.keys(providers)
+            .filter((provider) => !PROVIDERS.includes(provider))
+            .map((provider) => (
+              <option key={provider} value={provider}>{provider} (custom)</option>
+            ))}
         </select>
         <select
           value={profile.reasoning}
@@ -1007,7 +1317,7 @@ const PermissionMatrix = memo(function PermissionMatrix({
           ))}
           <tr className="border-t border-white/[0.04]">
             <td className="py-2 pr-2">
-              <div className="flex items-center gap-1.5" title="Command allowlist for this role">
+              <div className="flex items-center gap-1.5" title={COMMAND_ALLOWLIST_HELP}>
                 <Terminal className="h-3 w-3 shrink-0 text-muted-foreground/70" />
                 <span className="truncate text-[10px]">Commands</span>
               </div>

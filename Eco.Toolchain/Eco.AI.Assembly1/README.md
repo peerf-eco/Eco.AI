@@ -426,7 +426,7 @@ optional cost ceilings.
 
 ## Settings panel
 
-The gear icon opens the settings sidebar with four tabs. Everything it saves
+The gear icon opens the settings sidebar with five tabs. Everything it saves
 lands in `.eco-harness/workspace.yaml` (the workspace override layer) and is
 picked up by new sessions — running pipelines keep the config they started
 with. One **Save settings** button persists all tabs; **Discard** reloads the

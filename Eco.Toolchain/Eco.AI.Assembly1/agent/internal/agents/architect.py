@@ -12,6 +12,7 @@ from agent.internal.tools.code_search import make_code_search_tools
 from agent.internal.tools.eco_cli import make_eco_cli_tool
 from agent.internal.tools.profile_cache import make_read_component_profile_tool
 from agent.internal.tools.rag import make_search_marketplace_tool
+from agent.internal.tools.plan_validator import validate_closed_plan, plan_block_reason
 
 
 # Fallback only. The editable source of truth is config/prompts/architect.md;
@@ -102,7 +103,7 @@ def make_architect(
         ),
         make_fail_tool(),
     ]
-    return EcoAgent(
+    agent = EcoAgent(
         model=model,
         system_prompt=ARCHITECT_SYSTEM_PROMPT,
         tools=tools,
@@ -114,4 +115,27 @@ def make_architect(
         trace_label="architect",
         on_event=on_event,
     )
+
+    def _plan_gate(name: str, args_obj):
+        """Block `to_coder` when the plan violates ACOM closed-plan rules."""
+        if name != "to_coder":
+            return None
+        if isinstance(args_obj, dict):
+            msg = args_obj.get("message", "") or ""
+        else:
+            dump = getattr(args_obj, "model_dump", lambda: {})()
+            msg = (dump.get("message", "") if isinstance(dump, dict) else "") or ""
+        reason = plan_block_reason(msg)
+        if reason is not None:
+            return {"block": True, "reason": reason}
+        # Valid -> persist plan.md to the project root for human review.
+        try:
+            Path(project_dir).mkdir(parents=True, exist_ok=True)
+            (Path(project_dir) / "plan.md").write_text(msg, encoding="utf-8")
+        except OSError:
+            pass  # non-fatal: handoff still proceeds
+        return None
+
+    agent.before_tool_call = _plan_gate
+    return agent
 

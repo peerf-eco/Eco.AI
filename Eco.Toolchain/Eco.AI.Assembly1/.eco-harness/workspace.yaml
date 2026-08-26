@@ -1,0 +1,52 @@
+roles:
+  architect:
+    backend: internal
+    model: reasoning_heavy
+    reasoning: high
+  coder:
+    backend: internal
+    model: coding_balanced
+    reasoning: medium
+  tester:
+    backend: internal
+    model: cheap_fast
+    reasoning: low
+  reviewer:
+    backend: internal
+    model: cheap_fast
+    reasoning: medium
+languages:
+  C:
+    prompt: prompts/languages/C.md
+    skill_versions:
+      acom_framework: '1'
+    eco_wizard: C
+  CPP:
+    prompt: prompts/languages/CPP.md
+    skill_versions:
+      acom_framework: '1'
+    eco_wizard: CPP
+  Python:
+    prompt: prompts/languages/Python.md
+    skill_versions:
+      acom_framework: '1'
+    eco_wizard: Python
+  Java:
+    prompt: prompts/languages/Java.md
+    skill_versions:
+      acom_framework: '1'
+    eco_wizard: Java
+models: {}
+providers: {}
+permissions:
+  defaults:
+    fs_read: true
+    fs_write: true
+    build: true
+    execute: true
+    rag_search: true
+    skills: true
+    network: true
+    commands:
+    - '*'
+  roles: {}
