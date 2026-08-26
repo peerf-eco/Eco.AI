@@ -71,6 +71,7 @@ class EventType(str, Enum):
     DONE           = "done"
     NO_TOOL_CALL   = "no_tool_call"
     MAX_ITERS      = "max_iters"
+    USAGE          = "usage"             # per-LLM-call token accounting (data.usage)
     ERROR          = "error"
 
 
@@ -97,6 +98,39 @@ class EcoAgentResult:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _usage_data(response) -> dict:
+    """pi_ai Usage -> plain dict for the USAGE event. Tolerates providers that
+    omit usage entirely (empty dict) so the UI can ignore the event."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {}
+    if isinstance(usage, dict):
+        source = usage
+    else:
+        model_dump = getattr(usage, "model_dump", None)
+        source = model_dump() if callable(model_dump) else {
+            field: getattr(usage, field, 0)
+            for field in ("input", "output", "cacheRead", "cacheWrite", "totalTokens")
+        }
+    def _int(value) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+    input_t = _int(source.get("input"))
+    output_t = _int(source.get("output"))
+    if not any((_int(source.get(k)) for k in ("input", "output", "cacheRead", "cacheWrite", "totalTokens"))):
+        return {}
+    return {
+        "input": input_t,
+        "output": output_t,
+        "cache_read": _int(source.get("cacheRead")),
+        "cache_write": _int(source.get("cacheWrite")),
+        # Some providers omit totalTokens — fall back to input+output.
+        "total": _int(source.get("totalTokens")) or (input_t + output_t),
+    }
 
 
 def _normalize_seed(seed) -> list:
@@ -356,6 +390,9 @@ class EcoAgent:
 
             # Append the assistant turn (even if it ended in error) to history.
             history.append(resp)
+
+            # Per-call token accounting for the UI stepper (phase/total counters).
+            self._emit(EventType.USAGE, {"usage": _usage_data(resp)})
 
             # Stream-level error (HTTP fail, abort, etc.) — surface as agent error.
             if resp.stopReason in ("error", "aborted"):

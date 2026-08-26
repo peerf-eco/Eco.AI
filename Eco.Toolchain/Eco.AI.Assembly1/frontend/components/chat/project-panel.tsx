@@ -205,26 +205,21 @@ export function ProjectsPanel({
                   <FolderClosed className="h-3.5 w-3.5" />
                 </div>
                 <div className="min-w-0 flex-1 pr-4">
-                  <div
-                    className={cn(
-                      "truncate text-xs font-medium",
-                      active ? "text-foreground" : "text-muted-foreground",
-                    )}
-                  >
-                    {project.name}
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <ProjectStatusDot project={project} selected={active} />
+                    <div
+                      className={cn(
+                        "truncate text-xs font-medium",
+                        active ? "text-foreground" : "text-muted-foreground",
+                      )}
+                    >
+                      {project.name}
+                    </div>
                   </div>
                   <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/50">
                     {project.path}
                   </div>
                 </div>
-                <span
-                  className={cn(
-                    "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
-                    active
-                      ? "bg-blue-400 shadow-[0_0_6px_rgba(96,165,250,0.6)]"
-                      : "bg-zinc-600",
-                  )}
-                />
               </button>
 
               <ProjectCardMenu
@@ -552,6 +547,44 @@ function StatusDot({ status }: { status: SessionStatus }) {
     idle: "bg-zinc-500",
   };
   return <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", cls[status])} />;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Project-card status light (left of the project name). Precedence:
+// selected > has running sessions > has suspended session > idle only.
+// ────────────────────────────────────────────────────────────────────────────
+
+function ProjectStatusDot({
+  project,
+  selected,
+}: {
+  project: ProjectInfo;
+  selected: boolean;
+}) {
+  const hasRunning = project.sessions.some((s) => s.status === "running");
+  const hasSuspended = project.sessions.some((s) => s.status === "aborted");
+  const cls = selected
+    ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"
+    : hasRunning
+      ? "bg-blue-400 shadow-[0_0_6px_rgba(96,165,250,0.6)]"
+      : hasSuspended
+        ? "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.45)]"
+        : "bg-zinc-600";
+  const label = selected
+    ? "Selected project"
+    : hasRunning
+      ? "Has active sessions"
+      : hasSuspended
+        ? "Has suspended session"
+        : "Inactive sessions only";
+  return (
+    <span
+      className={cn("h-1.5 w-1.5 shrink-0 rounded-full", cls)}
+      title={label}
+      aria-label={label}
+      role="img"
+    />
+  );
 }
 
 function relativeTime(iso: string): string {
