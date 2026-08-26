@@ -11,6 +11,7 @@ import type {
   WorkingMode,
   Attachment,
 } from "./types";
+import { initialPhaseForMode, type PhaseTokenMap, type TokenStat } from "./types";
 
 export interface WorktreeRef {
   name: string;
@@ -126,6 +127,9 @@ export interface UseHarnessSocketResult {
   isProcessing: boolean;
   currentPhase: HarnessPhase | null;
   completedPhases: HarnessPhase[];
+  // Token counters for the phase stepper: per-phase buckets + session total.
+  phaseTokens: PhaseTokenMap;
+  totalTokens: TokenStat;
   threadId: string | null;
   // Set when the backend creates an isolated worktree for this session;
   // kept until New session so the name/path stays available for reference.
@@ -162,6 +166,8 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentPhase, setCurrentPhase] = useState<HarnessPhase | null>(null);
   const [completedPhases, setCompletedPhases] = useState<HarnessPhase[]>([]);
+  const [phaseTokens, setPhaseTokens] = useState<PhaseTokenMap>({});
+  const [totalTokens, setTotalTokens] = useState<TokenStat>({ input: 0, output: 0, total: 0 });
   const [threadId, setThreadId] = useState<string | null>(null);
   const [worktree, setWorktree] = useState<WorktreeRef | null>(null);
 
@@ -280,10 +286,39 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
         return;
       }
 
+      case "usage": {
+        // Bucket this LLM call's tokens into the phase that was running.
+        const u = ev.usage ?? { input: 0, output: 0 };
+        const total = u.total ?? (u.input ?? 0) + (u.output ?? 0);
+        if (!total) return;
+        const phase = ev.phase;
+        setPhaseTokens((prev) => {
+          const cur = prev[phase] ?? { input: 0, output: 0, total: 0 };
+          return {
+            ...prev,
+            [phase]: {
+              input: cur.input + (u.input ?? 0),
+              output: cur.output + (u.output ?? 0),
+              total: cur.total + total,
+            },
+          };
+        });
+        setTotalTokens((prev) => ({
+          input: prev.input + (u.input ?? 0),
+          output: prev.output + (u.output ?? 0),
+          total: prev.total + total,
+        }));
+        return;
+      }
+
       case "pipeline_done": {
         setIsProcessing(false);
         if (currentPhase) {
           setCompletedPhases((p) => (p.includes(currentPhase) ? p : [...p, currentPhase]));
+        }
+        // Success lights the terminal "End" step in the stepper.
+        if (ev.status === "success") {
+          setCompletedPhases((p) => (p.includes("done") ? p : [...p, "done"]));
         }
         setMessages((prev) => {
           const collapsed = finalizeActiveStreaming(prev);
@@ -540,8 +575,10 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
       { id: newId("msg"), role: "user", text: trimmed, blocks: [], attachments },
     ]);
     setIsProcessing(true);
-    setCurrentPhase("planning");
+    setCurrentPhase(initialPhaseForMode(opts?.mode));
     setCompletedPhases([]);
+    setPhaseTokens({});
+    setTotalTokens({ input: 0, output: 0, total: 0 });
     send({
       type: "user_request",
       user_request: trimmed,
@@ -623,6 +660,8 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     setMessages([]);
     setCurrentPhase(null);
     setCompletedPhases([]);
+    setPhaseTokens({});
+    setTotalTokens({ input: 0, output: 0, total: 0 });
     setWorktree(null);
     if (typeof window !== "undefined") {
       sessionStorage.removeItem(THREAD_ID_KEY);
@@ -643,6 +682,8 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     setIsProcessing(false);
     setCurrentPhase(null);
     setCompletedPhases([]);
+    setPhaseTokens({});
+    setTotalTokens({ input: 0, output: 0, total: 0 });
     setWorktree(null);
   }, []);
 
@@ -652,6 +693,8 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     isProcessing,
     currentPhase,
     completedPhases,
+    phaseTokens,
+    totalTokens,
     threadId,
     worktree,
     sendUserRequest,

@@ -41,7 +41,7 @@ static int16_t ECOCALLMETHOD CEcoCalculatorAFactory_QueryInterface(IEcoComponent
     }
     ((IEcoUnknown*)(*ppv))->pVTbl->AddRef((IEcoUnknown*)*ppv);
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 /*

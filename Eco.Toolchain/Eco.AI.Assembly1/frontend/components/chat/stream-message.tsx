@@ -32,6 +32,7 @@ const NODE_ICON: Record<PipelineNode, React.ComponentType<{ className?: string }
   coder:      Code2,
   builder:    Hammer,
   tester:     FlaskConical,
+  reviewer:   FlaskConical,
   escalate:   AlertCircle,
 };
 
@@ -42,6 +43,7 @@ const NODE_LABEL: Record<PipelineNode, string> = {
   coder:      "Coder",
   builder:    "Builder",
   tester:     "Tester",
+  reviewer:   "Reviewer",
   escalate:   "Escalation",
 };
 

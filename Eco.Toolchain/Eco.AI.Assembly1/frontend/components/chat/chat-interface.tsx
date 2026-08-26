@@ -454,6 +454,8 @@ export function ChatInterface() {
     isProcessing,
     currentPhase,
     completedPhases,
+    phaseTokens,
+    totalTokens,
     threadId,
     worktree,
     sendUserRequest,
@@ -749,8 +751,14 @@ export function ChatInterface() {
           </div>
         </header>
 
-        {/* Phase stepper */}
-        <PhaseStepper currentPhase={currentPhase} completedPhases={completedPhases} />
+        {/* Phase stepper — steps + token counters follow the working mode */}
+        <PhaseStepper
+          mode={mode}
+          currentPhase={currentPhase}
+          completedPhases={completedPhases}
+          phaseTokens={phaseTokens}
+          totalTokens={totalTokens}
+        />
 
         {/* Worktree reference strip — appears once the backend isolates this
             session into its own git worktree; stays visible after completion

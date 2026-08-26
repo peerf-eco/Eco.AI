@@ -230,7 +230,7 @@ static int16_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_QueryInterf
         *ppv = 0;
         return ERR_ECO_NOINTERFACE;
     }
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 [!endif]
 }
 
@@ -320,7 +320,7 @@ static int16_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_MyFunction(
     pCMe->Fire_OnMyCallback(pCMe, pCMe->m_Name);
 
 [!endif]
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 [!if ADD_AGGREGATION_INNER]
@@ -351,7 +351,7 @@ static int16_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_Nondelegati
         *ppv = 0;
         return ERR_ECO_NOINTERFACE;
     }
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 static uint32_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_NondelegatingAddRef(/* in */ I[FIX_PROJECT_NAME]Ptr_t me) {
@@ -425,7 +425,7 @@ static int16_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_IEcoXXXX_Qu
         *ppv = 0;
         return ERR_ECO_NOINTERFACE;
     }
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 static uint32_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_IEcoXXXX_AddRef(/* in */ struct IEcoXXXX* me) {
@@ -493,7 +493,7 @@ static int16_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_IEcoConnect
         return ERR_ECO_NOINTERFACE;
     }
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 static uint32_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_IEcoConnectionPointContainer_AddRef(/* in */ struct IEcoConnectionPointContainer* me) {
@@ -572,7 +572,7 @@ static int16_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_IEcoConnect
     pCMe->m_pISinkCP->m_pVTblICP->AddRef((IEcoConnectionPointPtr_t)&pCMe->m_pISinkCP->m_pVTblICP);
     *ppCP = (IEcoConnectionPointPtr_t)&pCMe->m_pISinkCP->m_pVTblICP;
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 static int16_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]_I[FIX_PROJECT_NAME]Events_Fire_OnMyCallback(/* in */ struct C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]* me, /* in */ char_t* Name) {
@@ -650,7 +650,7 @@ static int16_t ECOCALLMETHOD initC[FIX_PROJECT_NAME][GUID_CID_NAMESPACE](/*in*/ 
     pCMe->m_pISinkCP->Create(pCMe->m_pISinkCP, (IEcoUnknownPtr_t)pCMe->m_pISys);
     result = pCMe->m_pISinkCP->Init(pCMe->m_pISinkCP, (IEcoUnknownPtr_t)pCMe->m_pISys, (IEcoConnectionPointContainerPtr_t)&pCMe->m_pVTblICPC, &IID_I[FIX_PROJECT_NAME]Events);
     if (result == 0 && pCMe->m_pISinkCP != 0) {
-        result = ERR_ECO_SUCCESES;
+        result = ERR_ECO_SUCCESS;
     }
 [!endif]
 
@@ -698,7 +698,7 @@ static int16_t ECOCALLMETHOD createC[FIX_PROJECT_NAME][GUID_CID_NAMESPACE](/* in
     pCMe->m_pIXXXX = 0;
 [!endif]
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 static void ECOCALLMETHOD deleteC[FIX_PROJECT_NAME][GUID_CID_NAMESPACE](/* in */ C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]Ptr_t pCMe) {
@@ -828,7 +828,7 @@ static int16_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]Factory_Quer
     }
     ((IEcoUnknown*)(*ppv))->pVTbl->AddRef((IEcoUnknown*)*ppv);
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 static uint32_t ECOCALLMETHOD C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]Factory_AddRef(/* in */ IEcoComponentFactory* me) {
@@ -1412,7 +1412,7 @@ static int16_t ECOCALLMETHOD createC[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]Connec
     }
 
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 static void ECOCALLMETHOD deleteC[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]ConnectionPoint(/*in*/ C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]ConnectionPointPtr_t pCMe) {
@@ -1590,7 +1590,7 @@ static int16_t ECOCALLMETHOD createC[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumCo
     }
 
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 static void ECOCALLMETHOD deleteC[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumConnectionPoints(/*in*/ C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumConnectionPointsPtr_t pCMe) {
@@ -1853,7 +1853,7 @@ static int16_t ECOCALLMETHOD createC[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumCo
     }
 
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 static void ECOCALLMETHOD deleteC[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumConnections(/* in */ C[FIX_PROJECT_NAME][GUID_CID_NAMESPACE]EnumConnections* pCMe) {

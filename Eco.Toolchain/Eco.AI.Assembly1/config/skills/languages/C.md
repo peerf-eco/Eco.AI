@@ -82,7 +82,7 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
 - Every function and vtable method has a function-header comment.
 - Every interface method validates `me` and output pointers vs `NULL` first:
   `if (me == NULL || ppv == NULL) return ERR_ECO_POINTER;`
-- Return `ERR_ECO_SUCCES`, `ERR_ECO_POINTER`, `ERR_ECO_NOINTERFACE` as fitting.
+- Return `ERR_ECO_OK`, `ERR_ECO_POINTER`, `ERR_ECO_NOINTERFACE` as fitting.
 
 # 9. GENERATION PROTOCOL
 - Prefer `eco-wizard` for project/component/app scaffolding when available.
@@ -134,11 +134,11 @@ int16_t EcoMain(IEcoUnknown* pIUnk) {
     }
     /* 1. System -> Bus (IEcoSystem1 comes from Eco.Core1, via pIUnk) */
     result = pIUnk->pVTbl->QueryInterface(pIUnk, &GID_IEcoSystem, (void**)&pISys);
-    if (result != ERR_ECO_SUCCES || pISys == 0) {
+    if (result != ERR_ECO_OK || pISys == 0) {
         goto Release;
     }
     result = pISys->pVTbl->QueryInterface(pISys, &IID_IEcoInterfaceBus1, (void**)&pIBus);
-    if (result != ERR_ECO_SUCCES || pIBus == 0) {
+    if (result != ERR_ECO_OK || pIBus == 0) {
         goto Release;
     }
     /* 2. Register statically-linked components (factory symbols, no CID for Eco.System1) */

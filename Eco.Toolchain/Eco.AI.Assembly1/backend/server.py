@@ -1674,8 +1674,14 @@ async def chat_endpoint(websocket: WebSocket):
         _record_session_end(thread_id, project_dir, status)
 
     # Preserve stable node identifiers expected by the client.
-    PHASE_OF = {"architect": "planning", "coder": "coding",  "tester": "testing"}
-    NODE_OF  = {"architect": "planner",  "coder": "coder",   "tester": "tester"}
+    PHASE_OF = {
+        "architect": "planning", "coder": "coding",
+        "tester": "testing",     "reviewer": "review",
+    }
+    NODE_OF  = {
+        "architect": "planner",  "coder": "coder",
+        "tester": "tester",      "reviewer": "reviewer",
+    }
 
     loop = asyncio.get_event_loop()
 
@@ -1744,6 +1750,16 @@ async def chat_endpoint(websocket: WebSocket):
                     await websocket.send_json({
                         "type": "node_done",
                         "node": NODE_OF.get(agent, "planner"),
+                    })
+            elif etype == "usage":
+                # Per-LLM-call token accounting for the phase stepper counters.
+                usage = (ev.data or {}).get("usage") or {}
+                if usage:
+                    await websocket.send_json({
+                        "type":  "usage",
+                        "node":  NODE_OF.get(agent, "planner"),
+                        "phase": PHASE_OF.get(agent, "planning"),
+                        "usage": usage,
                     })
             elif etype == "error":
                 reason = (ev.data or {}).get("reason", "")
@@ -1907,6 +1923,7 @@ async def chat_endpoint(websocket: WebSocket):
                     marketplace_cache_root=marketplace_cache_root,
                     mode=mode,
                     trace_dir=trace_dir,
+                    on_event=_make_on_event(ev_queue, one_shot_role),
                 )
                 ev_queue = asyncio.Queue()
                 try:

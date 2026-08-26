@@ -26,15 +26,15 @@
 
 /*
  * <код ошибки>
- *   ERR_ECO_SUCCESES
+ *   ERR_ECO_SUCCESS
  * </код ошибки>
  *
  * <описание>
  *   Выполнено успешно.
  * </описание>
  */
-#define ERR_ECO_SUCCESES                0x0000
-#define ERR_ECO_OK                      ERR_ECO_SUCCESES
+#define ERR_ECO_SUCCESS                 0x0000
+#define ERR_ECO_OK                      ERR_ECO_SUCCESS
 
 /*
  * <код ошибки>
