@@ -19,5 +19,7 @@ Your migration workflow:
 
 The architect produces the module→ACOM mapping plan; you (human) review it via
 the HITM gate; the coder refactors the selected module(s) into ACOM components
-and builds; the tester verifies. Use eco-wizard for any generated project
-structure. Do not discard existing code or rewrite unrelated modules.
+and builds; the read-only ACOM reviewer inspects the produced source for ABI
+contract conformance, correctness, and deploy safety; the tester verifies the
+built artifact against the acceptance criteria. Use eco-wizard for any generated
+project structure. Do not discard existing code or rewrite unrelated modules.

@@ -2224,11 +2224,55 @@ async def chat_endpoint(websocket: WebSocket):
             # coder.to_architect is terminated — we don't restart the planner
             # from inside the sub-orchestrator (user already approved the plan;
             # if coder thinks the plan is wrong, it should fail honestly).
-            from agent.internal.entry import EXECUTION_EDGES, EXECUTION_ENTRY
+            from agent.internal.entry import (
+                EXECUTION_EDGES,
+                EXECUTION_ENTRY,
+                MIGRATE_EDGES,
+            )
+
+            if mode == "migrate":
+                # Migrate inserts a read-only ACOM reviewer between the coder
+                # and the tester. The coder's `to_tester` handoff card is the
+                # reviewer's compact seed — it carries the artifact path, the
+                # acceptance criteria, and the list of source files written, so
+                # the reviewer inspects only what was produced (no tree-wide
+                # bloat). The reviewer forwards to the tester (or back to the
+                # coder on critical findings) via its own handoff tools.
+                _, reviewer_spec, reviewer_profile = load_role_config(
+                    "reviewer", connection_config.root,
+                )
+                reviewer = make_role_agent(
+                    "reviewer",
+                    config=connection_config,
+                    model=(
+                        _get_model(reviewer_profile, role="reviewer")
+                        if reviewer_spec.backend.removesuffix("_cli")
+                        in {"internal", "builtin", "eco"}
+                        else None
+                    ),
+                    cli_path=cli_path,
+                    project_dir=project_dir,
+                    make_exe=make_exe,
+                    language=language,
+                    marketplace_cache_root=marketplace_cache_root,
+                    mode=mode,
+                    pipeline=True,
+                    trace_dir=trace_dir,
+                    on_event=_make_on_event(ev_queue, "reviewer"),
+                )
+                sub_agents = {
+                    "coder": coder,
+                    "reviewer": reviewer,
+                    "tester": tester,
+                }
+                sub_edges = MIGRATE_EDGES
+            else:
+                sub_agents = {"coder": coder, "tester": tester}
+                sub_edges = EXECUTION_EDGES
 
             sub_orch = Orchestrator(
-                agents={"coder": coder, "tester": tester},
-                edges=EXECUTION_EDGES,
+                agents=sub_agents,
+                edges=sub_edges,
                 entry=EXECUTION_ENTRY,
                 max_hops=connection_config.max_hops,
                 seed_builders=seed_builders,

@@ -187,8 +187,18 @@ handoff and check whether you're authoring files that match the
   ## How to invoke
   <command-line args? stdin? environment vars?>
 
+  ## Source files written
+  <every source/header/Makefile YOU authored, absolute paths, one per line>
+  <in migrate mode this list is the reviewer's review scope — be complete
+   and precise so the reviewer inspects exactly these files, not the tree>
+
   ## Build log highlights
   <one or two lines: which Makefile target was used, anything notable>
+
+NOTE: in `migrate` mode your `to_tester` handoff is consumed first by the
+read-only ACOM reviewer (which inspects the "Source files written" list), then
+forwarded to the tester. In `auto` mode it goes straight to the tester. Either
+way, the card content is identical — keep it self-contained.
 
 === When to escalate ===
 

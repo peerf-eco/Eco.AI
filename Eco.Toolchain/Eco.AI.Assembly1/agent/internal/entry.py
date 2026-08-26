@@ -43,6 +43,25 @@ EXECUTION_EDGES: dict[str, dict[str, Optional[str]]] = {
     "tester": {"to_coder":  "coder",  "done":         None, "fail": None},
 }
 
+# Migrate-mode post-approval topology: coder → REVIEWER → tester.
+# The reviewer is a read-only ACOM code reviewer inserted between the coder
+# and the runtime tester, so every migrated/created component gets an explicit
+# contract + correctness + deploy-safety review before verification. It keeps
+# the coder's `to_tester` handoff name unchanged — the edge simply targets the
+# reviewer instead of the tester, so the coder prompt needs no per-mode branch.
+# Backward edges:
+#   reviewer.to_coder → coder   — critical findings sent back for a fix cycle
+#   tester.to_coder   → coder   — failing artifact loops back through the coder
+#                                    (which re-enters the reviewer after the fix)
+# The reviewer is deliberately cheap + read-only and receives only the coder's
+# compact handoff card as its seed, so it adds a review pass without bloating
+# the coder's or tester's context.
+MIGRATE_EDGES: dict[str, dict[str, Optional[str]]] = {
+    "coder":    {"to_tester": "reviewer", "to_architect": None, "fail": None},
+    "reviewer": {"to_tester": "tester",   "to_coder": "coder",  "fail": None},
+    "tester":   {"to_coder":  "coder",    "done":         None,  "fail": None},
+}
+
 PIPELINE_ENTRY = "architect"
 EXECUTION_ENTRY = "coder"
 
