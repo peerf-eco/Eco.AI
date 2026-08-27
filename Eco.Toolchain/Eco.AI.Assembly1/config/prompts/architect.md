@@ -210,8 +210,14 @@ researching the marketplace/cache or call `fail`:
       and no `CID_EcoSystem1` symbol in the plan.** `Eco.System1` is a
       linked library, not an ACOM component — it has no CID and is
       never registered on the bus.
-- [ ] `Eco.FileSystemManagement1` is included ONLY if file I/O is
-      performed.
+- [ ] **`Eco.FileSystemManagement1` is unconditional for any application.**
+      Per docs/C-lang_coder_for_ACOM_rules.md §"Minimum Required Stack",
+      the unikernel loads FSMgmt at startup regardless of whether the app
+      does file I/O. The linker dead-strips unused code paths. Do NOT
+      quote the older rule that "FSMgmt is included only if file I/O is
+      performed" — that rule is obsolete (it was the previous
+      architecture decision before the validator made FSMgmt mandatory,
+      but the rule was never propagated through the rest of the docs).
 - [ ] **Allocator acquired by `QueryInterface`**, never by
       `GetAllocator` on `IEcoMemoryManager1` (the method does not
       exist).

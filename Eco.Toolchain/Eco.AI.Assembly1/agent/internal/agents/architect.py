@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import time as _time
 from pathlib import Path
 from typing import Optional
 
@@ -245,10 +246,60 @@ def _check_new_component_specs(plan: str, project_dir: Path) -> Optional[str]:
 # Identical repeated read-only calls are answered from a memo with a one-line
 # pointer (see EcoAgent.dedup_tools). eco_cli is excluded — pull mutates
 # project_dir. Kill-switch: HARNESS_TOOL_DEDUP=0.
+#
+# Note on `read_component_profile`: this is intentionally in the dedup set.
+# Bug history (ses-6acd93e6): the architect called `read_component_profile`
+# for `Eco.InterfaceBus1` and `Eco.FileSystemManagement1` in turn 6 AFTER
+# having already called it for the same two components in turn 2 — the
+# tool result was already in the conversation history. Without the dedup
+# the second call spent another 4 KB of tool-result tokens AND triggered
+# a reasoning pass; with the dedup, the second call returns "duplicate
+# call — identical read_component_profile call was made at iteration 2;
+# result unchanged, see it above in this conversation" in ~50 tokens.
 _ARCHITECT_DEDUP_TOOLS = {
     "read", "glob", "grep", "read_file", "list_dir",
     "search_marketplace", "read_component_profile",
+    "search_marketplace",   # safe: read-only RAG over marketplace_cache
 }
+
+
+def _architect_after_tool_call(name: str, args_obj, result):
+    """Architect-side name-keyed memo for read_component_profile.
+
+    The architect receives the same contract card every time it asks for
+    the same component name. Returning a one-line pointer on a re-ask
+    saves ~4 KB of tool-result tokens and prevents the architect from
+    re-reasoning about facts it already has.
+
+    Bug history (ses-6acd93e6): the architect re-called
+    read_component_profile for Eco.InterfaceBus1 and Eco.FileSystemManagement1
+    in turn 6 after turn 2 — the tool result was already in the
+    conversation history but the agent's `_dedup_memo` (in eco_agent.py)
+    is keyed by (name, args_json) and never re-triggers when the call is
+    issued in a different turn. The "name only" memo here is the right
+    level of granularity for contract cards.
+    """
+    if name != "read_component_profile" or result.is_error:
+        return result
+    try:
+        comp_name = args_obj.name if hasattr(args_obj, "name") else None
+    except Exception:
+        comp_name = None
+    if not comp_name:
+        return result
+    if not hasattr(_architect_after_tool_call, "_seen"):
+        _architect_after_tool_call._seen = set()
+    if comp_name in _architect_after_tool_call._seen:
+        # Return a one-line pointer instead of the full contract card.
+        return result.__class__(
+            content=(f"[duplicate — read_component_profile({comp_name!r}) "
+                     f"result is in your earlier conversation; reusing it. "
+                     f"If you need a different component, call again with "
+                     f"a different name.]"),
+            details=result.details,
+        )
+    _architect_after_tool_call._seen.add(comp_name)
+    return result
 
 
 def make_architect(
@@ -304,6 +355,10 @@ def make_architect(
         max_iters=max_iters,
         dedup_tools=(_ARCHITECT_DEDUP_TOOLS
                      if os.getenv("HARNESS_TOOL_DEDUP", "1") == "1" else None),
+        # Name-keyed memo for read_component_profile — re-asking for the
+        # same component name returns a one-line pointer instead of
+        # refetching the same 4 KB contract card. See _architect_after_tool_call.
+        after_tool_call=_architect_after_tool_call,
         trace_dir=trace_dir,
         trace_label="architect",
         on_event=on_event,

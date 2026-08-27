@@ -75,6 +75,30 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
 - Link the platform `Eco.System1` **system library** for applications — default
   `StaticRelease` (see the ACOM domain block for the two variants). It has no
   CID and is never registered on the bus.
+- **Eco.System1 statically links AND INTERNALLY REFERENCES the Interface Bus
+  factory** (`GetIEcoComponentFactoryPtr_<bus CID>`). Even when the
+  application code never calls the bus directly, the bus `.a` MUST be
+  on the link line — the unikernel's microkernel calls
+  `pIBus->QueryComponent(...)` during startup, before `EcoMain` runs.
+  The C89 prior-art calculator below demonstrates this: line 1 of
+  "Register statically-linked components" registers the bus factory
+  by calling `RegisterComponent(pIBus, &CID_EcoInterfaceBus1, …)` —
+  the bus symbol must be linked for the linker to resolve that call.
+  Bug history: the `ses-6acd93e6` (sin/cos) plan asserted "Interface
+  Bus has no separate .a" and the link failed with `undefined
+  reference to GetIEcoComponentFactoryPtr_00000000000000000000000042757331`.
+  The fix was to add `lib…42757331.a` to the link line.
+- **ACOM app code uses ONLY Eco.Framework components and glue code
+  (or new components you author).** No `<math.h>`, no glibc, no
+  standard-library calls. The math component's *object code*
+  internally references libm (`cos`, `sin`, `pow`, etc.) and the
+  linker needs `-lm`; that libm dependency is invisible to your
+  source. Use `-std=gnu89` (NOT strict `-std=c89`) because the
+  EcoOS devkit headers legitimately use C++-style `//` comments and
+  some have their own (empty) `#define HUGE_VAL` that conflicts with
+  ISO C90 — GNU89 accepts the vendor headers while keeping your
+  source C89-style. Reference: `make -pn` on a working `MakefileExe`
+  shows the exact `-lm` link line.
 
 # 7a. TARGET TRIPLE (mandatory plan field)
 - The architect's seed always carries a `=== Target triple ===` block with

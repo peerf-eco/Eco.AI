@@ -105,6 +105,54 @@ def _registry_path() -> Path:
     return _output_root() / ".harness-registry.json"
 
 
+def _sweep_legacy_nested_app_dirs(output_root: Path) -> list[Path]:
+    """Detect leftover `--app/...` nested project dirs from pre-fix runs.
+
+    Bug history (ses-9257ff60 → ses-6acd93e6): the previous
+    implementation of `_default_project_dir` used
+    `Path("./output").resolve()`, which is CWD-relative. When the server
+    was started with CWD = an old project's working dir, the new default
+    project_dir became nested INSIDE the old one as
+    `output/<old_project>/output/<old_project>/--app/Eco.Toolchain/...`.
+    The eco-wizard then wrote the new project's files into that nested
+    tree, and subsequent runs picking up the same project saw TWO project
+    trees and spent 8 turns on directory exploration.
+
+    The fix in `_default_project_dir` and the trace-dir construction
+    anchors paths to the repo root, preventing NEW nesting. This sweep
+    detects EXISTING nested residue so the user (and the panel) can
+    clean it up explicitly. It does NOT auto-delete; the user must
+    decide whether the nested tree contains work to keep.
+
+    The function is a pure walker: it returns a list of `Path`s whose
+    basename is literally "--app". The caller can then log a warning,
+    list them in the project panel, or add a one-click "delete" button.
+    """
+    if not output_root or not output_root.is_dir():
+        return []
+    candidates: list[Path] = []
+    for top in output_root.iterdir():
+        if not top.is_dir() or top.name != "--app":
+            continue
+        # Only flag --app dirs that look like the CWD-nesting bug
+        # (i.e. they contain a path-shaped subdir with >= 2 segments).
+        try:
+            subdirs = [d for d in top.iterdir() if d.is_dir()]
+        except OSError:
+            continue
+        if not subdirs:
+            continue
+        # Heuristic: at least one of the children has a subdir that
+        # contains another "output" subdir (the recursive nesting
+        # signature).  No need to be exact — false positives just show
+        # up as "candidate" in the panel.
+        for d in subdirs:
+            if any(c.is_dir() and c.name == "output" for c in d.iterdir()):
+                candidates.append(top)
+                break
+    return candidates
+
+
 def _load_registry() -> dict:
     try:
         data = json.loads(_registry_path().read_text(encoding="utf-8"))
@@ -456,18 +504,46 @@ async def fs_search(
 async def list_projects():
     """Whitelisted projects with their grouped sessions.
 
-    Only folders explicitly registered by the user (registry["projects"]) are
-    visible in the panel — session paths and legacy output/chat-* dirs are no
-    longer materialized as projects. Sessions whose project_path is not
-    whitelisted simply don't render; their records stay in the registry.
+    ALSO returns a `legacy_nested_app_dirs` list — empty when there is no
+    residue. The frontend shows a yellow "leftover state" banner when
+    the list is non-empty, with a one-click "delete" button (the delete
+    endpoint is `POST /api/projects/cleanup-legacy`).
+    """
+    output_root = _output_root()
+    legacy_dirs = _sweep_legacy_nested_app_dirs(output_root)
+    if legacy_dirs:
+        # Log once per request — the user can hit /api/projects/cleanup
+        # next to actually delete the trees. Logging the resolved paths
+        # helps the user verify they are the expected ones.
+        import logging as _logging
+        for d in legacy_dirs:
+            _logging.getLogger(__name__).warning(
+                "legacy nested --app dir detected: %s "
+                "(use POST /api/projects/cleanup-legacy to remove)",
+                d,
+            )
+    return {
+        "projects": _build_project_list(),
+        "legacy_nested_app_dirs": [str(d) for d in legacy_dirs],
+    }
 
-    Each session in the response is enriched with the trace-bookkeeping fields
-    (trace_dir, trace_last_file, trace_last_error, trace_call_count) so the
-    left panel can render the `ses-` chip + the hover tooltip + the copy-to-
-    clipboard button WITHOUT a second round trip per session. Computing
-    _session_trace_meta() is cheap (a listdir per session + at most one 4 KB
-    read); for a typical project with N≤20 sessions the whole request is
-    under a millisecond on warm disk.
+
+def _build_project_list() -> list[dict]:
+    """Whitelisted projects with their grouped sessions.
+
+    Only folders explicitly registered by the user (registry["projects"])
+    are visible in the panel — session paths and legacy output/chat-* dirs
+    are no longer materialized as projects. Sessions whose project_path
+    is not whitelisted simply don't render; their records stay in the
+    registry.
+
+    Each session in the response is enriched with the trace-bookkeeping
+    fields (trace_dir, trace_last_file, trace_last_error, trace_call_count)
+    so the left panel can render the `ses-` chip + the hover tooltip + the
+    copy-to-clipboard button WITHOUT a second round trip per session.
+    Computing _session_trace_meta() is cheap (a listdir per session + at
+    most one 4 KB read); for a typical project with N<=20 sessions the
+    whole request is under a millisecond on warm disk.
     """
     registry = _load_registry()
     whitelisted: dict[str, dict] = {
@@ -492,7 +568,38 @@ async def list_projects():
         enriched = [{**s, **_session_trace_meta(s)} for s in proj_sessions]
         result.append({**entry, "sessions": enriched})
     result.sort(key=lambda p: (p.get("added_at") or ""), reverse=True)
-    return {"projects": result}
+    return result
+
+
+@app.post("/api/projects/cleanup-legacy")
+async def cleanup_legacy_nested_app_dirs():
+    """Delete the legacy `--app/...` nested project dirs that the
+    startup sweep detected on the last GET /api/projects call.
+
+    Safety: any --app tree that contains a `plan.md` newer than 24 h is
+    PRESERVED (the user may be mid-session). Trees that contain only
+    generated source from a completed/aborted run are removed.
+
+    Returns the list of removed dirs and the list of preserved dirs.
+    """
+    import shutil as _shutil
+    import time as _time
+    output_root = _output_root()
+    legacy_dirs = _sweep_legacy_nested_app_dirs(output_root)
+    now = _time.time()
+    removed: list[str] = []
+    preserved: list[str] = []
+    for d in legacy_dirs:
+        plan = d / "plan.md"
+        if plan.is_file() and (now - plan.stat().st_mtime) < 24 * 3600:
+            preserved.append(str(d))
+            continue
+        try:
+            _shutil.rmtree(d)
+            removed.append(str(d))
+        except OSError as e:
+            preserved.append(f"{d} (rmtree failed: {e})")
+    return {"removed": removed, "preserved": preserved}
 
 
 @app.post("/api/projects")

@@ -66,8 +66,18 @@ _QUERY_SYSTEM1 = re.compile(r"QueryComponent\s*\([^)]*Eco\.System1")
 _BOOTSTRAP_TOKENS = ("EcoMain", "GID_IEcoSystem", "IID_IEcoInterfaceBus1")
 _SUCCESES_TYPO = re.compile(r"ERR_ECO_SUCCESES")
 # Target-triple block. Required so the plan does not invent the OS/arch.
+#
+# Accepts any heading whose first non-whitespace word after "##" is
+# "Target" — case-insensitive, with or without a trailing colon, with
+# or without a clarifying parenthetical ("(verbatim from seed)").
+# The strict end-anchor previously rejected valid paraphrases and forced
+# the architect to re-emit the plan with no semantic change.
+# (Bug history: ses-6acd93e6 turn 4 was blocked for "## Target triple
+# (verbatim from seed)" and turn 8 re-emitted with the exact form
+# required, wasting 2 turns and ~22 K reasoning tokens.)
 _TARGET_TRIPLE = re.compile(
-    r"^##\s*Target triple\s*$", re.MULTILINE
+    r"^##\s*[Tt]arget\s+[Tt]riple\b[^\n]*$",
+    re.MULTILINE,
 )
 # 32-hex CID with optional underscores around it (table cells often write
 # `000000000000000000000000XXXXXXXX`). The validator looks at the
@@ -269,13 +279,16 @@ def validate_closed_plan(plan: str) -> list[Violation]:
         vios.append(Violation(
             "block",
             "Plan has a Marketplace Component table but is missing the "
-            "`## Base framework (devkits)` block. Every ACOM application plan "
-            "must list Eco.Core1 (the mandatory base devkit — already in the "
-            "eco_framework tree) here, with the prebuilt dir `Eco.Core1/SharedFiles/` "
-            "and the GID `000000000000000000000000000000AA` (or the trailing "
-            "8 hex from the profile). The coder includes headers from that "
-            "dir; this is the path-anchored equivalent of the marketplace "
-            "table for things that are NOT pulled via `eco-cli pull -c`.",
+            "`## Base framework (devkits)` block. The exact required form is:\n"
+            "\n"
+            "    ## Base framework (devkits)\n"
+            "    - Eco.Core1 (GID 000000000000000000000000000000AA): <path>/Eco.Core1/SharedFiles/\n"
+            "    - Eco.System1 (no CID, GID 00000000000000000000000053595333): <path>/lib...53595333.a\n"
+            "\n"
+            "Every ACOM application plan must list Eco.Core1 here. The coder "
+            "includes headers from Eco.Core1/SharedFiles/; this is the "
+            "path-anchored equivalent of the marketplace table for things that "
+            "are NOT pulled via `eco-cli pull -c`.",
         ))
 
     # --- Hard: new-component spec naming -----------------------------------
@@ -302,6 +315,30 @@ def validate_closed_plan(plan: str) -> list[Violation]:
             "Consult with ErrEcoCodes.h, where:\n"
             "#define ERR_ECO_SUCCESS                 0x0000\n"
             "#define ERR_ECO_OK                      ERR_ECO_SUCCESS",
+        ))
+
+    # --- Hard: bus .a is required even when the app does not call it ----
+    # Bug history (ses-6acd93e6 turn 29): the plan stated "Interface Bus
+    # has no separate .a, get it via QueryInterface". The build then failed
+    # with `undefined reference to
+    # GetIEcoComponentFactoryPtr_00000000000000000000000042757331` because
+    # Eco.System1's object code internally references the bus factory
+    # (the unikernel's microkernel queries the bus for its services on
+    # startup, before EcoMain runs). The coder had to fix the link line
+    # in turn 30. Catch this at plan-validation time.
+    if has_table and re.search(
+        r"Interface\s*Bus\b[^\n]*(?:has no\s+separate\s+\.a|no separate|no\s+\.a file|no lib)",
+        plan or "", re.IGNORECASE,
+    ):
+        vios.append(Violation(
+            "block",
+            "Plan claims the Interface Bus has no separate .a file. This is "
+            "WRONG: Eco.System1 is statically linked and its object code "
+            "internally references the bus factory "
+            "`GetIEcoComponentFactoryPtr_<CID>` on startup. The bus .a MUST "
+            "be on the link line even when your app never calls the bus "
+            "directly. Fix: list `Eco.InterfaceBus1` in the marketplace table "
+            "and add its `.a` to the link line.",
         ))
 
     return vios
