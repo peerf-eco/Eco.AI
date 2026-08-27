@@ -76,6 +76,29 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
   `StaticRelease` (see the ACOM domain block for the two variants). It has no
   CID and is never registered on the bus.
 
+# 7a. TARGET TRIPLE (mandatory plan field)
+- The architect's seed always carries a `=== Target triple ===` block with
+  three user-selected values: `OS` (Linux/Windows/Mac/iOS/Android/EcoOS),
+  `arch` (x86_64/x86/arm64/arm64-v8a/rv64gcv/mips/mips64/avr), and
+  `build_variant` (StaticRelease | DynamicRelease). The plan must:
+  (a) copy those three values into a `## Target triple` section verbatim;
+  (b) include the **literal `.a` path** for every linked component and for
+  the `Eco.System1` unikernel; (c) include the **exact
+  `GID_IEcoSystem_<arch>` UGUID** the app must `QueryInterface` on
+  `pIUnk` (read it once from `Eco.Core1/SharedFiles/IEcoSystem1.h` and
+  quote the line number in the plan). Never `glob('**/BuildFiles/**/*.a')`
+  across the whole marketplace — that wastes a tool call and truncates.
+- If the user did not provide a triple, the plan must FAIL the closed-plan
+  gate and call `fail` with a clear message rather than guess.
+
+# 7b. ASCII-ONLY IN SOURCE LITERALS
+- All `.c` / `.h` / `Makefile` content is 7-bit ASCII. UTF-8 BOM is required
+  for the file header (per §1) but every other byte must be ASCII. No
+  Unicode in `printf` / `scanf` format strings, in identifier names, or in
+  test-expected output. Plan-time narrative MAY use Unicode (e.g.
+  `F≈98.60`); the coder must rewrite it as ASCII (`F~98.60` or
+  `F=98.60`) before pasting it into a string literal.
+
 # 8. HEADER / DOC DISCIPLINE
 - Every file starts with the standard file-header comment block (author,
   UTF-8 BOM encoding, summary, description, reference).

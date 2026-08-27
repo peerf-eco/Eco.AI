@@ -195,3 +195,72 @@ def make_write_tools(project_dir: Path) -> list[EcoTool]:
         ),
     ]
 
+
+def make_architect_spec_write_tool(project_dir: Path) -> list[EcoTool]:
+    """Sandboxed write for the architect: ONLY ``project_dir/docs/specs/``.
+
+    The architect must not author source code (no pre-writing what the coder
+    is supposed to write), but it does need a way to dump per-new-component
+    IDL / business-logic specs to disk so the plan handoff stays small and
+    a future parallel-coders orchestrator can read one spec per worker. This
+    factory is the load-bearing capability gate: the tool refuses to write
+    anywhere outside ``docs/specs/`` regardless of what the prompt tells the
+    model.
+    """
+    specs_root = (project_dir / "docs" / "specs").resolve()
+
+    def _write_spec(args: _WriteArgs) -> ToolResult:
+        # Resolve under project_dir first (so relative paths anchor correctly),
+        # then enforce the specs/ prefix. This mirrors the existing
+        # ``ensure_inside`` double-check pattern: capability gating that
+        # doesn't trust the prompt.
+        p = resolve_inside_any([project_dir], args.path)
+        if p is None or not ensure_inside(project_dir, p):
+            return ToolResult(content=_outside_msg(args.path, project_dir), is_error=True)
+        # Hard scope: must be inside docs/specs/.
+        try:
+            p_resolved = p.resolve()
+        except OSError as e:
+            return ToolResult(content=f"resolve failed for '{args.path}': {e}", is_error=True)
+        if not (p_resolved == specs_root or specs_root in p_resolved.parents):
+            return ToolResult(
+                content=(
+                    f"Path '{args.path}' is outside the architect's writable scope "
+                    f"({specs_root}). The architect may ONLY write to "
+                    f"project_dir/docs/specs/ — a path-anchored, capability-gated "
+                    f"write, NOT a free write_file. Use this tool to author one "
+                    f"markdown spec per new component; the coder reads them later."
+                ),
+                is_error=True,
+            )
+        try:
+            p_resolved.parent.mkdir(parents=True, exist_ok=True)
+            p_resolved.write_text(args.content, encoding="utf-8")
+        except OSError as e:
+            return ToolResult(content=f"write failed for '{args.path}': {e}", is_error=True)
+        return ToolResult(
+            content=f"wrote {len(args.content)} bytes to {p_resolved.as_posix()}",
+            details={"path": p_resolved.as_posix(), "bytes": len(args.content)},
+        )
+
+    return [
+        EcoTool(
+            name="write_spec",
+            description=(
+                "Sandboxed write for the architect: create or overwrite a file "
+                f"inside {specs_root}. Parent directories are created "
+                "automatically. The path MUST be relative to project_dir and "
+                "begin with 'docs/specs/' (e.g. 'docs/specs/Eco.MyNewThing.md'). "
+                "Any other path is refused. Use this tool to author one "
+                "markdown spec per new reusable component the plan introduces; "
+                "the plan then lists the spec path and the coder reads the "
+                "file directly. This keeps the to_coder handoff under the "
+                "HARNESS_PLAN_HANDOFF_MAX_BYTES budget even when there are "
+                "many new components and enables parallel coders (one spec "
+                "per worker)."
+            ),
+            args_schema=_WriteArgs,
+            execute=_write_spec,
+        ),
+    ]
+

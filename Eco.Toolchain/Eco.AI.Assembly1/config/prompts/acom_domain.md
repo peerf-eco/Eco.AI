@@ -37,17 +37,25 @@ stack (these are REQUIRED, not optional — do not omit them, and do not add the
 "by rote" either; they are the baseline the contract depends on):
 
 - `Eco.InterfaceBus1`: interface bus services (component discovery / registration).
-- `Eco.MemoryManager1`: memory manager services (core allocation). NOTE the
-  correct spelling is `Eco.MemoryManager1` (with double `n` in `Manager`) —
-  do NOT use a misspelling such as `MemoryManger`.
+- `Eco.MemoryManager1`: memory manager services (core allocation).
 - `Eco.FileSystemManagement1`: filesystem services — include when the component
   performs file I/O.
 - `Eco.System1`: the system LIBRARY (not an ACOM component — no CID; its
   binary is a GID-named static lib) that provides the real platform `main()`
   which calls the application's `EcoMain` entry, plus system services
-  (`IEcoSystemInformation1`, `IEcoCommandArguments1`). APPLICATIONS
-  statically link the platform-specific `Eco.System1` library; plain
-  components and libraries never have an entry point and never link it.
+  (`IEcoSystemInformation1`, `IEcoCommandArguments1`). The library is
+  actually a unikernel: it ships a minimal ACOM microkernel that has the
+  Interface Bus built-in as its main, passive code path. The Interface
+  Bus itself has no compute process of its own and therefore cannot register itself — it is a passive piece of
+  microkernel that other components register into. So
+  `Eco.System1` likewise does NOT register itself on the bus; the
+  application code (and the `EcoMain` glue) is what
+  `RegisterComponent`'s the actually-running ACOM components on top of
+  the unikernel's built-in bus. APPLICATIONS statically link the
+  platform-specific `Eco.System1` library; plain components and static libraries
+  never have an entry point and never link it. The unikernel is never
+  pulled with `eco_cli` with CID (only by marketplace id first found by Name) and never `RegisterComponent`-ed — it is just
+  linked, and the target OS resolves its `main()` symbol.
 
 Include ONLY the `SharedFiles/` subfolder of each framework/dependency package
 (the public API). Never read or compile another package's `HeaderFiles/` or

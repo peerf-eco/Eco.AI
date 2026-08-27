@@ -228,8 +228,19 @@ def session_turns(session: dict, traces_root: Path) -> list[dict]:
     raw_id = str(session.get("id", ""))
     if not re.fullmatch(r"[A-Za-z0-9_-]+", raw_id):
         return []
-    folder = (Path(traces_root) / f"chat-{raw_id}").resolve()
     root = Path(traces_root).resolve()
+    # Minimal-first-cut naming: the canonical dir is `ses-<id>` but the
+    # legacy `chat-<id>` is still readable so old exports keep working.
+    # Try the new dir first; fall back to the legacy one.
+    candidates = [
+        (root / f"ses-{raw_id}").resolve(),
+        (root / f"chat-{raw_id}").resolve(),
+    ]
+    folder = next(
+        (c for c in candidates
+         if str(c).startswith(str(root) + os.sep) and c.is_dir()),
+        candidates[0],
+    )
     if not str(folder).startswith(str(root) + os.sep):
         return []
     acc: list[dict] = []

@@ -495,6 +495,13 @@ export interface SessionInfo {
   created_at: string;
   updated_at: string;
   status: SessionStatus;
+  // Optional trace-bookkeeping fields (returned by /api/sessions/{id}/trace
+  // and surfaced on /api/sessions/{id}/messages since the ses- prefix
+  // minimal-first-cut). All optional so older payloads keep parsing.
+  trace_dir?: string;
+  trace_last_file?: string | null;
+  trace_last_error?: string | null;
+  trace_call_count?: number;
 }
 
 export interface ProjectInfo {

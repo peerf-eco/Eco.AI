@@ -7,6 +7,7 @@ import {
   FileText,
   FolderClosed,
   FolderDown,
+  FolderSearch,
   MoreVertical,
   PanelLeftClose,
   PanelLeftOpen,
@@ -35,6 +36,10 @@ interface ProjectsPanelProps {
   onSelectSession?: (session: SessionInfo) => void;
   // Stop a running/suspended session (backend abort).
   onStopSession?: (session: SessionInfo) => void;
+  // Copy a session's trace dir path to the clipboard (minimal-first-cut
+  // affordance for the ses- naming; full "open in file browser" comes
+  // in a follow-up).
+  onCopyTracePath?: (traceDir: string) => void;
   // Currently opened session (highlighted in the list).
   activeSessionId?: string | null;
   exportBusy?: boolean;
@@ -62,6 +67,7 @@ export function ProjectsPanel({
   onExportAll,
   onSelectSession,
   onStopSession,
+  onCopyTracePath,
   activeSessionId,
   exportBusy = false,
   notice,
@@ -245,6 +251,7 @@ export function ProjectsPanel({
                       active={session.id === activeSessionId}
                       onSelect={onSelectSession}
                       onStop={onStopSession}
+                      onCopyTracePath={onCopyTracePath}
                     />
                   ))}
                 </motion.div>
@@ -492,20 +499,38 @@ function SessionRow({
   active,
   onSelect,
   onStop,
+  onCopyTracePath,
 }: {
   session: SessionInfo;
   active?: boolean;
   onSelect?: (session: SessionInfo) => void;
   onStop?: (session: SessionInfo) => void;
+  onCopyTracePath?: (traceDir: string) => void;
 }) {
   const running = session.status === "running";
+  // Minimal-first-cut: prepend the `ses-` prefix to the session id so the
+  // panel id and the on-disk trace dir name are visually identical
+  // (sessions live in traces/ses-<id8>/ — the project panel id is the
+  // same 8 chars). The full UUID is still in the tooltip for forensics.
+  const sessionRef = `ses-${session.id}`;
+  // Tooltip is the primary affordance for "where is the trace on disk?".
+  // Multi-line so power users can copy either line separately.
+  const tipLines = [
+    session.title || "(untitled)",
+    sessionRef,
+    session.trace_dir ? `trace: ${session.trace_dir}` : null,
+    session.trace_last_file ? `last: ${session.trace_last_file}` : null,
+    session.trace_last_error
+      ? `last error: ${truncateForTooltip(session.trace_last_error, 200)}`
+      : null,
+  ].filter(Boolean);
   return (
     <div
       className={cn(
         "group/session flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors",
         active ? "bg-blue-500/[0.10]" : "hover:bg-white/[0.04]",
       )}
-      title={`${session.title}\nthread ${session.thread_id}`}
+      title={tipLines.join("\n")}
     >
       <button
         type="button"
@@ -513,6 +538,9 @@ function SessionRow({
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
         <StatusDot status={session.status} />
+        <span className="shrink-0 rounded-sm bg-white/[0.04] px-1 py-px font-mono text-[9px] text-muted-foreground/80">
+          {sessionRef}
+        </span>
         <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/70">
           {session.title || "(untitled)"}
         </span>
@@ -520,6 +548,20 @@ function SessionRow({
           {relativeTime(session.updated_at)}
         </span>
       </button>
+      {session.trace_dir && onCopyTracePath && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCopyTracePath(session.trace_dir!);
+          }}
+          title={`Copy trace path: ${session.trace_dir}`}
+          aria-label="Copy trace path"
+          className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-blue-500/10 hover:text-blue-300 group-hover/session:opacity-100"
+        >
+          <FolderSearch className="h-3.5 w-3.5" />
+        </button>
+      )}
       {running && onStop && (
         <button
           type="button"
@@ -536,6 +578,11 @@ function SessionRow({
       )}
     </div>
   );
+}
+
+function truncateForTooltip(text: string, max: number): string {
+  if (!text) return "";
+  return text.length <= max ? text : text.slice(0, max - 1) + "\u2026";
 }
 
 function StatusDot({ status }: { status: SessionStatus }) {

@@ -35,8 +35,15 @@ from agent.pi_ai.utils.json_parse import parse_strict
 
 
 # Conservative margin kept free of the context window (system overhead,
-# tool schemas, reasoning scratch, etc.) when clamping max_tokens.
-_CTX_SAFETY_MARGIN = 4_000
+# tool schemas, reasoning scratch, etc.) when clamping max_tokens. The
+# 4 000-byte assumption undershoots on openrouter/HY3 (provider counts
+# tokens at ~3.5 chars/token, not 4) — the chat-8fc99e0c coder 400
+# regression was caused by an estimated 27 K input actually costing
+# 31 K on the wire, so we widened the safety margin to 16 K. The
+# clamp can still under-estimate on heavy tool schemas; operators
+# should keep an eye on `_run_agent` log entries that report a
+# `max_tokens` clamp to the context window.
+_CTX_SAFETY_MARGIN = 16_000
 
 
 def _estimate_tokens(text: str) -> int:

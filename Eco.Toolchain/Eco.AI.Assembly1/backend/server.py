@@ -459,7 +459,16 @@ async def list_projects():
     Only folders explicitly registered by the user (registry["projects"]) are
     visible in the panel — session paths and legacy output/chat-* dirs are no
     longer materialized as projects. Sessions whose project_path is not
-    whitelisted simply don't render; their records stay in the registry."""
+    whitelisted simply don't render; their records stay in the registry.
+
+    Each session in the response is enriched with the trace-bookkeeping fields
+    (trace_dir, trace_last_file, trace_last_error, trace_call_count) so the
+    left panel can render the `ses-` chip + the hover tooltip + the copy-to-
+    clipboard button WITHOUT a second round trip per session. Computing
+    _session_trace_meta() is cheap (a listdir per session + at most one 4 KB
+    read); for a typical project with N≤20 sessions the whole request is
+    under a millisecond on warm disk.
+    """
     registry = _load_registry()
     whitelisted: dict[str, dict] = {
         entry["path"]: {**entry, "auto": False}
@@ -477,7 +486,11 @@ async def list_projects():
             key=lambda s: s.get("updated_at") or "",
             reverse=True,
         )
-        result.append({**entry, "sessions": proj_sessions})
+        # Enrich each session with trace meta inline. The trace-bookkeeping
+        # fields are the same shape the messages endpoint already returns,
+        # so the panel can render them on a GET /api/projects response too.
+        enriched = [{**s, **_session_trace_meta(s)} for s in proj_sessions]
+        result.append({**entry, "sessions": enriched})
     result.sort(key=lambda p: (p.get("added_at") or ""), reverse=True)
     return {"projects": result}
 
@@ -546,6 +559,88 @@ def _find_session(registry: dict, session_id: str) -> dict | None:
     return None
 
 
+def _session_trace_dir(session: dict) -> Path:
+    """Return the on-disk trace dir for a session.
+
+    The minimal-first-cut naming: traces/ses-<8hex>/ (one folder per
+    session, NOT per project). `session_id` is the 8-char prefix;
+    `thread_id` is the full UUID when present (preferred for symmetry
+    with the WebSocket layer).
+    """
+    raw = session.get("thread_id") or session.get("id") or ""
+    short = raw[:8] if raw else "unknown"
+    return Path(os.getenv("HARNESS_TRACES_DIR", "traces")) / f"ses-{short}"
+
+
+def _session_trace_dirs(session: dict) -> list[Path]:
+    """Candidate trace dirs for a session, newest-prefix first.
+
+    The minimal-first-cut renames the canonical path to ``traces/ses-<id>/``
+    but legacy traces still live under ``traces/chat-<id>/`` from previous
+    runs. The metadata helper scans both so the UI can show a useful
+    summary regardless of when the session ran. Returns an ordered list
+    of dirs that exist on disk (empty list if neither does).
+    """
+    raw = session.get("thread_id") or session.get("id") or ""
+    short = raw[:8] if raw else "unknown"
+    root = Path(os.getenv("HARNESS_TRACES_DIR", "traces"))
+    candidates = [root / f"ses-{short}", root / f"chat-{short}"]
+    return [c for c in candidates if c.is_dir()]
+
+
+def _session_trace_dir(session: dict) -> Path:
+    """Canonical trace dir (the new ses- prefix). For the metadata helper
+    that scans both new and legacy dirs, use ``_session_trace_dirs``."""
+    raw = session.get("thread_id") or session.get("id") or ""
+    short = raw[:8] if raw else "unknown"
+    return Path(os.getenv("HARNESS_TRACES_DIR", "traces")) / f"ses-{short}"
+
+
+def _session_trace_meta(session: dict) -> dict:
+    """Best-effort summary of the session's trace folder for the UI.
+
+    Returns a small dict: trace_dir (str), trace_last_file (str|None),
+    trace_last_error (str|None), trace_call_count (int). The frontend
+    uses these to (a) render the trace path in the session-card hover
+    tooltip, and (b) one-click jump to the failing trace file when
+    the session ended in `failed` / `aborted`. Cheap (a single
+    listdir + at most one file read for the last call's meta).
+
+    Scans BOTH the new ses- dir and the legacy chat- dir so traces
+    written before the rename are still discoverable.
+    """
+    dirs = _session_trace_dirs(session)
+    tdir = _session_trace_dir(session)  # canonical for the UI label
+    out: dict = {"trace_dir": str(tdir), "trace_last_file": None,
+                 "trace_last_error": None, "trace_call_count": 0}
+    files: list = []
+    for d in dirs:
+        try:
+            files.extend(d.glob("*.json"))
+        except OSError:
+            continue
+    files.sort()
+    out["trace_call_count"] = len(files)
+    if not files:
+        return out
+    last = files[-1]
+    out["trace_last_file"] = str(last)
+    # Read only the meta block of the last file — a few hundred bytes.
+    try:
+        with last.open("r", encoding="utf-8") as fh:
+            chunk = fh.read(8192)
+        # Lazy JSON parse: we just want the top-level "meta" object. Cheap
+        # regex pulls the error / stop_reason out without a full parse —
+        # fine for tooltips.
+        import re as _re
+        m_err = _re.search(r'"error"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', chunk)
+        if m_err:
+            out["trace_last_error"] = m_err.group(1)[:280]
+    except (OSError, ValueError):
+        pass
+    return out
+
+
 @app.get("/api/sessions/{session_id}/messages")
 async def session_messages(session_id: str):
     """Reconstruct a session's conversation as a flat, renderable transcript.
@@ -582,12 +677,64 @@ async def session_messages(session_id: str):
             messages.append({"role": "assistant", "text": body})
 
     return {
-        "session": {k: session.get(k) for k in (
-            "id", "thread_id", "project_path", "title",
-            "created_at", "updated_at", "status",
-        )},
+        "session": {
+            **{k: session.get(k) for k in (
+                "id", "thread_id", "project_path", "title",
+                "created_at", "updated_at", "status",
+            )},
+            # Minimal-first-cut: surface the trace dir + last file in every
+            # session message response so the panel can render the trace
+            # path on hover without a second round trip.
+            **_session_trace_meta(session),
+        },
         "messages": messages,
     }
+
+
+@app.get("/api/sessions/{session_id}/trace")
+async def session_trace(session_id: str):
+    """Lightweight summary of the session's trace folder.
+
+    Returns the trace dir, the per-call file list (newest last), and the
+    meta block of the most recent file. Drives the "open trace folder"
+    and "open last failing call" affordances in the project panel.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    registry = _load_registry()
+    session = _find_session(registry, session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown session: {session_id}",
+        )
+    meta = _session_trace_meta(session)
+    files: list[dict] = []
+    # Scan both the new ses-* dir and any legacy chat-* dir so a single
+    # endpoint serves all sessions regardless of when they ran.
+    for tdir in _session_trace_dirs(session):
+        for path in sorted(tdir.glob("*.json")):
+            info = {"path": str(path), "name": path.name, "size": 0,
+                    "error": "", "label": "", "ts": ""}
+            try:
+                info["size"] = path.stat().st_size
+            except OSError:
+                pass
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    chunk = fh.read(4096)
+                m_label = re.search(r'"label"\s*:\s*"([^"]+)"', chunk)
+                m_err = re.search(r'"error"\s*:\s*"([^"]+)"', chunk)
+                m_ts = re.search(r'"ts"\s*:\s*"([^"]+)"', chunk)
+                if m_label:
+                    info["label"] = m_label.group(1)
+                if m_err:
+                    info["error"] = m_err.group(1)[:280]
+                if m_ts:
+                    info["ts"] = m_ts.group(1)
+            except (OSError, ValueError):
+                pass
+            files.append(info)
+    return {**meta, "files": files}
 
 
 @app.post("/api/sessions/{session_id}/abort")
@@ -1219,20 +1366,239 @@ async def _chat_reply(
     return _msg_text(msg)
 
 
-def _workspace_header(project_dir: Path, marketplace_cache_root: Path) -> str:
+# Map of (os, arch) -> the GID_IEcoSystem_<arch> macro name defined in
+# marketplace_cache/Eco.Core1/SharedFiles/IEcoSystem1.h. The macro is
+# selected at build time via -DECO_<OS> -DECO_<ARCH>; the seed block
+# surfaces the right name so the architect never has to grep for it.
+# NOTE: when the GID is not in the table we fall back to a generic
+# message and ask the architect to read IEcoSystem1.h themselves.
+_TARGET_GID_MACRO = {
+    ("Linux",   "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Linux",   "x86"):        "GID_IEcoSystem_x86_32",
+    ("Linux",   "arm64"):      "GID_IEcoSystem_AARCH64",
+    ("Linux",   "arm64-v8a"):  "GID_IEcoSystem_AARCH64",
+    ("Linux",   "rv64gcv"):    "GID_IEcoSystem_RV64",
+    ("Linux",   "rv32"):       "GID_IEcoSystem_RV32",
+    ("Linux",   "mips64"):     "GID_IEcoSystem_MIPS64",
+    ("Linux",   "mips"):       "GID_IEcoSystem_MIPS",
+    ("Windows", "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Windows", "x86"):        "GID_IEcoSystem_x86_32",
+    ("Windows", "arm64"):      "GID_IEcoSystem_AARCH64",
+    ("Mac",     "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Mac",     "arm64"):      "GID_IEcoSystem_AARCH64",
+    ("iOS",     "arm64"):      "GID_IEcoSystem_AARCH64",
+    ("iOS",     "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Android", "arm64-v8a"):  "GID_IEcoSystem_AARCH64",
+    ("Android", "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Android", "x86"):        "GID_IEcoSystem_x86_32",
+    ("Android", "armeabi-v7a"): "GID_IEcoSystem_ARM",
+    ("Android", "mips64"):     "GID_IEcoSystem_MIPS64",
+    ("Android", "mips"):       "GID_IEcoSystem_MIPS",
+    ("EcoOS",   "x86_64"):     "GID_IEcoSystem_x86_64",
+}
+
+
+# Map of (os, arch) -> the GID suffix embedded in the Eco.System1
+# unikernel `.a` filename. The on-disk file is
+# `lib000000000000000000000000<HEX8>.a` and the GID suffix is NOT
+# always `53595333` ("SYS3") — the legacy Android mips / armeabi
+# targets ship the older SYS1 (`…53595331.a`) and SYS2
+# (`…53595332.a`) variants. Getting this wrong produces a non-
+# existent path in the architect's plan and a link error in the
+# coder. Discovered by enumerating
+# `marketplace_cache/Eco.System1/BuildFiles/*/*/<variant>/`.
+_SYSTEM1_GID = {
+    # SYS3 (main modern unikernel — used by every x86_64, arm64,
+    # rv64gcv, iOS, Mac, Linux, and the new Android arm64-v8a / x86_64).
+    ("Linux",   "x86_64"):     "53595333",
+    ("Linux",   "arm64-v8a"):  "53595333",
+    ("Linux",   "rv64gcv"):    "53595333",
+    ("Windows", "x86_64"):     "53595333",
+    ("Mac",     "x86_64"):     "53595333",
+    ("Mac",     "arm64"):      "53595333",
+    ("iOS",     "arm64"):      "53595333",
+    ("iOS",     "x86_64"):     "53595333",
+    ("Android", "arm64-v8a"):  "53595333",
+    ("Android", "x86_64"):     "53595333",
+    # SYS2 (Android armeabi-v7a / x86 / mips64).
+    ("Android", "armeabi-v7a"): "53595332",
+    ("Android", "x86"):        "53595332",
+    ("Android", "mips64"):     "53595332",
+    # SYS1 (legacy Android mips / armeabi).
+    ("Android", "mips"):       "53595331",
+    ("Android", "armeabi"):    "53595331",
+}
+
+
+def _resolve_target_triple(payload: dict) -> dict:
+    """Pull and normalise the user-selected target triple from a request.
+
+    The chat frame is expected to send `target_triple: {os, arch,
+    build_variant}` (see `config/UI` schema in the frontend). For backward
+    compat, accept the legacy `target` shorthand. Default to Linux
+    x86_64 StaticRelease when the UI has not sent a value yet — the
+    architect's plan validator will still flag a missing target-triple
+    block if the seed is empty.
+    """
+    tt = payload.get("target_triple")
+    if not isinstance(tt, dict):
+        legacy = payload.get("target")
+        tt = legacy if isinstance(legacy, dict) else {}
+    os_name = (tt.get("os") or "Linux").strip() or "Linux"
+    arch = (tt.get("arch") or "x86_64").strip() or "x86_64"
+    variant = (tt.get("build_variant") or tt.get("variant") or "StaticRelease").strip() or "StaticRelease"
+    if variant not in ("StaticRelease", "DynamicRelease"):
+        variant = "StaticRelease"
+    return {"os": os_name, "arch": arch, "build_variant": variant}
+
+
+def _target_triple_block(target: dict) -> str:
+    """Seed block: user-selected target triple (OS / arch / build_variant)."""
+    os_name = target.get("os", "Linux")
+    arch = target.get("arch", "x86_64")
+    variant = target.get("build_variant", "StaticRelease")
+    gid_macro = _TARGET_GID_MACRO.get((os_name, arch))
+    gid_note = (
+        f"  GID_IEcoSystem macro for this triple: `{gid_macro}` "
+        f"(selected at Eco.Core1 build time via -DECO_{os_name.upper()} -DECO_{arch.upper().replace('-V8A','_V8A')})\n"
+        if gid_macro else
+        f"  WARNING: no known GID_IEcoSystem_<arch> macro for {os_name}/{arch} — "
+        "the plan_validator will BLOCK the handoff. Ask the user to pick a "
+        "supported target triple from the chat frame.\n"
+    )
+    return (
+        f"=== Target triple (user-selected in the chat frame) ===\n"
+        f"  OS            : {os_name}\n"
+        f"  arch          : {arch}\n"
+        f"  build_variant : {variant}\n"
+        f"{gid_note}"
+        f"\n"
+    )
+
+
+def _pre_resolved_identifiers_block(
+    target: dict,
+    marketplace_cache_root: Path,
+) -> str:
+    """Seed block: identifiers the architect would otherwise have to grep for.
+
+    These are facts the harness knows deterministically (from the marketplace
+    cache layout, the Eco.Core1 GID table, the Eco.System1 unikernel
+    convention). The architect and coder must use them verbatim — do not
+    re-derive. Without this block, the prior Celsius->Fahrenheit session
+    (`chat-1ca5b8f4`) spent two tool calls and 1 691 reasoning tokens
+    re-discovering the same facts.
+    """
+    os_name = target["os"]
+    arch = target["arch"]
+    variant = target["build_variant"]
+    # The folder name for arm64 on Linux uses the Android-style "arm64-v8a"
+    # suffix; on Mac/iOS it's "arm64". Map the arch value to the on-disk
+    # directory name the marketplace ships.
+    build_dir_arch = {
+        "x86_64": "x86_64",
+        "x86": "x86",
+        "arm64": "arm64",
+        "arm64-v8a": "arm64-v8a",
+        "rv64gcv": "rv64gcv",
+        "mips64": "mips64",
+        "mips": "mips",
+    }.get(arch, arch)
+
+    cache = marketplace_cache_root.resolve()
+    # Pick the right GID for the target triple. The GID is embedded in
+    # the `.a` filename and is NOT always `53595333` ("SYS3") — see
+    # `_SYSTEM1_GID` for the per-(os,arch) mapping. When the target is
+    # not in the table (rare; e.g. a future platform), we list the
+    # directory for the architect and tell them to pick the only `.a`.
+    system1_gid = _SYSTEM1_GID.get((os_name, arch))
+    if system1_gid is not None:
+        system1_lib = (
+            f"{cache}/Eco.System1/BuildFiles/{os_name}/{build_dir_arch}/{variant}/"
+            f"lib000000000000000000000000{system1_gid}.a"
+        )
+        system1_lib_note = ""
+    else:
+        system1_lib = (
+            f"{cache}/Eco.System1/BuildFiles/{os_name}/{build_dir_arch}/{variant}/"
+            "lib<UNKNOWN_GID>.a"
+        )
+        system1_lib_note = (
+            "\n  NOTE: the (os, arch)=(" + os_name + ", " + arch + ") triple is not in\n"
+            "  the per-target `_SYSTEM1_GID` table — the path above uses\n"
+            "  `lib<UNKNOWN_GID>.a` as a placeholder. The architect MUST\n"
+            "  list_dir this directory, read the only `.a` filename, and\n"
+            "  paste the GID suffix into the plan before calling to_coder.\n"
+        )
+    core1_shared = f"{cache}/Eco.Core1/SharedFiles"
+    # Default to the well-known x86_64 line; for other arches the
+    # architect must read the matching line (the C skill tells them to).
+    gid_macro = _TARGET_GID_MACRO.get((os_name, arch), "GID_IEcoSystem_x86_64")
+    gid_bytes_default = (
+        "{ 0x01, 0x10, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, "
+        "0x00, 0x00, 0x00, 0x00, 0x86, 0x64, 0x03, 0x00} }"  # x86_64
+    )
+
+    return (
+        "=== Pre-resolved identifiers (USE VERBATIM — do not re-derive) ===\n"
+        "Eco.System1 unikernel library (NOT an ACOM component — no CID, no\n"
+        "factory symbol, never registered on the bus; just linked). It is a\n"
+        "unikernel that ships a minimal ACOM microkernel with the Interface Bus\n"
+        "built-in as its main, passive code path; the bus itself has no CID\n"
+        "either (passive infrastructure, no compute process), so neither it nor\n"
+        "the unikernel self-registers. The application code (EcoMain glue)\n"
+        "RegisterComponents the actually-running ACOM components on top of it.\n"
+        "  static library to LINK (not pull, not register) :\n"
+        "    " + system1_lib + "\n" + system1_lib_note +
+        "  Optional runtime services (queried via the bus with the IIDs\n"
+        "  from the System1 SharedFiles headers — never via a CID):\n"
+        "    IID_IEcoSystemInformation1 = {0x01, 0x10, {0x00, 0x00, 0x00,\n"
+        "      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n"
+        "      0x00, 0x01, 0xFF}}\n"
+        "    IID_IEcoCommandArguments1 = {0x01, 0x10, {0x00, 0x00, 0x00,\n"
+        "      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n"
+        "      0x00, 0x01, 0x10}}\n"
+        "\n"
+        "Eco.Core1 (the mandatory base devkit, NOT a pullable component —\n"
+        "its files are in the eco_framework tree and the coder includes\n"
+        "from them; its `uguid` in the profile is 000000000000000000000000000000AA):\n"
+        "  SharedFiles dir : " + core1_shared + "\n"
+        "  IEcoSystem1     : declared there; use the macro `GID_IEcoSystem` in "
+        "EcoMain.c (it expands to the arch-specific GID at compile time).\n"
+        "  GID for the target triple : `" + gid_macro + "`\n"
+        "  Default UGUID bytes for x86_64 (other arches — read the matching line "
+        "in " + core1_shared + "/IEcoSystem1.h and quote the line number in the plan):\n"
+        "    " + gid_bytes_default + "\n"
+        "\n"
+    )
+
+
+def _workspace_header(
+    project_dir: Path,
+    marketplace_cache_root: Path,
+    target: dict | None = None,
+) -> str:
     """Prefix every agent seed with a workspace orientation block.
 
-    The block tells the model three things:
+    The block tells the model four things:
       1. Where it's working — absolute paths for project_dir AND the
          read-only marketplace_cache.
       2. How to explore — grep / glob / read examples (claude-code-style
          primitives that hide the absolute-path detail under a
          basename-prefix anchoring rule).
       3. That repeating an identical tool call wastes an iteration.
+      4. The user-selected target triple (OS / arch / build_variant) and
+         the pre-resolved identifiers (Eco.System1 library path, GID
+         macro, Eco.Core1 base dir) the architect would otherwise have
+         to re-derive.
 
-    Without this, coder previously burned 30+ iterations on path-guessing
-    list_dir('.') / list_dir('/') — see project path semantics.
+    Without (1)-(3), coder previously burned 30+ iterations on
+    path-guessing list_dir('.') / list_dir('/') — see project path
+    semantics. Without (4), the prior Celsius→Fahrenheit session
+    (`chat-1ca5b8f4`) spent 2 tool calls and 1 691 reasoning tokens on
+    exactly that re-derivation.
     """
+    target = target or {"os": "Linux", "arch": "x86_64", "build_variant": "StaticRelease"}
     return (
         f"=== Workspace ===\n"
         f"You are running in two locations:\n"
@@ -1265,6 +1631,8 @@ def _workspace_header(project_dir: Path, marketplace_cache_root: Path) -> str:
         f"Re-running the same call with identical arguments is wasted work —\n"
         f"the result is already in your tool-result history above.\n"
         f"\n"
+        + _target_triple_block(target)
+        + _pre_resolved_identifiers_block(target, marketplace_cache_root)
     )
 
 
@@ -1693,10 +2061,37 @@ async def chat_endpoint(websocket: WebSocket):
     thread_id = _safe_id(requested_thread_id) if requested_thread_id else str(uuid.uuid4())
 
     def _default_project_dir() -> Path:
-        # Resolve to an absolute path under the output root so the stored
-        # project_path is stable regardless of the server's CWD.
-        return (Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")).resolve()
-                / f"chat-{thread_id[:8]}")
+        # Resolve to an ABSOLUTE path under a stable output root so the stored
+        # project_path does not depend on the server's current working
+        # directory.
+        #
+        # Bug history (chat-ea0e66f1 follow-up, ses-9257ff60): the previous
+        # implementation used `Path(os.getenv("HARNESS_OUTPUT_ROOT",
+        # "./output")).resolve()`. `resolve()` is CWD-relative, so when the
+        # server was started with CWD = an old project's working dir
+        # (e.g. the user kept the previous project selected in the panel),
+        # the new default project_dir became nested INSIDE the old one:
+        # `<old project>/output/chat-<id8>/`. eco-wizard then created
+        # `Eco.X/Eco.X/AssemblyFiles/...` under that nested path, the coder's
+        # relative `read`/`glob` calls saw an inconsistent tree, and the run
+        # failed without writing any source file.
+        #
+        # Fix: anchor the default to the *repository* root (the directory
+        # holding the server file), not to the server's CWD. `Path(__file__).resolve().parent`
+        # is the backend/ directory; its parent is the repository root.
+        # Repo-root-anchored defaults make the path independent of the
+        # process's CWD regardless of how the server was launched.
+        repo_root = Path(__file__).resolve().parent.parent
+        env_root = os.getenv("HARNESS_OUTPUT_ROOT")
+        if env_root:
+            base = Path(env_root)
+            if not base.is_absolute():
+                base = (repo_root / base).resolve()
+            else:
+                base = base.resolve()
+        else:
+            base = (repo_root / "output").resolve()
+        return base / f"chat-{thread_id[:8]}"
 
     project_dir = _default_project_dir()
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -1710,11 +2105,32 @@ async def chat_endpoint(websocket: WebSocket):
     use_worktree = False
     worktree_path: Path | None = None
 
-    # Per-conversation LLM trace folder. Every architect/coder/tester LLM
+    # Per-SESSION LLM trace folder. Every architect/coder/tester LLM
     # request+response is persisted here as a numbered JSON file (see
     # EcoAgent._stream_llm) — incrementally, so a trace exists after a single
     # call and even if the (now unbounded) agent loop never terminates.
-    trace_dir = Path(os.getenv("HARNESS_TRACES_DIR", "traces")) / f"chat-{thread_id[:8]}"
+    #
+    # Minimal-first-cut naming (full split in a follow-up): the trace folder
+    # uses the `ses-` prefix so the on-disk path and the project-panel
+    # session-card id are visually identical. The project folder keeps the
+    # current `chat-<8hex>` default for now (a single project hosts many
+    # sessions; the trace dir is 1:1 with a session, NOT with a project).
+    #
+    # Like _default_project_dir above, the trace dir is anchored to the
+    # repository root so the path is independent of the server's CWD — the
+    # same bug that nested output/chat-* under output/chat-*/* would also
+    # have nested traces/ under traces/chat-9257ff60/--app/.../traces/chat-*.
+    repo_root = Path(__file__).resolve().parent.parent
+    env_traces = os.getenv("HARNESS_TRACES_DIR")
+    if env_traces:
+        traces_base = Path(env_traces)
+        if not traces_base.is_absolute():
+            traces_base = (repo_root / traces_base).resolve()
+        else:
+            traces_base = traces_base.resolve()
+    else:
+        traces_base = (repo_root / "traces").resolve()
+    trace_dir = traces_base / f"ses-{thread_id[:8]}"
     trace_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(
@@ -1884,6 +2300,11 @@ async def chat_endpoint(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "content": "Missing user_request"})
                 continue
 
+            # Per-message target triple (user-selected in the chat frame).
+            # Resolved once here so the seed block is the same for the
+            # architect, the warm-retry coder, and every hop in between.
+            target_triple = _resolve_target_triple(payload)
+
             # Per-message project override: the UI sends the folder selected
             # in the left projects panel. Without it we fall back to (and
             # reset to) the default per-thread chat-<id8> directory, so a
@@ -2003,7 +2424,7 @@ async def chat_endpoint(websocket: WebSocket):
                     result = await _run_agent(
                         one_shot.run,
                         ev_queue,
-                        _workspace_header(project_dir, marketplace_cache_root)
+                        _workspace_header(project_dir, marketplace_cache_root, target_triple)
                         + attached_block + user_req,
                     )
                 except Exception as error:
@@ -2067,7 +2488,7 @@ async def chat_endpoint(websocket: WebSocket):
                     continue
 
             # ── AUTO/MIGRATE: full plan→implement→verify pipeline ──
-            workspace = _workspace_header(project_dir, marketplace_cache_root)
+            workspace = _workspace_header(project_dir, marketplace_cache_root, target_triple)
             planner_seed = workspace + attached_block + user_req
             approved_plan_md: str | None = None
             terminate_chat = False

@@ -138,6 +138,15 @@ class HarnessConfig(BaseModel):
     # PRD_2 Phase 2; previously a dead key).
     retained_tool_outputs: int = 5
     max_hops: int = 8
+    # Architect -> coder handoff size cap (bytes of markdown). The
+    # plan_validator BLOCKS the to_coder stop-tool when the plan exceeds
+    # this budget; raising it lets the architect hand more context to
+    # the coder, lowering it keeps the coder under tight provider
+    # context limits (see `chat-1ca5b8f4` Celsius->Fahrenheit
+    # post-mortem — the previous behaviour re-stitched the whole
+    # architect context into the coder prompt and crashed a 262K
+    # provider limit).
+    plan_handoff_max_bytes: int = 8_192
     source_roots: list[Path] = Field(default_factory=list)
     eco_wizard_path: str | None = None
     eco_cli_path: str | None = None
@@ -381,6 +390,12 @@ def load_config(root: Path | None = None) -> HarnessConfig:
         ),
         max_hops=int(
             os.getenv("HARNESS_MAX_HOPS", merged_harness.get("max_hops", 8)),
+        ),
+        plan_handoff_max_bytes=int(
+            os.getenv(
+                "HARNESS_PLAN_HANDOFF_MAX_BYTES",
+                merged_harness.get("plan_handoff_max_bytes", 8_192),
+            ),
         ),
         source_roots=[
             (

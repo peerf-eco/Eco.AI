@@ -513,6 +513,31 @@ export function ChatInterface() {
     await refreshProjects();
   }, [refreshProjects, viewing]);
 
+  // Minimal-first-cut: copy a session's on-disk trace dir to the clipboard.
+  // The full "open in file browser" UX comes in a follow-up; copying the
+  // path is enough to ssh/inspect without leaving the chat.
+  const handleCopyTracePath = useCallback(async (traceDir: string) => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(traceDir);
+      } else {
+        // Fallback for browsers without async-clipboard (e.g. http://localhost).
+        const ta = document.createElement("textarea");
+        ta.value = traceDir;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setPanelNotice(`Copied trace path: ${traceDir}`);
+    } catch {
+      setPanelNotice(`Failed to copy trace path: ${traceDir}`);
+    }
+  }, []);
+
   // Return from a session transcript view to a fresh live thread.
   const handleReturnToLive = useCallback(() => {
     setViewing(null);
@@ -629,6 +654,7 @@ export function ChatInterface() {
         onExportAll={handleExportAll}
         onSelectSession={handleSelectSession}
         onStopSession={handleStopSession}
+        onCopyTracePath={handleCopyTracePath}
         activeSessionId={viewing?.id ?? null}
         exportBusy={exportBusy}
         notice={panelNotice}

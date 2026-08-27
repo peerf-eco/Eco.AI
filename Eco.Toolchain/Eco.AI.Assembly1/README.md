@@ -188,6 +188,7 @@ does not override already-set variables).
 | `HARNESS_TRACES_DIR` | server | `./traces` | Per-conversation LLM trace folders |
 | `HARNESS_ALLOWED_ROOTS` | server: `/api/fs/browse`, `/api/projects`, WS `project_dir` | home dir + `HARNESS_OUTPUT_ROOT` | Extra directories (os.pathsep-separated) the UI may browse, register, or target as `project_dir` |
 | `HARNESS_MAX_HOPS` | orchestrator | `8` | Max handoff hops (also `harness.yaml.max_hops`) |
+| `HARNESS_PLAN_HANDOFF_MAX_BYTES` | architect `to_coder` gate | `8192` (`harness.yaml.plan_handoff_max_bytes`) | Bytes-of-markdown cap on the architect's handoff to the coder. Plan validator BLOCKS the `to_coder` call when the plan exceeds this; raise for big multi-component apps, lower when targeting small-context models. |
 | `AGENT_MAX_ITERATIONS` | `build_pipeline` runs only | unset | Overrides per-role `max_iters` for scripted pipeline runs; production `/ws/chat` uses `budgets.max_iters` from `config/roles.yaml` |
 | `HARNESS_DYNAMIC_TAIL_ITEMS` | agent context | `5` (`harness.yaml`: 12) | Newest tool results kept verbatim in context |
 | `HARNESS_RETAINED_TOOL_OUTPUTS` | agent context | `budgets.yaml.retained_tool_outputs` (5) | Wired alias controlling `max_tool_results` context retention |

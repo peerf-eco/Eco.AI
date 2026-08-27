@@ -10,3 +10,9 @@ eco_cli_path: null
 source_roots:
   - eco_framework
   - marketplace_cache
+# Architect -> coder handoff size cap (bytes of markdown). Keep this
+# under ~1/30 of the provider context limit so the coder's own
+# tool-output history still has room. 8 KB matches the rule-of-thumb
+# used in the chat-1ca5b8f4 Celsius->Fahrenheit post-mortem; can be
+# overridden at runtime via HARNESS_PLAN_HANDOFF_MAX_BYTES.
+plan_handoff_max_bytes: 8192

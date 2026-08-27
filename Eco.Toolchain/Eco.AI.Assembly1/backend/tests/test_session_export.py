@@ -360,6 +360,142 @@ class TestDeleteProjectEndpoint:
         assert [s["id"] for s in projects[0]["sessions"]] == [SESSION["id"]]
 
 
+class TestListProjectsEnrichesSessions:
+    """Regression: /api/projects must include trace-bookkeeping fields on each
+    session so the left panel can render the ses- chip + the copy-to-clipboard
+    button WITHOUT a per-session /api/sessions/{id}/trace round trip.
+
+    Bug history (minimal-first-cut follow-up): the original /api/projects
+    response only had the raw session records from the registry, so
+    `session.trace_dir` was always undefined on the panel and the
+    copy-to-clipboard button was hidden behind `session.trace_dir && ...`
+    → invisible to the user.
+    """
+
+    def test_sessions_carry_trace_meta(self, client, tmp_path):
+        _write_registry(
+            tmp_path / "output",
+            PROJECT,
+            [{**SESSION, "id": "abc12345"}],
+        )
+        folder = tmp_path / "traces" / "chat-abc12345"
+        write_trace(folder, 1, seed("x"), [text_block("ok")])
+        res = client.get("/api/projects")
+        assert res.status_code == 200
+        body = res.json()
+        assert len(body["projects"]) == 1
+        sessions = body["projects"][0]["sessions"]
+        assert len(sessions) == 1
+        s = sessions[0]
+        # All four bookkeeping fields must be present in the response.
+        assert s["trace_dir"].endswith("ses-abc12345")  # canonical new name
+        assert s["trace_call_count"] == 1
+        assert s["trace_last_file"].endswith("001-planner.json")
+        # trace_last_error is None when the trace has no error.
+        assert s["trace_last_error"] in (None, "")
+
+    def test_sessions_without_trace_get_zero_count(self, client, tmp_path):
+        """A session that has never produced a trace still appears in the
+        response (the panel cannot tell the difference at render time) but
+        trace_call_count is zero and trace_last_file is null.
+
+        Uses a unique id ("ghost…") that no other test in this class uses,
+        so a leftover chat-abc12345 dir from test_sessions_carry_trace_meta
+        does not bleed into this one.
+        """
+        # Override BOTH id and thread_id so the canonical trace dir
+        # (which uses thread_id[:8]) matches the new id and does not
+        # pick up the leftover chat-abc12345 dir from the previous test.
+        _write_registry(
+            tmp_path / "output",
+            PROJECT,
+            [{**SESSION, "id": "ghost9999", "thread_id": "ghost9999-z"}],
+        )
+        res = client.get("/api/projects")
+        assert res.status_code == 200
+        sessions = res.json()["projects"][0]["sessions"]
+        s = sessions[0]
+        assert s["trace_dir"].endswith("ses-ghost999")
+        assert s["trace_call_count"] == 0
+        assert s["trace_last_file"] is None
+
+    def test_legacy_chat_dir_still_surfaces_count(self, client, tmp_path):
+        """Backward compat: a session with only the legacy chat-<id> dir is
+        still discoverable (the panel must not show zero)."""
+        _write_registry(
+            tmp_path / "output",
+            PROJECT,
+            # 7-char id and 7-char thread_id; the legacy chat-<id> dir
+            # matches the canonical ses-<thread_id[:8]> dir suffix.
+            [{**SESSION, "id": "old7777", "thread_id": "old7777"}],
+        )
+        folder = tmp_path / "traces" / "chat-old7777"
+        write_trace(folder, 1, seed("x"), [text_block("hi")])
+        res = client.get("/api/projects")
+        sessions = res.json()["projects"][0]["sessions"]
+        s = sessions[0]
+        assert s["trace_dir"].endswith("ses-old7777")
+        assert s["trace_call_count"] == 1
+        assert s["trace_last_file"].endswith("001-planner.json")
+
+
+class TestSessionTraceEndpoint:
+    """GET /api/sessions/{id}/trace — minimal-first-cut trace-bookkeeping.
+
+    The endpoint returns the trace dir, the last-file summary, and a per-file
+    list. Tests cover the happy path (existing chat-* legacy trace dir), the
+    new ses-* path, and the unknown-session 404.
+    """
+
+    def _registry(self, tmp_path, session_id="abc12345"):
+        _write_registry(
+            tmp_path / "output",
+            PROJECT,
+            [{**SESSION, "id": session_id}],
+        )
+
+    def test_404_unknown(self, client):
+        res = client.get("/api/sessions/nope/trace")
+        assert res.status_code == 404
+
+    def test_400_invalid_id(self, client):
+        res = client.get("/api/sessions/has%20space/trace")
+        assert res.status_code == 400
+
+    def test_session_with_no_trace_folder(self, client, tmp_path):
+        self._registry(tmp_path)
+        res = client.get(f"/api/sessions/{SESSION['id']}/trace")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["trace_dir"].endswith(f"ses-{SESSION['id']}")
+        assert body["trace_last_file"] is None
+        assert body["trace_call_count"] == 0
+
+    def test_session_with_legacy_chat_dir(self, client, tmp_path):
+        """The minimal-first-cut endpoint must also read legacy chat-* dirs
+        (otherwise all pre-existing sessions look empty after the rename)."""
+        self._registry(tmp_path)
+        folder = tmp_path / "traces" / f"chat-{SESSION['id']}"
+        write_trace(folder, 1, seed("x"), [text_block("hi")])
+        res = client.get(f"/api/sessions/{SESSION['id']}/trace")
+        assert res.status_code == 200
+        body = res.json()
+        # Helper scans BOTH the new ses-* dir and the legacy chat-* dir.
+        assert body["trace_call_count"] == 1
+        assert body["trace_last_file"].endswith("001-planner.json")
+
+    def test_messages_endpoint_surfaces_trace_meta(self, client, tmp_path):
+        self._registry(tmp_path)
+        folder = tmp_path / "traces" / f"chat-{SESSION['id']}"
+        write_trace(folder, 1, seed("x"), [text_block("ok")])
+        res = client.get(f"/api/sessions/{SESSION['id']}/messages")
+        assert res.status_code == 200
+        body = res.json()
+        assert "trace_dir" in body["session"]
+        assert body["session"]["trace_call_count"] == 1
+        assert body["session"]["trace_last_file"].endswith("001-planner.json")
+
+
 class TestExportEndpoints:
     def _setup(self, client, tmp_path):
         _write_registry(tmp_path / "output", PROJECT, [SESSION])

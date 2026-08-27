@@ -204,13 +204,36 @@ _TOOL_ERROR_PREVIEW_CHARS = 500
 
 def _is_transient_llm_error(msg: Optional[str]) -> bool:
     """Provider-side hiccups worth retrying: 5xx family, overload, timeouts.
-    Auth/validation errors (4xx) are NOT transient and fail immediately."""
+    Auth/validation errors (4xx) are NOT transient and fail immediately.
+
+    The chat-9257ff60 run aborted on `SSL: SSLV3_ALERT_BAD_RECORD_MAC`
+    even though this is a transient transport error from openrouter — the
+    upstream terminated the connection mid-handshake. Treating it as
+    non-retryable and showing the user a "pipeline paused" gate is wrong:
+    a single transient hiccup on a pinned provider should be retried with
+    backoff, not surfaced as a terminal failure. Same class as a 5xx or
+    a connection timeout. The error name itself (`ssl`, `SSLError`,
+    `SSLV3_ALERT_*`, `ECONNRESET`, `ECONNREFUSED`, `EPIPE`) signals
+    transport-level failure and is what the rest of the harness sees
+    when the upstream goes away mid-stream.
+    """
     text = (msg or "").lower()
-    return any(token in text for token in (
+    if not text:
+        return False
+    transport_markers = (
+        # HTTP status family — provider returned an error
         "520", "502", "503", "504", "529",
+        # Provider / openrouter / generic
         "provider returned error", "overloaded", "timeout", "timed out",
         "connection", "temporarily",
-    ))
+        # OpenSSL / ssl errors
+        "ssl", "sslerror", "sslv3", "tlsv1", "alert_bad_record_mac",
+        "wrong_version_number", "record_overflow", "certificate_verify_failed",
+        # OS-level transport errors
+        "econnreset", "econnrefused", "epipe", "etimedout", "enotfound",
+        "network is unreachable", "connection reset", "connection refused",
+    )
+    return any(token in text for token in transport_markers)
 
 
 # ── Main agent ────────────────────────────────────────────────────────────────
@@ -357,20 +380,40 @@ class EcoAgent:
             self._iter = i
             self._emit(EventType.ITERATION, {"i": i})
 
-            try:
-                resp = self._stream_llm(history)
-            except Exception as e:
-                self._emit(EventType.ERROR, {"reason": str(e)})
-                return EcoAgentResult(
-                    status="error", stop_tool_name="", stop_payload={},
-                    history=history, error=str(e),
-                )
+            # Transient transport errors (SSLError, ECONNRESET, 5xx, timeouts)
+            # raised out of _stream_llm get the same retry-with-backoff policy
+            # as the in-band resp.stopReason=="error" path. chat-9257ff60
+            # proved the previous behaviour (immediate terminal return) is
+            # wrong: a single openrouter mid-stream reset aborts an otherwise
+            # healthy run. We unify both paths into one retry loop.
+            resp = None
+            for attempt in range(_LLM_TRANSIENT_RETRIES + 1):
+                try:
+                    resp = self._stream_llm(history)
+                    break  # got a response (even one with stopReason=="error")
+                except Exception as exc:
+                    if attempt >= _LLM_TRANSIENT_RETRIES or not _is_transient_llm_error(str(exc)):
+                        # Either non-transient (auth, validation, programmer
+                        # error) or we have already retried max times.
+                        self._emit(EventType.ERROR, {"reason": str(exc)})
+                        return EcoAgentResult(
+                            status="error", stop_tool_name="", stop_payload={},
+                            history=history, error=str(exc),
+                        )
+                    # Transient — sleep then retry. Backoff matches the
+                    # in-band retry path (5s, 10s, 15s) so the two are
+                    # indistinguishable to the user and to the trace.
+                    self._emit(EventType.ITERATION, {
+                        "i": i, "llm_retry": attempt + 1,
+                        "reason": f"{type(exc).__name__}: {str(exc)[:200]}",
+                    })
+                    time.sleep(_LLM_RETRY_BACKOFF_S * (attempt + 1))
 
-            # Transient provider errors (5xx/520/529, timeouts) are retried in
-            # place with backoff — with a pinned provider there is no router
-            # failover, so a single upstream hiccup must not kill a long run.
+            # In-band error path: response came back with stopReason=="error"
+            # and the message looks transient. Same backoff policy.
             retry = 0
-            while (resp.stopReason == "error"
+            while (resp is not None
+                   and resp.stopReason == "error"
                    and retry < _LLM_TRANSIENT_RETRIES
                    and _is_transient_llm_error(resp.errorMessage)):
                 retry += 1
