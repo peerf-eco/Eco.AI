@@ -705,7 +705,11 @@ export function ChatInterface() {
       {/* Folder browser (project picker) */}
       <AnimatePresence>
         {browserOpen && (
-          <FolderBrowser onClose={() => setBrowserOpen(false)} onAdded={handleProjectAdded} />
+          <FolderBrowser
+            anchorPath={activeProject?.path}
+            onClose={() => setBrowserOpen(false)}
+            onAdded={handleProjectAdded}
+          />
         )}
       </AnimatePresence>
 

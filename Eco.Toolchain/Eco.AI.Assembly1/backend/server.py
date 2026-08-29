@@ -389,6 +389,21 @@ async def fs_browse(path: str | None = None, files: bool = False):
     return {"path": str(target), "parent": parent, "entries": entries}
 
 
+@app.get("/api/fs/roots")
+async def fs_roots():
+    """Browsable root locations for the folder/file picker UI.
+
+    The picker runs against the SERVER's filesystem (inside the api container
+    in the dev stack), which is easy to mistake for the browser host's disks.
+    Exposing the allowlist lets the UI show quick-jump chips and explain
+    "outside the allowed roots" rejections concretely."""
+    return {
+        "home": str(Path.home().resolve()),
+        "output_root": str(_output_root().resolve()),
+        "roots": [str(root) for root in _allowed_roots()],
+    }
+
+
 # ── File search (the @-mention backend) ──────────────────────────────────────
 # Two swappable backends behind a single endpoint:
 #   • os_walk — zero-dependency recursive os.walk (default). Secure, adequate

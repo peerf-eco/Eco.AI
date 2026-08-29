@@ -525,3 +525,10 @@ export interface FsListing {
   parent: string | null;
   entries: FsEntry[];
 }
+
+// GET /api/fs/roots — locations the server-side picker is allowed to browse.
+export interface FsRoots {
+  home: string;
+  output_root?: string;
+  roots: string[];
+}
