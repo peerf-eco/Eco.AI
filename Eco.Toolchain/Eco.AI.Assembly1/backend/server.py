@@ -8,6 +8,7 @@ import logging
 import shutil
 import hashlib
 import base64
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,11 +16,12 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from typing import List, Dict, Any, AsyncGenerator, Set
+from typing import List, Dict, Any, AsyncGenerator
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from agent.config.loader import (
     load_config,
@@ -27,6 +29,13 @@ from agent.config.loader import (
     load_role_config,
 )
 from agent.internal.tools import binaries, paths
+from backend.session_export import (
+    build_project_export,
+    default_traces_root,
+    iter_project_jsonl,
+    render_export_text,
+    safe_export_name,
+)
 from eco_harness.worktrees import WorktreeError, create_worktree
 from eco_harness.roles import make_role_agent
 
@@ -65,17 +74,28 @@ app.mount("/files", StaticFiles(directory="output"), name="files")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# ACTIVE SESSIONS — in-memory map of thread_id -> WebSocket for sessions that
+# currently have a live connection. Lets the UI stop (abort) a running or
+# suspended session from the projects panel even when that session is not the
+# one currently displayed in the main chat area. Populated on connect and
+# cleared on disconnect / abort.
+# ═══════════════════════════════════════════════════════════════════════════
+
+ACTIVE_SESSIONS: dict[str, "WebSocket"] = {}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # PROJECT & SESSION REGISTRY — persisted at <output_root>/.harness-registry.json
 #
-# The web UI's left panel lists projects (folders registered by the user or
-# seen in output/) and each project's coding sessions (one per chat thread).
-# Shape:
+# The web UI's left panel lists whitelisted projects (folders explicitly
+# registered by the user) and each project's coding sessions (one per chat
+# thread). Shape:
 #   {"projects":  [{id, path, name, added_at}],
 #    "sessions":  [{id, thread_id, project_path, title, created_at,
 #                   updated_at, status}]}
 # Session ids are the first 8 chars of thread_id — matching the chat-<id8>
-# output directory convention. Legacy output/chat-* dirs are seeded as idle
-# sessions on read so history survives registry resets.
+# output directory convention. Removing a project from the panel deletes its
+# registry entry only — sessions, traces, and folders are never touched.
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _output_root() -> Path:
@@ -86,16 +106,160 @@ def _registry_path() -> Path:
     return _output_root() / ".harness-registry.json"
 
 
+def _sweep_legacy_nested_app_dirs(output_root: Path) -> list[Path]:
+    """Detect leftover `--app/...` nested project dirs from pre-fix runs.
+
+    Bug history (ses-9257ff60 → ses-6acd93e6 → ses-e9b2c2ad): the
+    previous implementation of `_default_project_dir` used
+    `Path("./output").resolve()`, which is CWD-relative. When the
+    server was started with CWD = an old project's working dir, the
+    new default project_dir became nested INSIDE the old one as
+    `output/<old>/output/<old>/--app/Eco.Toolchain/...`. The eco-wizard
+    then wrote the new project's files into that nested tree, and
+    subsequent runs picked up the same project and saw TWO project
+    trees (ses-e9b2c2ad's 22-turn coder run spent 7 turns on
+    list_dir/glob trying to disambiguate `Eco.TrigTable` from
+    `--app/Eco.Toolchain/.../Eco.TrigTable`).
+
+    The fix in `_default_project_dir` and the trace-dir construction
+    anchors paths to the repo root, preventing NEW nesting. This sweep
+    detects EXISTING nested residue so the user (and the panel) can
+    clean it up explicitly. It does NOT auto-delete; deletion happens
+    only via POST /api/projects/cleanup-legacy (or the scoped
+    end-of-session helper) and is subject to the 24 h plan.md guard.
+
+    Heuristic — a candidate must show the actual nesting-bug signature,
+    otherwise live projects (every chat dir legitimately contains an
+    `--app/Eco.Toolchain/...` tree) would match:
+      (a) its name is literally "--app", AND
+      (b) its ancestor chain below `output_root` contains a directory
+          named `output` — the residue of the CWD-relative
+          `Path("./output").resolve()` bug — AND
+      (c) it contains at least one ACOM component marker (SourceFiles/,
+          MakefileExe, ...) proving a pre-fix run created a project
+          here.
+
+    Pure walker: returns the list of `Path`s that match; never follows
+    symlinks and never returns anything outside `output_root`.
+    """
+    if not output_root or not output_root.is_dir():
+        return []
+    root = output_root.resolve()
+    ACOM_MARKERS = (
+        "SourceFiles", "SharedFiles", "HeaderFiles", "DesignFiles",
+        "AssemblyFiles", "BuildFiles", "DependenciesFiles", "EcoMain.c",
+        "MakefileExe", "EcoSystem1", "EcoMathC89", "EcoInterfaceBus1",
+    )
+
+    def _has_nested_output_component(p: Path) -> bool:
+        # The CWD-nesting bug is the ONLY way an `output` component can
+        # appear between the output root and an `--app` dir: live
+        # projects look like `<output_root>/<chat-*>/--app` with no
+        # `output` component below the root.
+        try:
+            rel = p.resolve().relative_to(root)
+        except (OSError, ValueError):
+            return False
+        return "output" in rel.parts
+
+    def _has_acom_marker(d: Path) -> bool:
+        # Depth-bounded walk for an ACOM project marker. Capped at 6
+        # levels deep and 2000 entries; exceeding the cap is NOT a
+        # match (size alone proves nothing — only a marker does).
+        try:
+            count = 0
+            for root_dir, dirs, files in d.walk(on_error=lambda e: None,
+                                                follow_symlinks=False):
+                depth = len(root_dir.relative_to(d).parts) if root_dir != d else 0
+                if depth > 6:
+                    dirs.clear()
+                    continue
+                for marker in ACOM_MARKERS:
+                    if marker in dirs or marker in files:
+                        return True
+                count += len(files) + len(dirs)
+                if count > 2000:
+                    return False
+        except OSError:
+            pass
+        return False
+
+    from collections import deque
+    queue = deque([(root, 0)])
+    scanned = 0
+    candidates: list[Path] = []
+    while queue and scanned < 10_000:
+        d, depth = queue.popleft()
+        scanned += 1
+        if depth > 5:
+            continue
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for e in entries:
+            # Never follow symlinks: a symlinked component could point
+            # the sweep (and any later rmtree) outside the output root.
+            if e.is_symlink() or not e.is_dir():
+                continue
+            if e.name == "--app":
+                if (_has_nested_output_component(e) and _has_acom_marker(e)):
+                    candidates.append(e)
+            elif depth < 5:
+                queue.append((e, depth + 1))
+    return candidates
+
+
 def _load_registry() -> dict:
     try:
         data = json.loads(_registry_path().read_text(encoding="utf-8"))
         if isinstance(data, dict):
             data.setdefault("projects", [])
             data.setdefault("sessions", [])
+            # Repair paths recorded with a stale output-root prefix so the panel
+            # and subsequent runs point at the harness's current output root.
+            # The heal-save must never discard the loaded registry: if the
+            # file is read-only to us (e.g. written by a root-owned server
+            # run), the in-memory heal still applies and the panel renders.
+            try:
+                if _heal_registry_paths(data):
+                    _save_registry(data)
+            except OSError:
+                logger.warning(
+                    "registry path heal could not be persisted (%s is not "
+                    "writable); serving healed paths from memory",
+                    _registry_path(),
+                )
             return data
     except (OSError, json.JSONDecodeError):
         pass
     return {"projects": [], "sessions": []}
+
+
+def _heal_registry_paths(registry: dict) -> bool:
+    """Re-anchor stored project/session paths that only differ from the current
+    output root by a stale prefix (cwd drift). Returns True if anything changed.
+
+    See ``_remap_to_output_root`` for the security reasoning: the remapped path
+    always lands inside the output root."""
+    changed = False
+    for entry in registry.get("projects", []):
+        raw = entry.get("path")
+        if not raw:
+            continue
+        fixed = str(_remap_to_output_root(Path(raw).expanduser()))
+        if fixed != str(raw):
+            entry["path"] = fixed
+            changed = True
+    for sess in registry.get("sessions", []):
+        raw = sess.get("project_path")
+        if not raw:
+            continue
+        fixed = str(_remap_to_output_root(Path(raw).expanduser()))
+        if fixed != str(raw):
+            sess["project_path"] = fixed
+            changed = True
+    return changed
 
 
 def _save_registry(registry: dict) -> None:
@@ -164,6 +328,31 @@ def _ensure_allowed(path: Path) -> Path:
     return path.resolve()
 
 
+def _remap_to_output_root(candidate: Path) -> Path:
+    """Repair a project path recorded with a stale output-root prefix.
+
+    The output root resolves relative to the server's CWD, which can change
+    between runs (e.g. a container ``working_dir`` moved, or
+    ``HARNESS_OUTPUT_ROOT`` was overridden). Projects/sessions registered under
+    the old prefix (e.g. ``/app/output/chat-x``) then fall outside the allowed
+    roots and every new run that selects them is rejected before it starts —
+    surfacing as "project_dir is outside the allowed roots".
+
+    We only repair the specific drift where the path is ``<X>/output/<name>`` but
+    the harness now resolves its output root to a different ``<Y>/output``. This
+    keeps the security boundary intact: genuinely foreign paths (e.g.
+    ``/etc/secrets``) are left untouched and still rejected, while the remapped
+    result always lands inside the current output root."""
+    candidate = candidate.resolve()
+    if _is_within_allowed(candidate):
+        return candidate
+    if candidate.parent.name == "output":
+        alt = _output_root() / candidate.name
+        if _is_within_allowed(alt):
+            return alt
+    return candidate
+
+
 @app.get("/api/fs/browse")
 async def fs_browse(path: str | None = None, files: bool = False):
     """List subdirectories (and optionally files) of `path` (home when omitted)
@@ -198,6 +387,21 @@ async def fs_browse(path: str | None = None, files: bool = False):
     if target.parent != target and _is_within_allowed(target.parent):
         parent = str(target.parent)
     return {"path": str(target), "parent": parent, "entries": entries}
+
+
+@app.get("/api/fs/roots")
+async def fs_roots():
+    """Browsable root locations for the folder/file picker UI.
+
+    The picker runs against the SERVER's filesystem (inside the api container
+    in the dev stack), which is easy to mistake for the browser host's disks.
+    Exposing the allowlist lets the UI show quick-jump chips and explain
+    "outside the allowed roots" rejections concretely."""
+    return {
+        "home": str(Path.home().resolve()),
+        "output_root": str(_output_root().resolve()),
+        "roots": [str(root) for root in _allowed_roots()],
+    }
 
 
 # ── File search (the @-mention backend) ──────────────────────────────────────
@@ -380,60 +584,96 @@ async def fs_search(
 
 @app.get("/api/projects")
 async def list_projects():
-    """Projects with their sessions; auto-seeds legacy output/chat-* runs."""
+    """Whitelisted projects with their grouped sessions.
+
+    ALSO returns a `legacy_nested_app_dirs` list — the detected legacy
+    `--app` residue (empty when there is none). GET is report-only:
+    the frontend can surface the list, and deletion happens only via
+    the explicit `POST /api/projects/cleanup-legacy` endpoint.
+    """
+    output_root = _output_root()
+    # Sweep in a worker thread: the BFS walk is disk-bound and must not
+    # block the event loop while other sessions are streaming. GET is
+    # report-only — deletion happens exclusively via the explicit
+    # POST /api/projects/cleanup-legacy endpoint (review before delete).
+    legacy_dirs = await run_in_threadpool(
+        _sweep_legacy_nested_app_dirs, output_root,
+    )
+    if legacy_dirs:
+        # Log once per request — the user can hit /api/projects/cleanup-legacy
+        # to actually delete the trees. Logging the resolved paths helps the
+        # user verify they are the expected ones.
+        for d in legacy_dirs:
+            logger.warning(
+                "legacy nested --app dir detected: %s "
+                "(use POST /api/projects/cleanup-legacy to remove)",
+                d,
+            )
+    return {
+        "projects": _build_project_list(),
+        "legacy_nested_app_dirs": [str(d) for d in legacy_dirs],
+    }
+
+
+def _build_project_list() -> list[dict]:
+    """Whitelisted projects with their grouped sessions.
+
+    Only folders explicitly registered by the user (registry["projects"])
+    are visible in the panel — session paths and legacy output/chat-* dirs
+    are no longer materialized as projects. Sessions whose project_path
+    is not whitelisted simply don't render; their records stay in the
+    registry.
+
+    Each session in the response is enriched with the trace-bookkeeping
+    fields (trace_dir, trace_last_file, trace_last_error, trace_call_count)
+    so the left panel can render the `ses-` chip + the hover tooltip + the
+    copy-to-clipboard button WITHOUT a second round trip per session.
+    Computing _session_trace_meta() is cheap (a listdir per session + at
+    most one 4 KB read); for a typical project with N<=20 sessions the
+    whole request is under a millisecond on warm disk.
+    """
     registry = _load_registry()
-    projects: dict[str, dict] = {
+    whitelisted: dict[str, dict] = {
         entry["path"]: {**entry, "auto": False}
         for entry in registry["projects"]
     }
-    sessions: dict[str, dict] = {}
-    for session in registry["sessions"]:
-        sessions[session["id"]] = session
-
-    # Seed legacy/default chat-* dirs that have no session record yet.
-    known_dirs: set[str] = set()
-    for session in registry["sessions"]:
-        p = session.get("project_path")
-        if p:
-            known_dirs.add(p)
-    for d in sorted(_output_root().glob("chat-*")):
-        if not d.is_dir():
-            continue
-        project_path = str(d)
-        short_id = d.name.replace("chat-", "", 1)
-        if short_id in sessions or project_path in known_dirs:
-            continue
-        sessions[short_id] = {
-            "id": short_id,
-            "thread_id": short_id,
-            "project_path": project_path,
-            "title": "(previous run)",
-            "created_at": datetime.fromtimestamp(d.stat().st_ctime, timezone.utc).isoformat(),
-            "updated_at": datetime.fromtimestamp(d.stat().st_mtime, timezone.utc).isoformat(),
-            "status": "idle",
-        }
-        known_dirs.add(project_path)
-
-    # Every distinct session project becomes a visible project entry.
-    for session in sessions.values():
-        ppath = session.get("project_path")
-        if ppath and ppath not in projects:
-            projects[ppath] = {**_project_entry(Path(ppath)), "auto": True}
 
     grouped: dict[str, list[dict]] = {}
-    for session in sessions.values():
-        grouped.setdefault(session.get("project_path") or "", []).append(session)
+    for session in registry["sessions"]:
+        grouped.setdefault(_session_project_path(session), []).append(session)
 
     result = []
-    for ppath, entry in projects.items():
+    for ppath, entry in whitelisted.items():
         proj_sessions = sorted(
             grouped.get(ppath, []),
             key=lambda s: s.get("updated_at") or "",
             reverse=True,
         )
-        result.append({**entry, "sessions": proj_sessions})
+        # Enrich each session with trace meta inline. The trace-bookkeeping
+        # fields are the same shape the messages endpoint already returns,
+        # so the panel can render them on a GET /api/projects response too.
+        enriched = [{**s, **_session_trace_meta(s)} for s in proj_sessions]
+        result.append({**entry, "sessions": enriched})
     result.sort(key=lambda p: (p.get("added_at") or ""), reverse=True)
-    return {"projects": result}
+    return result
+
+
+@app.post("/api/projects/cleanup-legacy")
+async def cleanup_legacy_nested_app_dirs():
+    """Delete the legacy `--app/...` nested project dirs that the
+    startup sweep detected on the last GET /api/projects call.
+
+    Safety: any --app tree whose plan.md — in the tree itself or any
+    parent up to the output root — is newer than 24 h is PRESERVED
+    (the user may be mid-session). Trees that contain only generated
+    source from a completed/aborted run are removed.
+
+    Returns the list of removed dirs and the list of preserved dirs.
+    """
+    removed, preserved = await run_in_threadpool(
+        _cleanup_legacy_dirs, _output_root(),
+    )
+    return {"removed": removed, "preserved": preserved}
 
 
 @app.post("/api/projects")
@@ -457,6 +697,370 @@ async def register_project(request: ProjectRegisterRequest):
     registry["projects"].append(entry)
     _save_registry(registry)
     return {**entry, "auto": False}
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    """Remove a project from the panel whitelist — a visual/UI operation only.
+
+    Deletes the registry["projects"] entry and nothing else: sessions, traces,
+    and the folder on disk are untouched (re-adding the folder via the browser
+    restores it). Returns 409 when any session of this project is still
+    running so the panel never hides live work."""
+    registry = _load_registry()
+    entry = next(
+        (p for p in registry["projects"] if p.get("id") == project_id), None,
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Unknown project: {project_id}")
+    for session in _sessions_for_project(registry, entry.get("path")):
+        if session.get("status") == "running":
+            raise HTTPException(
+                status_code=409,
+                detail="Project has a running session",
+            )
+    registry["projects"] = [
+        p for p in registry["projects"] if p.get("id") != project_id
+    ]
+    _save_registry(registry)
+    return {"status": "ok", "removed": project_id}
+
+
+# ── Session inspection & control ─────────────────────────────────────────────
+# The left panel lists sessions but the main chat area only ever shows the
+# live connection's thread. These endpoints let the UI (1) replay a session's
+# reconstructed transcript into the main view and (2) stop a running/suspended
+# session so it can be removed from the panel.
+
+def _find_session(registry: dict, session_id: str) -> dict | None:
+    """Look up a session record by its 8-char short id."""
+    for session in registry["sessions"]:
+        if session.get("id") == session_id:
+            return session
+    return None
+
+
+def _session_trace_dir(session: dict) -> Path:
+    """Return the on-disk trace dir for a session.
+
+    The minimal-first-cut naming: traces/ses-<8hex>/ (one folder per
+    session, NOT per project). `session_id` is the 8-char prefix;
+    `thread_id` is the full UUID when present (preferred for symmetry
+    with the WebSocket layer).
+    """
+    raw = session.get("thread_id") or session.get("id") or ""
+    short = raw[:8] if raw else "unknown"
+    return Path(os.getenv("HARNESS_TRACES_DIR", "traces")) / f"ses-{short}"
+
+
+def _session_trace_dirs(session: dict) -> list[Path]:
+    """Candidate trace dirs for a session, newest-prefix first.
+
+    The minimal-first-cut renames the canonical path to ``traces/ses-<id>/``
+    but legacy traces still live under ``traces/chat-<id>/`` from previous
+    runs. The metadata helper scans both so the UI can show a useful
+    summary regardless of when the session ran. Returns an ordered list
+    of dirs that exist on disk (empty list if neither does).
+    """
+    raw = session.get("thread_id") or session.get("id") or ""
+    short = raw[:8] if raw else "unknown"
+    root = Path(os.getenv("HARNESS_TRACES_DIR", "traces"))
+    candidates = [root / f"ses-{short}", root / f"chat-{short}"]
+    return [c for c in candidates if c.is_dir()]
+
+
+def _session_trace_dir(session: dict) -> Path:
+    """Canonical trace dir (the new ses- prefix). For the metadata helper
+    that scans both new and legacy dirs, use ``_session_trace_dirs``."""
+    raw = session.get("thread_id") or session.get("id") or ""
+    short = raw[:8] if raw else "unknown"
+    return Path(os.getenv("HARNESS_TRACES_DIR", "traces")) / f"ses-{short}"
+
+
+def _session_trace_meta(session: dict) -> dict:
+    """Best-effort summary of the session's trace folder for the UI.
+
+    Returns a small dict: trace_dir (str), trace_last_file (str|None),
+    trace_last_error (str|None), trace_call_count (int). The frontend
+    uses these to (a) render the trace path in the session-card hover
+    tooltip, and (b) one-click jump to the failing trace file when
+    the session ended in `failed` / `aborted`. Cheap (a single
+    listdir + at most one file read for the last call's meta).
+
+    Scans BOTH the new ses- dir and the legacy chat- dir so traces
+    written before the rename are still discoverable.
+    """
+    dirs = _session_trace_dirs(session)
+    tdir = _session_trace_dir(session)  # canonical for the UI label
+    out: dict = {"trace_dir": str(tdir), "trace_last_file": None,
+                 "trace_last_error": None, "trace_call_count": 0}
+    files: list = []
+    for d in dirs:
+        try:
+            files.extend(d.glob("*.json"))
+        except OSError:
+            continue
+    files.sort()
+    out["trace_call_count"] = len(files)
+    if not files:
+        return out
+    last = files[-1]
+    out["trace_last_file"] = str(last)
+    # Read only the meta block of the last file — a few hundred bytes.
+    try:
+        with last.open("r", encoding="utf-8") as fh:
+            chunk = fh.read(8192)
+        # Lazy JSON parse: we just want the top-level "meta" object. Cheap
+        # regex pulls the error / stop_reason out without a full parse —
+        # fine for tooltips.
+        import re as _re
+        m_err = _re.search(r'"error"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', chunk)
+        if m_err:
+            out["trace_last_error"] = m_err.group(1)[:280]
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+@app.get("/api/sessions/{session_id}/messages")
+async def session_messages(session_id: str):
+    """Reconstruct a session's conversation as a flat, renderable transcript.
+
+    Reuses backend.session_export.session_turns: each turn becomes a user
+    message (the question) followed by an assistant message (reasoning + the
+    final/stop-tool answer), in the order they occurred. Sessions without
+    usable traces yield an empty message list with the metadata intact so the
+    UI can still show "no recorded transcript"."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    registry = _load_registry()
+    session = _find_session(registry, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+
+    from backend.session_export import session_turns, default_traces_root
+
+    turns = session_turns(session, default_traces_root())
+    messages: list[dict] = []
+    for turn in turns:
+        question = (turn.get("question") or "").strip()
+        if question:
+            messages.append({"role": "user", "text": question})
+        reasoning = (turn.get("reasoning_chain") or "").strip()
+        answer = (turn.get("final_answer") or "").strip()
+        parts: list[str] = []
+        if reasoning:
+            parts.append(f"**Reasoning**\n\n{reasoning}")
+        if answer:
+            parts.append(answer)
+        body = "\n\n".join(parts)
+        if body:
+            messages.append({"role": "assistant", "text": body})
+
+    return {
+        "session": {
+            **{k: session.get(k) for k in (
+                "id", "thread_id", "project_path", "title",
+                "created_at", "updated_at", "status",
+            )},
+            # Minimal-first-cut: surface the trace dir + last file in every
+            # session message response so the panel can render the trace
+            # path on hover without a second round trip.
+            **_session_trace_meta(session),
+        },
+        "messages": messages,
+    }
+
+
+@app.get("/api/sessions/{session_id}/trace")
+async def session_trace(session_id: str):
+    """Lightweight summary of the session's trace folder.
+
+    Returns the trace dir, the per-call file list (newest last), and the
+    meta block of the most recent file. Drives the "open trace folder"
+    and "open last failing call" affordances in the project panel.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    registry = _load_registry()
+    session = _find_session(registry, session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown session: {session_id}",
+        )
+    meta = _session_trace_meta(session)
+    files: list[dict] = []
+    # Scan both the new ses-* dir and any legacy chat-* dir so a single
+    # endpoint serves all sessions regardless of when they ran.
+    for tdir in _session_trace_dirs(session):
+        for path in sorted(tdir.glob("*.json")):
+            info = {"path": str(path), "name": path.name, "size": 0,
+                    "error": "", "label": "", "ts": ""}
+            try:
+                info["size"] = path.stat().st_size
+            except OSError:
+                pass
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    chunk = fh.read(4096)
+                m_label = re.search(r'"label"\s*:\s*"([^"]+)"', chunk)
+                m_err = re.search(r'"error"\s*:\s*"([^"]+)"', chunk)
+                m_ts = re.search(r'"ts"\s*:\s*"([^"]+)"', chunk)
+                if m_label:
+                    info["label"] = m_label.group(1)
+                if m_err:
+                    info["error"] = m_err.group(1)[:280]
+                if m_ts:
+                    info["ts"] = m_ts.group(1)
+            except (OSError, ValueError):
+                pass
+            files.append(info)
+    return {**meta, "files": files}
+
+
+@app.post("/api/sessions/{session_id}/abort")
+async def abort_session(session_id: str):
+    """Stop a running or suspended session.
+
+    Marks the session finished in the registry (so it becomes removable from
+    the panel) and, when the session still has a live WebSocket, closes that
+    connection — which makes the handler's disconnect path record the abort
+    too. Idempotent: re-aborting an already-finished session is a no-op."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    registry = _load_registry()
+    session = _find_session(registry, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+
+    thread_id = session.get("thread_id") or ""
+    # Flip registry status so the panel stops treating it as live work.
+    if session.get("status") == "running":
+        try:
+            _record_session_end(thread_id, Path(session.get("project_path") or "."), "aborted")
+        except Exception:
+            logger.exception("abort_session: failed to record end")
+
+    # Signal the live connection (if any) to tear down.
+    ws = ACTIVE_SESSIONS.get(thread_id)
+    if ws is not None:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+        ACTIVE_SESSIONS.pop(thread_id, None)
+
+    return {"status": "ok", "aborted": session_id}
+
+
+# ── Session export (fine-tuning data) ────────────────────────────────────────
+# Turns are rebuilt from traces/chat-<id8>/ by backend/session_export.py:
+# JSONL = one training record per turn; TXT = human-readable labeled blocks.
+
+_EXPORT_MEDIA_TYPES = {
+    "jsonl": "application/x-ndjson",
+    "txt": "text/plain; charset=utf-8",
+}
+
+
+def _export_format(format_param: str) -> str:
+    fmt = (format_param or "").strip().lower()
+    if fmt not in ("jsonl", "txt"):
+        raise HTTPException(status_code=400, detail="format must be 'jsonl' or 'txt'")
+    return fmt
+
+
+_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _safe_id(value: str, fallback: str = "x") -> str:
+    """Fold an externally supplied id (e.g. the ``thread_id`` query param) to
+    a path-safe charset so it can never carry ``/`` or ``..`` into a filename
+    or directory built from it."""
+    folded = _SAFE_ID_RE.sub("-", value or "").strip("-")
+    return folded or fallback
+
+
+def _session_project_path(session: dict) -> str:
+    """Association key: a session belongs to the project whose registry path
+    matches its ``project_path``; the empty string groups orphaned sessions."""
+    return session.get("project_path") or ""
+
+
+def _sessions_for_project(registry: dict, project_path: str) -> list[dict]:
+    """All sessions of one project, most recently updated first."""
+    sessions = [
+        s for s in registry["sessions"]
+        if _session_project_path(s) == project_path
+    ]
+    return sorted(
+        sessions, key=lambda s: s.get("updated_at") or "", reverse=True,
+    )
+
+
+def _project_sessions(registry: dict, project: dict) -> list[dict]:
+    """The project's sessions, most recently updated first."""
+    return _sessions_for_project(registry, project.get("path"))
+
+
+def _export_streaming_response(
+    project_session_pairs: list[tuple[dict, list[dict]]], fmt: str, filename: str,
+):
+    """Stream the export without blocking the event loop: each project's trace
+    history is built in a worker thread and streamed incrementally, so memory
+    stays bounded to a single project and live websockets are not frozen."""
+
+    async def _iter():
+        for index, (project, sessions) in enumerate(project_session_pairs):
+            export = await run_in_threadpool(
+                build_project_export, project, sessions, default_traces_root(),
+            )
+            if fmt == "jsonl":
+                for line in iter_project_jsonl(export):
+                    yield line + "\n"
+            else:
+                if index:
+                    yield "\n"
+                yield render_export_text(export)
+
+    return StreamingResponse(
+        _iter(),
+        media_type=_EXPORT_MEDIA_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/projects/{project_id}/export")
+async def export_project(project_id: str, format: str = "jsonl"):
+    """Export one project's sessions as JSONL/TXT (question, context,
+    reasoning chain, final answer per turn)."""
+    fmt = _export_format(format)
+    registry = _load_registry()
+    project = next(
+        (p for p in registry["projects"] if p.get("id") == project_id), None,
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Unknown project: {project_id}")
+    filename = (
+        f"{safe_export_name(project.get('name') or 'project')}-sessions.{fmt}"
+    )
+    return _export_streaming_response(
+        [(project, _project_sessions(registry, project))], fmt, filename,
+    )
+
+
+@app.get("/api/export/all")
+async def export_all_projects(format: str = "jsonl"):
+    """Export every whitelisted project's sessions as one combined file."""
+    fmt = _export_format(format)
+    registry = _load_registry()
+    projects = sorted(
+        registry["projects"], key=lambda p: p.get("added_at") or "", reverse=True,
+    )
+    pairs = [(p, _project_sessions(registry, p)) for p in projects]
+    return _export_streaming_response(
+        pairs, fmt, f"harness-sessions-all.{fmt}",
+    )
 
 
 def _record_session_start(thread_id: str, project_dir: Path, title: str) -> None:
@@ -484,8 +1088,9 @@ def _record_session_start(thread_id: str, project_dir: Path, title: str) -> None
                 "updated_at": now,
                 "status": "running",
             })
-        if not any(p["path"] == project_path for p in registry["projects"]):
-            registry["projects"].append(_project_entry(project_dir.resolve()))
+        # Panel visibility is whitelist-only: a session against an
+        # unregistered dir is recorded here but never auto-added to
+        # registry["projects"] — the folder shows up once explicitly added.
         _save_registry(registry)
     except Exception:
         logger.exception("session start recording failed")
@@ -504,6 +1109,91 @@ def _record_session_end(thread_id: str, project_dir: Path, status: str) -> None:
         _save_registry(registry)
     except Exception:
         logger.exception("session end recording failed")
+    # End-of-session cleanup: residue from a pre-fix run inside THIS
+    # session's own project dir is now stale (the session either
+    # succeeded or was aborted; either way the work has moved on).
+    # Scoped to the session's own project dir — never the output root,
+    # so other (possibly still-running) sessions' trees are untouched.
+    try:
+        removed, _preserved = _cleanup_legacy_dirs(Path(project_dir).resolve())
+        for d in removed:
+            logger.info("end-of-session legacy cleanup removed: %s", d)
+    except Exception:
+        logger.exception("end-of-session legacy cleanup failed")
+
+
+_LEGACY_PLAN_GUARD_SECONDS = 24 * 3600
+
+
+def _recent_plan_md(candidate: Path, stop_root: Path) -> bool:
+    """24h plan.md safety guard for legacy cleanup.
+
+    A candidate is PRESERVED when a `plan.md` newer than the guard
+    window exists in the candidate itself OR any of its parents up to
+    the sweep's scan root — in the real ACOM layout plan.md lives at
+    the chat-dir root (`output/chat-<id>/plan.md`), not inside `--app`,
+    so checking only the candidate would never protect a live session.
+    """
+    stop = stop_root.resolve() if stop_root else None
+    now = time.time()
+    d = candidate
+    while True:
+        plan = d / "plan.md"
+        try:
+            if plan.is_file() and (now - plan.stat().st_mtime) < _LEGACY_PLAN_GUARD_SECONDS:
+                return True
+        except OSError:
+            # TOCTOU (deleted/locked between is_file and stat):
+            # treat as stale rather than crashing the caller.
+            pass
+        if stop is not None:
+            try:
+                parent = d.parent.resolve()
+            except OSError:
+                return False
+            if parent == d or not parent.is_relative_to(stop):
+                return False
+            d = parent
+        else:
+            parent = d.parent
+            if parent == d:
+                return False
+            d = parent
+
+
+def _cleanup_legacy_dirs(scan_root: Path) -> tuple[list[str], list[str]]:
+    """Single implementation of legacy `--app` residue cleanup, shared
+    by POST /api/projects/cleanup-legacy and the scoped end-of-session
+    helper. Sweeps `scan_root`, deletes each candidate subject to the
+    24 h plan.md guard, and returns (removed, preserved) path lists so
+    every call site reports identical behavior."""
+    try:
+        legacy_dirs = _sweep_legacy_nested_app_dirs(scan_root)
+    except Exception:
+        logger.exception("legacy --app sweep failed for %s", scan_root)
+        return [], []
+    removed: list[str] = []
+    preserved: list[str] = []
+    for d in legacy_dirs:
+        if _recent_plan_md(d, scan_root):
+            preserved.append(str(d))
+            continue
+        try:
+            shutil.rmtree(d)
+            removed.append(str(d))
+        except OSError as e:
+            preserved.append(f"{d} (rmtree failed: {e})")
+    return removed, preserved
+
+
+def cleanup_legacy_nested_app_dirs_thread_safe(scan_root: Path) -> int:
+    """Callable from the server's own code paths (no FastAPI request
+    context). Returns the number of trees removed. Delegates to the
+    shared _cleanup_legacy_dirs implementation (same sweep, same 24 h
+    plan.md guard, same error handling as the cleanup endpoint)."""
+    removed, _preserved = _cleanup_legacy_dirs(scan_root)
+    return len(removed)
+    return removed
 
 
 
@@ -555,6 +1245,10 @@ async def harness_config():
             name: profile.model_dump()
             for name, profile in HARNESS_CONFIG.models.items()
         },
+        "providers": {
+            name: profile.model_dump()
+            for name, profile in HARNESS_CONFIG.providers.items()
+        },
         "modes": {
             name: {
                 "roles": spec.roles,
@@ -573,6 +1267,10 @@ class WorkspaceConfigRequest(BaseModel):
     # on next load (see load_config). Shape mirrors ModelProfile plus the
     # profile name as the mapping key; a None value REMOVES the profile.
     models: dict[str, dict[str, Any] | None] = Field(default_factory=dict)
+    # User-defined LLM endpoints (local inference servers, self-hosted
+    # gateways). Named and referenced by ModelProfile.provider; a None value
+    # REMOVES the provider.
+    providers: dict[str, dict[str, Any] | None] = Field(default_factory=dict)
     # LLM permission policy: {"defaults": {...}, "roles": {<role>: {...}}}.
     permissions: dict[str, Any] = Field(default_factory=dict)
 
@@ -584,7 +1282,7 @@ def _validate_workspace_sections(provided: dict[str, Any]) -> None:
     loader uses, so a bad payload is answered with a 400 at save time instead
     of a crashed harness at next restart.
     """
-    from agent.config.loader import LanguageSpec, ModelProfile, PermissionSpec, RoleSpec
+    from agent.config.loader import LanguageSpec, ModelProfile, PermissionSpec, ProviderProfile, RoleSpec
     from pydantic import ValidationError
 
     try:
@@ -595,6 +1293,9 @@ def _validate_workspace_sections(provided: dict[str, Any]) -> None:
         for profile in (provided.get("models") or {}).values():
             if profile is not None:
                 ModelProfile(**profile)
+        for provider in (provided.get("providers") or {}).values():
+            if provider is not None:
+                ProviderProfile(**provider)
         permissions = provided.get("permissions") or {}
         defaults = permissions.get("defaults")
         if defaults is not None:
@@ -830,7 +1531,7 @@ def _build_chat_model(config) -> Any:
     if profile is None:
         return None
     try:
-        return get_model(profile, role=None)
+        return get_model(profile, role=None, providers=config.providers)
     except Exception:
         logger.exception("chat model init failed")
         return None
@@ -889,10 +1590,23 @@ async def _classify_intent(user_req: str, model) -> bool:
         return True  # on doubt, run the pipeline rather than mis-answer
 
 
-async def _chat_reply(user_req: str, model, attached_ctx: str | None = None) -> str:
-    """One-shot direct answer for plain chat questions (no pipeline)."""
+async def _chat_reply(
+    user_req: str,
+    model,
+    attached_ctx: str | None = None,
+    trace_dir: Path | None = None,
+    call_no: int = 0,
+) -> str:
+    """One-shot direct answer for plain chat questions (no pipeline).
+
+    When `trace_dir` is given the raw request/response pair is persisted via
+    ``write_call_trace`` as a ``NNN-chat.json`` file (same convention as
+    pipeline calls) so plain-chat turns show up in session exports. The file's
+    ``NNN`` sequence is assigned by ``write_call_trace`` from the on-disk file
+    count; ``call_no`` is recorded in the trace metadata for correlation."""
     from agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
     from agent.pi_ai.stream import complete
+    from agent.internal.call_trace import write_call_trace
     user_msg = user_req
     if attached_ctx:
         user_msg = attached_ctx + user_msg
@@ -903,23 +1617,254 @@ async def _chat_reply(user_req: str, model, attached_ctx: str | None = None) -> 
     msg = await complete(
         model, ctx, SimpleStreamOptions(reasoning="low", maxTokens=2000)
     )
+    if trace_dir is not None:
+        # write_call_trace never raises — observability must not break replies.
+        write_call_trace(
+            trace_dir=trace_dir,
+            label="chat",
+            call_no=call_no,
+            iteration=0,
+            model_id=getattr(model, "id", "") or "",
+            request_context=ctx,
+            response=msg,
+            error="",
+        )
     return _msg_text(msg)
 
 
-def _workspace_header(project_dir: Path, marketplace_cache_root: Path) -> str:
+# Map of (os, arch) -> the GID_IEcoSystem_<arch> macro name defined in
+# marketplace_cache/Eco.Core1/SharedFiles/IEcoSystem1.h. The macro is
+# selected at build time via -DECO_<OS> -DECO_<ARCH>; the seed block
+# surfaces the right name so the architect never has to grep for it.
+# NOTE: when the GID is not in the table we fall back to a generic
+# message and ask the architect to read IEcoSystem1.h themselves.
+_TARGET_GID_MACRO = {
+    ("Linux",   "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Linux",   "x86"):        "GID_IEcoSystem_x86_32",
+    ("Linux",   "arm64"):      "GID_IEcoSystem_AARCH64",
+    ("Linux",   "arm64-v8a"):  "GID_IEcoSystem_AARCH64",
+    ("Linux",   "rv64gcv"):    "GID_IEcoSystem_RV64",
+    ("Linux",   "rv32"):       "GID_IEcoSystem_RV32",
+    ("Linux",   "mips64"):     "GID_IEcoSystem_MIPS64",
+    ("Linux",   "mips"):       "GID_IEcoSystem_MIPS",
+    ("Windows", "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Windows", "x86"):        "GID_IEcoSystem_x86_32",
+    ("Windows", "arm64"):      "GID_IEcoSystem_AARCH64",
+    ("Mac",     "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Mac",     "arm64"):      "GID_IEcoSystem_AARCH64",
+    ("iOS",     "arm64"):      "GID_IEcoSystem_AARCH64",
+    ("iOS",     "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Android", "arm64-v8a"):  "GID_IEcoSystem_AARCH64",
+    ("Android", "x86_64"):     "GID_IEcoSystem_x86_64",
+    ("Android", "x86"):        "GID_IEcoSystem_x86_32",
+    ("Android", "armeabi-v7a"): "GID_IEcoSystem_ARM",
+    ("Android", "mips64"):     "GID_IEcoSystem_MIPS64",
+    ("Android", "mips"):       "GID_IEcoSystem_MIPS",
+    ("EcoOS",   "x86_64"):     "GID_IEcoSystem_x86_64",
+}
+
+
+# Map of (os, arch) -> the GID suffix embedded in the Eco.System1
+# unikernel `.a` filename. The on-disk file is
+# `lib000000000000000000000000<HEX8>.a` and the GID suffix is NOT
+# always `53595333` ("SYS3") — the legacy Android mips / armeabi
+# targets ship the older SYS1 (`…53595331.a`) and SYS2
+# (`…53595332.a`) variants. Getting this wrong produces a non-
+# existent path in the architect's plan and a link error in the
+# coder. Discovered by enumerating
+# `marketplace_cache/Eco.System1/BuildFiles/*/*/<variant>/`.
+_SYSTEM1_GID = {
+    # SYS3 (main modern unikernel — used by every x86_64, arm64,
+    # rv64gcv, iOS, Mac, Linux, and the new Android arm64-v8a / x86_64).
+    ("Linux",   "x86_64"):     "53595333",
+    ("Linux",   "arm64-v8a"):  "53595333",
+    ("Linux",   "rv64gcv"):    "53595333",
+    ("Windows", "x86_64"):     "53595333",
+    ("Mac",     "x86_64"):     "53595333",
+    ("Mac",     "arm64"):      "53595333",
+    ("iOS",     "arm64"):      "53595333",
+    ("iOS",     "x86_64"):     "53595333",
+    ("Android", "arm64-v8a"):  "53595333",
+    ("Android", "x86_64"):     "53595333",
+    # SYS2 (Android armeabi-v7a / x86 / mips64).
+    ("Android", "armeabi-v7a"): "53595332",
+    ("Android", "x86"):        "53595332",
+    ("Android", "mips64"):     "53595332",
+    # SYS1 (legacy Android mips / armeabi).
+    ("Android", "mips"):       "53595331",
+    ("Android", "armeabi"):    "53595331",
+}
+
+
+def _resolve_target_triple(payload: dict) -> dict:
+    """Pull and normalise the user-selected target triple from a request.
+
+    The chat frame is expected to send `target_triple: {os, arch,
+    build_variant}` (see `config/UI` schema in the frontend). For backward
+    compat, accept the legacy `target` shorthand. Default to Linux
+    x86_64 StaticRelease when the UI has not sent a value yet — the
+    architect's plan validator will still flag a missing target-triple
+    block if the seed is empty.
+    """
+    tt = payload.get("target_triple")
+    if not isinstance(tt, dict):
+        legacy = payload.get("target")
+        tt = legacy if isinstance(legacy, dict) else {}
+    os_name = (tt.get("os") or "Linux").strip() or "Linux"
+    arch = (tt.get("arch") or "x86_64").strip() or "x86_64"
+    variant = (tt.get("build_variant") or tt.get("variant") or "StaticRelease").strip() or "StaticRelease"
+    if variant not in ("StaticRelease", "DynamicRelease"):
+        variant = "StaticRelease"
+    return {"os": os_name, "arch": arch, "build_variant": variant}
+
+
+def _target_triple_block(target: dict) -> str:
+    """Seed block: user-selected target triple (OS / arch / build_variant)."""
+    os_name = target.get("os", "Linux")
+    arch = target.get("arch", "x86_64")
+    variant = target.get("build_variant", "StaticRelease")
+    gid_macro = _TARGET_GID_MACRO.get((os_name, arch))
+    gid_note = (
+        f"  GID_IEcoSystem macro for this triple: `{gid_macro}` "
+        f"(selected at Eco.Core1 build time via -DECO_{os_name.upper()} -DECO_{arch.upper().replace('-V8A','_V8A')})\n"
+        if gid_macro else
+        f"  WARNING: no known GID_IEcoSystem_<arch> macro for {os_name}/{arch} — "
+        "the plan_validator will BLOCK the handoff. Ask the user to pick a "
+        "supported target triple from the chat frame.\n"
+    )
+    return (
+        f"=== Target triple (user-selected in the chat frame) ===\n"
+        f"  OS            : {os_name}\n"
+        f"  arch          : {arch}\n"
+        f"  build_variant : {variant}\n"
+        f"{gid_note}"
+        f"\n"
+    )
+
+
+def _pre_resolved_identifiers_block(
+    target: dict,
+    marketplace_cache_root: Path,
+) -> str:
+    """Seed block: identifiers the architect would otherwise have to grep for.
+
+    These are facts the harness knows deterministically (from the marketplace
+    cache layout, the Eco.Core1 GID table, the Eco.System1 unikernel
+    convention). The architect and coder must use them verbatim — do not
+    re-derive. Without this block, the prior Celsius->Fahrenheit session
+    (`chat-1ca5b8f4`) spent two tool calls and 1 691 reasoning tokens
+    re-discovering the same facts.
+    """
+    os_name = target["os"]
+    arch = target["arch"]
+    variant = target["build_variant"]
+    # The folder name for arm64 on Linux uses the Android-style "arm64-v8a"
+    # suffix; on Mac/iOS it's "arm64". Map the arch value to the on-disk
+    # directory name the marketplace ships.
+    build_dir_arch = {
+        "x86_64": "x86_64",
+        "x86": "x86",
+        "arm64": "arm64",
+        "arm64-v8a": "arm64-v8a",
+        "rv64gcv": "rv64gcv",
+        "mips64": "mips64",
+        "mips": "mips",
+    }.get(arch, arch)
+
+    cache = marketplace_cache_root.resolve()
+    # Pick the right GID for the target triple. The GID is embedded in
+    # the `.a` filename and is NOT always `53595333` ("SYS3") — see
+    # `_SYSTEM1_GID` for the per-(os,arch) mapping. When the target is
+    # not in the table (rare; e.g. a future platform), we list the
+    # directory for the architect and tell them to pick the only `.a`.
+    system1_gid = _SYSTEM1_GID.get((os_name, arch))
+    if system1_gid is not None:
+        system1_lib = (
+            f"{cache}/Eco.System1/BuildFiles/{os_name}/{build_dir_arch}/{variant}/"
+            f"lib000000000000000000000000{system1_gid}.a"
+        )
+        system1_lib_note = ""
+    else:
+        system1_lib = (
+            f"{cache}/Eco.System1/BuildFiles/{os_name}/{build_dir_arch}/{variant}/"
+            "lib<UNKNOWN_GID>.a"
+        )
+        system1_lib_note = (
+            "\n  NOTE: the (os, arch)=(" + os_name + ", " + arch + ") triple is not in\n"
+            "  the per-target `_SYSTEM1_GID` table — the path above uses\n"
+            "  `lib<UNKNOWN_GID>.a` as a placeholder. The architect MUST\n"
+            "  list_dir this directory, read the only `.a` filename, and\n"
+            "  paste the GID suffix into the plan before calling to_coder.\n"
+        )
+    core1_shared = f"{cache}/Eco.Core1/SharedFiles"
+    # Default to the well-known x86_64 line; for other arches the
+    # architect must read the matching line (the C skill tells them to).
+    gid_macro = _TARGET_GID_MACRO.get((os_name, arch), "GID_IEcoSystem_x86_64")
+    gid_bytes_default = (
+        "{ 0x01, 0x10, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, "
+        "0x00, 0x00, 0x00, 0x00, 0x86, 0x64, 0x03, 0x00} }"  # x86_64
+    )
+
+    return (
+        "=== Pre-resolved identifiers (USE VERBATIM — do not re-derive) ===\n"
+        "Eco.System1 unikernel library (NOT an ACOM component — no CID, no\n"
+        "factory symbol, never registered on the bus; just linked). It is a\n"
+        "unikernel that ships a minimal ACOM microkernel with the Interface Bus\n"
+        "built-in as its main, passive code path; the bus itself has no CID\n"
+        "either (passive infrastructure, no compute process), so neither it nor\n"
+        "the unikernel self-registers. The application code (EcoMain glue)\n"
+        "RegisterComponents the actually-running ACOM components on top of it.\n"
+        "  static library to LINK (not pull, not register) :\n"
+        "    " + system1_lib + "\n" + system1_lib_note +
+        "  Optional runtime services (queried via the bus with the IIDs\n"
+        "  from the System1 SharedFiles headers — never via a CID):\n"
+        "    IID_IEcoSystemInformation1 = {0x01, 0x10, {0x00, 0x00, 0x00,\n"
+        "      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n"
+        "      0x00, 0x01, 0xFF}}\n"
+        "    IID_IEcoCommandArguments1 = {0x01, 0x10, {0x00, 0x00, 0x00,\n"
+        "      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\n"
+        "      0x00, 0x01, 0x10}}\n"
+        "\n"
+        "Eco.Core1 (the mandatory base devkit, NOT a pullable component —\n"
+        "its files are in the eco_framework tree and the coder includes\n"
+        "from them; its `uguid` in the profile is 000000000000000000000000000000AA):\n"
+        "  SharedFiles dir : " + core1_shared + "\n"
+        "  IEcoSystem1     : declared there; use the macro `GID_IEcoSystem` in "
+        "EcoMain.c (it expands to the arch-specific GID at compile time).\n"
+        "  GID for the target triple : `" + gid_macro + "`\n"
+        "  Default UGUID bytes for x86_64 (other arches — read the matching line "
+        "in " + core1_shared + "/IEcoSystem1.h and quote the line number in the plan):\n"
+        "    " + gid_bytes_default + "\n"
+        "\n"
+    )
+
+
+def _workspace_header(
+    project_dir: Path,
+    marketplace_cache_root: Path,
+    target: dict | None = None,
+) -> str:
     """Prefix every agent seed with a workspace orientation block.
 
-    The block tells the model three things:
+    The block tells the model four things:
       1. Where it's working — absolute paths for project_dir AND the
          read-only marketplace_cache.
       2. How to explore — grep / glob / read examples (claude-code-style
          primitives that hide the absolute-path detail under a
          basename-prefix anchoring rule).
       3. That repeating an identical tool call wastes an iteration.
+      4. The user-selected target triple (OS / arch / build_variant) and
+         the pre-resolved identifiers (Eco.System1 library path, GID
+         macro, Eco.Core1 base dir) the architect would otherwise have
+         to re-derive.
 
-    Without this, coder previously burned 30+ iterations on path-guessing
-    list_dir('.') / list_dir('/') — see project path semantics.
+    Without (1)-(3), coder previously burned 30+ iterations on
+    path-guessing list_dir('.') / list_dir('/') — see project path
+    semantics. Without (4), the prior Celsius→Fahrenheit session
+    (`chat-1ca5b8f4`) spent 2 tool calls and 1 691 reasoning tokens on
+    exactly that re-derivation.
     """
+    target = target or {"os": "Linux", "arch": "x86_64", "build_variant": "StaticRelease"}
     return (
         f"=== Workspace ===\n"
         f"You are running in two locations:\n"
@@ -952,6 +1897,8 @@ def _workspace_header(project_dir: Path, marketplace_cache_root: Path) -> str:
         f"Re-running the same call with identical arguments is wasted work —\n"
         f"the result is already in your tool-result history above.\n"
         f"\n"
+        + _target_triple_block(target)
+        + _pre_resolved_identifiers_block(target, marketplace_cache_root)
     )
 
 
@@ -1373,11 +2320,44 @@ async def chat_endpoint(websocket: WebSocket):
     make_env_path = os.getenv("ECO_MAKE_EXE") or "make"
     make_exe = Path(make_env_path)
 
+    # A caller-supplied thread_id becomes the session id and the chat-<id>
+    # trace folder; sanitize it so it can never carry "/" or ".." into a
+    # filesystem path. Reconnects send the same raw value and get the same id.
     requested_thread_id = websocket.query_params.get("thread_id")
-    thread_id = requested_thread_id or str(uuid.uuid4())
+    thread_id = _safe_id(requested_thread_id) if requested_thread_id else str(uuid.uuid4())
 
     def _default_project_dir() -> Path:
-        return Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")) / f"chat-{thread_id[:8]}"
+        # Resolve to an ABSOLUTE path under a stable output root so the stored
+        # project_path does not depend on the server's current working
+        # directory.
+        #
+        # Bug history (chat-ea0e66f1 follow-up, ses-9257ff60): the previous
+        # implementation used `Path(os.getenv("HARNESS_OUTPUT_ROOT",
+        # "./output")).resolve()`. `resolve()` is CWD-relative, so when the
+        # server was started with CWD = an old project's working dir
+        # (e.g. the user kept the previous project selected in the panel),
+        # the new default project_dir became nested INSIDE the old one:
+        # `<old project>/output/chat-<id8>/`. eco-wizard then created
+        # `Eco.X/Eco.X/AssemblyFiles/...` under that nested path, the coder's
+        # relative `read`/`glob` calls saw an inconsistent tree, and the run
+        # failed without writing any source file.
+        #
+        # Fix: anchor the default to the *repository* root (the directory
+        # holding the server file), not to the server's CWD. `Path(__file__).resolve().parent`
+        # is the backend/ directory; its parent is the repository root.
+        # Repo-root-anchored defaults make the path independent of the
+        # process's CWD regardless of how the server was launched.
+        repo_root = Path(__file__).resolve().parent.parent
+        env_root = os.getenv("HARNESS_OUTPUT_ROOT")
+        if env_root:
+            base = Path(env_root)
+            if not base.is_absolute():
+                base = (repo_root / base).resolve()
+            else:
+                base = base.resolve()
+        else:
+            base = (repo_root / "output").resolve()
+        return base / f"chat-{thread_id[:8]}"
 
     project_dir = _default_project_dir()
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -1391,22 +2371,51 @@ async def chat_endpoint(websocket: WebSocket):
     use_worktree = False
     worktree_path: Path | None = None
 
-    # Per-conversation LLM trace folder. Every architect/coder/tester LLM
+    # Per-SESSION LLM trace folder. Every architect/coder/tester LLM
     # request+response is persisted here as a numbered JSON file (see
     # EcoAgent._stream_llm) — incrementally, so a trace exists after a single
     # call and even if the (now unbounded) agent loop never terminates.
-    trace_dir = Path(os.getenv("HARNESS_TRACES_DIR", "traces")) / f"chat-{thread_id[:8]}"
+    #
+    # Minimal-first-cut naming (full split in a follow-up): the trace folder
+    # uses the `ses-` prefix so the on-disk path and the project-panel
+    # session-card id are visually identical. The project folder keeps the
+    # current `chat-<8hex>` default for now (a single project hosts many
+    # sessions; the trace dir is 1:1 with a session, NOT with a project).
+    #
+    # Like _default_project_dir above, the trace dir is anchored to the
+    # repository root so the path is independent of the server's CWD — the
+    # same bug that nested output/chat-* under output/chat-*/* would also
+    # have nested traces/ under traces/chat-9257ff60/--app/.../traces/chat-*.
+    repo_root = Path(__file__).resolve().parent.parent
+    env_traces = os.getenv("HARNESS_TRACES_DIR")
+    if env_traces:
+        traces_base = Path(env_traces)
+        if not traces_base.is_absolute():
+            traces_base = (repo_root / traces_base).resolve()
+        else:
+            traces_base = traces_base.resolve()
+    else:
+        traces_base = (repo_root / "traces").resolve()
+    trace_dir = traces_base / f"ses-{thread_id[:8]}"
     trace_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(
         f"[CHAT WS] connected thread_id={thread_id} "
         f"project_dir={project_dir} trace_dir={trace_dir}"
     )
+    # Register so the UI can stop this session from the panel.
+    ACTIVE_SESSIONS[thread_id] = websocket
     await websocket.send_json({"type": "heartbeat", "protocol": "chat", "thread_id": thread_id})
 
     # Session bookkeeping for the UI project panel: flip the registry status
     # when this connection's run reaches any terminal state.
     session_open = False
+
+    # Per-connection counter passed to write_call_trace as metadata; the
+    # NNN-chat.json file sequence itself is assigned by write_call_trace from
+    # the on-disk file count, so chat replies interleave correctly with the
+    # pipeline's own trace writes to the same trace_dir.
+    chat_call_no = 0
 
     def finish_session(status: str) -> None:
         nonlocal session_open
@@ -1416,8 +2425,14 @@ async def chat_endpoint(websocket: WebSocket):
         _record_session_end(thread_id, project_dir, status)
 
     # Preserve stable node identifiers expected by the client.
-    PHASE_OF = {"architect": "planning", "coder": "coding",  "tester": "testing"}
-    NODE_OF  = {"architect": "planner",  "coder": "coder",   "tester": "tester"}
+    PHASE_OF = {
+        "architect": "planning", "coder": "coding",
+        "tester": "testing",     "reviewer": "review",
+    }
+    NODE_OF  = {
+        "architect": "planner",  "coder": "coder",
+        "tester": "tester",      "reviewer": "reviewer",
+    }
 
     loop = asyncio.get_event_loop()
 
@@ -1487,6 +2502,16 @@ async def chat_endpoint(websocket: WebSocket):
                         "type": "node_done",
                         "node": NODE_OF.get(agent, "planner"),
                     })
+            elif etype == "usage":
+                # Per-LLM-call token accounting for the phase stepper counters.
+                usage = (ev.data or {}).get("usage") or {}
+                if usage:
+                    await websocket.send_json({
+                        "type":  "usage",
+                        "node":  NODE_OF.get(agent, "planner"),
+                        "phase": PHASE_OF.get(agent, "planning"),
+                        "usage": usage,
+                    })
             elif etype == "error":
                 reason = (ev.data or {}).get("reason", "")
                 await websocket.send_json({
@@ -1541,6 +2566,11 @@ async def chat_endpoint(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "content": "Missing user_request"})
                 continue
 
+            # Per-message target triple (user-selected in the chat frame).
+            # Resolved once here so the seed block is the same for the
+            # architect, the warm-retry coder, and every hop in between.
+            target_triple = _resolve_target_triple(payload)
+
             # Per-message project override: the UI sends the folder selected
             # in the left projects panel. Without it we fall back to (and
             # reset to) the default per-thread chat-<id8> directory, so a
@@ -1548,7 +2578,11 @@ async def chat_endpoint(websocket: WebSocket):
             # project by accident.
             requested_project = str(payload.get("project_dir") or "").strip()
             if requested_project:
-                candidate = Path(requested_project).expanduser().resolve()
+                # Tolerate a stale output-root prefix (cwd drift) — re-anchor to
+                # the current output root instead of rejecting the run before it
+                # even starts. Security boundary is preserved: the remapped path
+                # always stays inside the output root.
+                candidate = _remap_to_output_root(Path(requested_project).expanduser())
                 if not _is_within_allowed(candidate):
                     await websocket.send_json({
                         "type": "error",
@@ -1638,7 +2672,7 @@ async def chat_endpoint(websocket: WebSocket):
                     one_shot_role,
                     config=connection_config,
                     model=(
-                        _get_model(role_profile, role=one_shot_role)
+                        _get_model(role_profile, role=one_shot_role, providers=connection_config.providers)
                         if role_backend in {"internal", "builtin", "eco"}
                         else None
                     ),
@@ -1649,13 +2683,14 @@ async def chat_endpoint(websocket: WebSocket):
                     marketplace_cache_root=marketplace_cache_root,
                     mode=mode,
                     trace_dir=trace_dir,
+                    on_event=_make_on_event(ev_queue, one_shot_role),
                 )
                 ev_queue = asyncio.Queue()
                 try:
                     result = await _run_agent(
                         one_shot.run,
                         ev_queue,
-                        _workspace_header(project_dir, marketplace_cache_root)
+                        _workspace_header(project_dir, marketplace_cache_root, target_triple)
                         + attached_block + user_req,
                     )
                 except Exception as error:
@@ -1690,9 +2725,14 @@ async def chat_endpoint(websocket: WebSocket):
             if mode == "auto":
                 gate_model = _build_chat_model(connection_config)
                 if gate_model is not None and not await _classify_intent(user_req, gate_model):
+                    chat_call_no += 1  # per-connection plain-chat trace counter
                     try:
                         answer = await _chat_reply(
-                            user_req, gate_model, attached_ctx=attached_block
+                            user_req,
+                            gate_model,
+                            attached_ctx=attached_block,
+                            trace_dir=trace_dir,
+                            call_no=chat_call_no,
                         )
                     except Exception as error:
                         answer = f"(chat reply failed: {error})"
@@ -1714,7 +2754,7 @@ async def chat_endpoint(websocket: WebSocket):
                     continue
 
             # ── AUTO/MIGRATE: full plan→implement→verify pipeline ──
-            workspace = _workspace_header(project_dir, marketplace_cache_root)
+            workspace = _workspace_header(project_dir, marketplace_cache_root, target_triple)
             planner_seed = workspace + attached_block + user_req
             approved_plan_md: str | None = None
             terminate_chat = False
@@ -1730,7 +2770,7 @@ async def chat_endpoint(websocket: WebSocket):
                     "architect",
                     config=connection_config,
                     model=(
-                        _get_model(architect_profile, role="architect")
+                        _get_model(architect_profile, role="architect", providers=connection_config.providers)
                         if architect_backend in {"internal", "builtin", "eco"}
                         else None
                     ),
@@ -1908,7 +2948,7 @@ async def chat_endpoint(websocket: WebSocket):
                 "coder",
                 config=connection_config,
                 model=(
-                    _get_model(coder_profile, role="coder")
+                        _get_model(coder_profile, role="coder", providers=connection_config.providers)
                     if coder_spec.backend.removesuffix("_cli")
                     in {"internal", "builtin", "eco"}
                     else None
@@ -1926,7 +2966,7 @@ async def chat_endpoint(websocket: WebSocket):
                 "tester",
                 config=connection_config,
                 model=(
-                    _get_model(tester_profile, role="tester")
+                        _get_model(tester_profile, role="tester", providers=connection_config.providers)
                     if tester_spec.backend.removesuffix("_cli")
                     in {"internal", "builtin", "eco"}
                     else None
@@ -1944,11 +2984,55 @@ async def chat_endpoint(websocket: WebSocket):
             # coder.to_architect is terminated — we don't restart the planner
             # from inside the sub-orchestrator (user already approved the plan;
             # if coder thinks the plan is wrong, it should fail honestly).
-            from agent.internal.entry import EXECUTION_EDGES, EXECUTION_ENTRY
+            from agent.internal.entry import (
+                EXECUTION_EDGES,
+                EXECUTION_ENTRY,
+                MIGRATE_EDGES,
+            )
+
+            if mode == "migrate":
+                # Migrate inserts a read-only ACOM reviewer between the coder
+                # and the tester. The coder's `to_tester` handoff card is the
+                # reviewer's compact seed — it carries the artifact path, the
+                # acceptance criteria, and the list of source files written, so
+                # the reviewer inspects only what was produced (no tree-wide
+                # bloat). The reviewer forwards to the tester (or back to the
+                # coder on critical findings) via its own handoff tools.
+                _, reviewer_spec, reviewer_profile = load_role_config(
+                    "reviewer", connection_config.root,
+                )
+                reviewer = make_role_agent(
+                    "reviewer",
+                    config=connection_config,
+                    model=(
+                        _get_model(reviewer_profile, role="reviewer", providers=connection_config.providers)
+                        if reviewer_spec.backend.removesuffix("_cli")
+                        in {"internal", "builtin", "eco"}
+                        else None
+                    ),
+                    cli_path=cli_path,
+                    project_dir=project_dir,
+                    make_exe=make_exe,
+                    language=language,
+                    marketplace_cache_root=marketplace_cache_root,
+                    mode=mode,
+                    pipeline=True,
+                    trace_dir=trace_dir,
+                    on_event=_make_on_event(ev_queue, "reviewer"),
+                )
+                sub_agents = {
+                    "coder": coder,
+                    "reviewer": reviewer,
+                    "tester": tester,
+                }
+                sub_edges = MIGRATE_EDGES
+            else:
+                sub_agents = {"coder": coder, "tester": tester}
+                sub_edges = EXECUTION_EDGES
 
             sub_orch = Orchestrator(
-                agents={"coder": coder, "tester": tester},
-                edges=EXECUTION_EDGES,
+                agents=sub_agents,
+                edges=sub_edges,
                 entry=EXECUTION_ENTRY,
                 max_hops=connection_config.max_hops,
                 seed_builders=seed_builders,
@@ -2099,6 +3183,11 @@ async def chat_endpoint(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+    finally:
+        # Drop the live-connection registration so a later abort cannot try to
+        # close an already-dead socket.
+        if ACTIVE_SESSIONS.get(thread_id) is websocket:
+            ACTIVE_SESSIONS.pop(thread_id, None)
 
 
 if __name__ == "__main__":

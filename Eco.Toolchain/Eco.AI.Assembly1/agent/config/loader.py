@@ -27,6 +27,26 @@ class ModelProfile(BaseModel):
     provider_pin: str | None = None
 
 
+class ProviderProfile(BaseModel):
+    """A custom LLM endpoint (e.g. a local LM Studio / Ollama / vLLM server).
+
+    Named providers are referenced by ``ModelProfile.provider`` so a model can
+    route to a self-hosted inference server instead of OpenRouter. The
+    ``base_url`` points at the OpenAI-compatible ``/v1`` root (``http://host:port/v1``);
+    ``api_key_env`` selects the env var holding the bearer token (optional for
+    most local servers). ``type`` is reserved for future non-openai-compat APIs.
+
+    model_config = extra="ignore" so provider responses with unknown fields
+    parse cleanly and a stale workspace key can never crash the loader.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    base_url: str
+    type: str = "openai-compat"
+    api_key_env: str | None = None
+
+
 class BudgetSpec(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -102,6 +122,9 @@ class HarnessConfig(BaseModel):
         default_factory=lambda: {"os": "Linux", "arch": "x86_64"},
     )
     models: dict[str, ModelProfile] = Field(default_factory=dict)
+    # User-defined LLM endpoints (local inference servers, self-hosted
+    # gateways). Referenced by ModelProfile.provider; absent → OpenRouter.
+    providers: dict[str, ProviderProfile] = Field(default_factory=dict)
     roles: dict[str, RoleSpec] = Field(default_factory=dict)
     languages: dict[str, LanguageSpec] = Field(default_factory=dict)
     modes: dict[str, ModeSpec] = Field(default_factory=dict)
@@ -115,6 +138,15 @@ class HarnessConfig(BaseModel):
     # PRD_2 Phase 2; previously a dead key).
     retained_tool_outputs: int = 5
     max_hops: int = 8
+    # Architect -> coder handoff size cap (bytes of markdown). The
+    # plan_validator BLOCKS the to_coder stop-tool when the plan exceeds
+    # this budget; raising it lets the architect hand more context to
+    # the coder, lowering it keeps the coder under tight provider
+    # context limits (see `chat-1ca5b8f4` Celsius->Fahrenheit
+    # post-mortem — the previous behaviour re-stitched the whole
+    # architect context into the coder prompt and crashed a 262K
+    # provider limit).
+    plan_handoff_max_bytes: int = 8_192
     source_roots: list[Path] = Field(default_factory=list)
     eco_wizard_path: str | None = None
     eco_cli_path: str | None = None
@@ -221,6 +253,22 @@ def load_config(root: Path | None = None) -> HarnessConfig:
             base_profile = models.get(model_name)
             base_profile = base_profile if isinstance(base_profile, dict) else {}
             models[model_name] = {**base_profile, **profile}
+    # Workspace LLM providers: user-defined endpoints referenced by
+    # ModelProfile.provider. A ``null`` entry REMOVES the provider. Parsed
+    # through ProviderProfile so a malformed entry is skipped (extra="ignore")
+    # rather than crashing the whole config load.
+    workspace_providers = workspace.get("providers", {})
+    provider_profiles: dict[str, ProviderProfile] = {}
+    if isinstance(workspace_providers, dict):
+        for name, entry in workspace_providers.items():
+            if not isinstance(entry, dict) or not entry.get("base_url"):
+                continue
+            try:
+                provider_profiles[name] = ProviderProfile(**entry)
+            except Exception:
+                # Drop a malformed provider rather than poisoning the load.
+                pass
+
     # Workspace permissions: defaults + per-role deltas. Resolution chain per
     # role (later wins, key-by-key over PermissionSpec fields only):
     #   code defaults < workspace defaults < repo roles.yaml role baseline
@@ -313,6 +361,7 @@ def load_config(root: Path | None = None) -> HarnessConfig:
     return HarnessConfig(
         root=project_root,
         models=model_profiles,
+        providers=provider_profiles,
         roles=role_specs,
         languages=language_specs,
         modes=mode_specs,
@@ -341,6 +390,12 @@ def load_config(root: Path | None = None) -> HarnessConfig:
         ),
         max_hops=int(
             os.getenv("HARNESS_MAX_HOPS", merged_harness.get("max_hops", 8)),
+        ),
+        plan_handoff_max_bytes=int(
+            os.getenv(
+                "HARNESS_PLAN_HANDOFF_MAX_BYTES",
+                merged_harness.get("plan_handoff_max_bytes", 8_192),
+            ),
         ),
         source_roots=[
             (

@@ -16,12 +16,12 @@ import { useHarnessSocket } from "./use-socket";
 import { Dropdown, type DropdownOption } from "./dropdown";
 import { PlatformSelector, PLATFORM_OPTIONS, DEFAULT_PLATFORM, type PlatformOption } from "./platform-selector";
 import { LanguageSelector, LANGUAGE_OPTIONS, type ProgrammingLanguage } from "./language-selector";
-import { ProjectsPanel } from "./project-panel";
+import { ProjectsPanel, type ExportFormat } from "./project-panel";
 import { FolderBrowser } from "./folder-browser";
 import { EcoosLogo } from "./ecoos-logo";
 import { AgentSettings } from "./agent-settings";
 import type {
-  Attachment, AttachmentKind, ChatMessage, FsEntry, ProjectInfo, WorkingMode,
+  Attachment, AttachmentKind, ChatMessage, FsEntry, ProjectInfo, SessionInfo, WorkingMode,
 } from "./types";
 
 const MAX_PASTE_BYTES = 5 * 1024 * 1024; // 5 MB cap on pasted/base64 content
@@ -85,6 +85,9 @@ export function ChatInterface() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  // Panel feedback (removal blocked, export errors) + in-flight export marker.
+  const [panelNotice, setPanelNotice] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
 
   // Session-scoped attachments (decision #1): available to every message in the
   // current session, cleared on New Session. Kept in component state so the
@@ -165,6 +168,79 @@ export function ChatInterface() {
     const match = list.find((p) => p.path === entry.path);
     if (match) handleSelectProject(match);
   }, [refreshProjects, handleSelectProject]);
+
+  // ── Panel actions: whitelist removal + session export downloads ───────────
+  // Removal is visual only server-side; on failure (409 running session etc.)
+  // surface the reason as a dismissible panel notice. The panel list is
+  // refreshed either way and the auto-reselect effect covers the removed
+  // active project.
+  const handleRemoveProject = useCallback(async (project: ProjectInfo) => {
+    setPanelNotice(null);
+    try {
+      const res = await fetch(`${API_URL}/api/projects/${project.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setPanelNotice(
+          body?.detail
+            ? `Cannot remove "${project.name}": ${body.detail}`
+            : `Cannot remove "${project.name}" (HTTP ${res.status})`,
+        );
+      }
+    } catch {
+      setPanelNotice(`Cannot remove "${project.name}": backend unreachable`);
+    }
+    await refreshProjects();
+  }, [refreshProjects]);
+
+  const downloadExport = useCallback(async (url: string, fallbackName: string) => {
+    setExportBusy(true);
+    setPanelNotice(null);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setPanelNotice(body?.detail ?? `Export failed (HTTP ${res.status})`);
+        return;
+      }
+      const blob = await res.blob();
+      const match = (res.headers.get("Content-Disposition") ?? "")
+        .match(/filename="?([^";]+)"?/i);
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = match?.[1] || fallbackName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(href);
+    } catch {
+      setPanelNotice("Export failed: backend unreachable");
+    } finally {
+      setExportBusy(false);
+    }
+  }, []);
+
+  const handleExportProject = useCallback(
+    (project: ProjectInfo, format: ExportFormat) => {
+      void downloadExport(
+        `${API_URL}/api/projects/${project.id}/export?format=${format}`,
+        `${project.name}-sessions.${format}`,
+      );
+    },
+    [downloadExport],
+  );
+
+  const handleExportAll = useCallback(
+    (format: ExportFormat) => {
+      void downloadExport(
+        `${API_URL}/api/export/all?format=${format}`,
+        `harness-sessions-all.${format}`,
+      );
+    },
+    [downloadExport],
+  );
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
 
@@ -378,6 +454,8 @@ export function ChatInterface() {
     isProcessing,
     currentPhase,
     completedPhases,
+    phaseTokens,
+    totalTokens,
     threadId,
     worktree,
     sendUserRequest,
@@ -385,7 +463,100 @@ export function ChatInterface() {
     sendEscalationDecision,
     sendAbort,
     clearMessages,
+    loadMessages,
+    connectThread,
   } = useHarnessSocket(WS_BASE);
+
+  // Session being inspected from the left panel (read-only transcript view).
+  const [viewing, setViewing] = useState<SessionInfo | null>(null);
+
+  // ── Open a past/suspended session from the panel into the main view ──────
+  // Fetches the reconstructed transcript and re-points the live socket at that
+  // session's thread so a still-running one streams live events (and the
+  // panel "Stop" / banner "Stop" can reach it).
+  const handleSelectSession = useCallback(async (session: SessionInfo) => {
+    setViewing(session);
+    try {
+      const res = await fetch(`${API_URL}/api/sessions/${session.id}/messages`);
+      if (res.ok) {
+        const data = await res.json();
+        const converted: ChatMessage[] = (data.messages ?? []).map((m: { role: string; text: string }) => {
+          const id = `hist_${Math.random().toString(36).slice(2, 10)}`;
+          if (m.role === "user") {
+            return { id, role: "user", text: m.text, blocks: [] };
+          }
+          return {
+            id,
+            role: "assistant",
+            blocks: [{ id: `${id}_b`, type: "text", content: m.text }],
+          };
+        });
+        loadMessages(converted);
+      }
+    } catch {
+      // network error — keep whatever we had; the banner still lets them return
+    }
+    if (session.thread_id) connectThread(session.thread_id);
+  }, [loadMessages, connectThread]);
+
+  // Stop a running/suspended session from the panel or the viewing banner.
+  // Goes through the backend abort endpoint (which closes the session's live
+  // connection) rather than this socket, since opening a session only attaches
+  // an idle viewer — the real run lives on its own connection.
+  const handleStopSession = useCallback(async (session: SessionInfo) => {
+    try {
+      await fetch(`${API_URL}/api/sessions/${session.id}/abort`, { method: "POST" });
+    } catch {
+      // backend unreachable — panel will refresh and show current state
+    }
+    if (viewing && viewing.id === session.id) setViewing(null);
+    await refreshProjects();
+  }, [refreshProjects, viewing]);
+
+  // Minimal-first-cut: copy a session's on-disk trace dir to the clipboard.
+  // The full "open in file browser" UX comes in a follow-up; copying the
+  // path is enough to ssh/inspect without leaving the chat.
+  const handleCopyTracePath = useCallback(async (traceDir: string) => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(traceDir);
+      } else {
+        // Fallback for browsers without async-clipboard (e.g. http://localhost).
+        const ta = document.createElement("textarea");
+        ta.value = traceDir;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setPanelNotice(`Copied trace path: ${traceDir}`);
+    } catch {
+      setPanelNotice(`Failed to copy trace path: ${traceDir}`);
+    }
+  }, []);
+
+  // Return from a session transcript view to a fresh live thread.
+  const handleReturnToLive = useCallback(() => {
+    setViewing(null);
+    clearMessages();
+  }, [clearMessages]);
+
+  // Cancel/dismiss a historic or suspended session view and clear the window.
+  // If the session is still running, abort it first; otherwise just refresh the
+  // panel so its status reflects reality. Lets the user recover from a stuck or
+  // rejected run (e.g. one that never started) without a leftover spinner.
+  const handleCancelView = useCallback(() => {
+    if (viewing && viewing.status === "running") {
+      void handleStopSession(viewing);
+    } else {
+      void refreshProjects();
+    }
+    setViewing(null);
+    clearMessages();
+  }, [viewing, handleStopSession, refreshProjects, clearMessages]);
 
   // New Session: clear messages (rolls a fresh thread) and drop attachments.
   // Settings (platform/language/mode/useWorktree/project) intentionally persist.
@@ -395,6 +566,7 @@ export function ChatInterface() {
     setAttachments([]);
     setMention(null);
     setPasteError(null);
+    setViewing(null);
     clearMessages();
   }, [isProcessing, clearMessages, attachments, revokeAttachment]);
 
@@ -477,48 +649,67 @@ export function ChatInterface() {
         activeProjectId={activeProjectId}
         onSelect={handleSelectProject}
         onNewProject={() => setBrowserOpen(true)}
+        onRemoveProject={handleRemoveProject}
+        onExportProject={handleExportProject}
+        onExportAll={handleExportAll}
+        onSelectSession={handleSelectSession}
+        onStopSession={handleStopSession}
+        onCopyTracePath={handleCopyTracePath}
+        activeSessionId={viewing?.id ?? null}
+        exportBusy={exportBusy}
+        notice={panelNotice}
+        onDismissNotice={() => setPanelNotice(null)}
       />
 
-      {/* Settings sidebar */}
+      {/* Settings sidebar. The backdrop and panel must be DIRECT keyed children
+          of AnimatePresence — wrapping them in a fragment breaks exit tracking
+          and leaves the invisible full-screen backdrop mounted with
+          pointer-events: auto, swallowing every click until a page reload. */}
       <AnimatePresence>
         {showSettings && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
-              onClick={() => setShowSettings(false)}
-            />
-            <motion.div
-              initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="fixed inset-y-0 right-0 z-50 flex w-[26rem] flex-col glass-strong shadow-2xl"
-            >
-              <div className="flex items-center justify-between px-5 pb-4 pt-5">
-                <h2 className="text-lg font-semibold text-gradient">Settings</h2>
-                <Button variant="ghost" size="icon" onClick={() => setShowSettings(false)} className="hover:bg-white/10">
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-              {threadId && (
-                <div className="mx-5 mb-4 flex items-center gap-2 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground/60">Thread</div>
-                    <div className="truncate font-mono text-[11px] text-foreground/70">{threadId}</div>
-                  </div>
+          <motion.div
+            key="settings-backdrop"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowSettings(false)}
+          />
+        )}
+        {showSettings && (
+          <motion.div
+            key="settings-panel"
+            initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+            transition={{ type: "spring", damping: 25, stiffness: 300 }}
+            className="fixed inset-y-0 right-0 z-50 flex w-[26rem] flex-col glass-strong shadow-2xl"
+          >
+            <div className="flex items-center justify-between px-5 pb-4 pt-5">
+              <h2 className="text-lg font-semibold text-gradient">Settings</h2>
+              <Button variant="ghost" size="icon" onClick={() => setShowSettings(false)} className="hover:bg-white/10">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            {threadId && (
+              <div className="mx-5 mb-4 flex items-center gap-2 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground/60">Thread</div>
+                  <div className="truncate font-mono text-[11px] text-foreground/70">{threadId}</div>
                 </div>
-              )}
-              <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-2 thin-scroll">
-                <AgentSettings />
               </div>
-            </motion.div>
-          </>
+            )}
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-2 thin-scroll">
+              <AgentSettings />
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
       {/* Folder browser (project picker) */}
       <AnimatePresence>
         {browserOpen && (
-          <FolderBrowser onClose={() => setBrowserOpen(false)} onAdded={handleProjectAdded} />
+          <FolderBrowser
+            anchorPath={activeProject?.path}
+            onClose={() => setBrowserOpen(false)}
+            onAdded={handleProjectAdded}
+          />
         )}
       </AnimatePresence>
 
@@ -609,8 +800,14 @@ export function ChatInterface() {
           </div>
         </header>
 
-        {/* Phase stepper */}
-        <PhaseStepper currentPhase={currentPhase} completedPhases={completedPhases} />
+        {/* Phase stepper — steps + token counters follow the working mode */}
+        <PhaseStepper
+          mode={mode}
+          currentPhase={currentPhase}
+          completedPhases={completedPhases}
+          phaseTokens={phaseTokens}
+          totalTokens={totalTokens}
+        />
 
         {/* Worktree reference strip — appears once the backend isolates this
             session into its own git worktree; stays visible after completion
@@ -634,9 +831,49 @@ export function ChatInterface() {
         )}
 
         {/* Chat area */}
+        {viewing && (
+          <div className="flex items-center gap-2 px-6 py-2 border-b border-white/[0.06] bg-blue-500/[0.05] text-xs">
+            <span className="shrink-0 rounded-full bg-blue-500/15 px-2 py-0.5 text-blue-200 font-medium">
+              Viewing session
+            </span>
+            <span className="min-w-0 flex-1 truncate text-foreground/80" title={viewing.title}>
+              {viewing.title || "(untitled)"}
+            </span>
+            <span className="shrink-0 text-muted-foreground/60">{viewing.status}</span>
+            {viewing.status === "running" && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => handleStopSession(viewing)}
+                className="shrink-0 rounded-full hover:bg-red-500/10 hover:text-red-400"
+                title="Stop session"
+              >
+                <StopCircle size={16} />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCancelView}
+              className="shrink-0 rounded-lg hover:bg-white/10"
+              title="Cancel and clear this session view"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleReturnToLive}
+              className="shrink-0 rounded-lg hover:bg-white/10"
+              title="Return to live session"
+            >
+              Return to live
+            </Button>
+          </div>
+        )}
         <ScrollArea className="flex-1">
           <div className="mx-auto max-w-3xl px-4 py-6 space-y-5">
-            {messages.length === 0 && !isProcessing && (
+            {messages.length === 0 && !isProcessing && !viewing && (
               <EmptyState onPick={setInput} />
             )}
 
@@ -661,6 +898,7 @@ export function ChatInterface() {
         </ScrollArea>
 
         {/* Input dock — message box on top, selector row inside the frame below */}
+        {!viewing && (
         <div className="px-4 pb-4 pt-2">
           <div className="mx-auto max-w-3xl">
             <div
@@ -867,6 +1105,7 @@ export function ChatInterface() {
             </p>
           </div>
         </div>
+          )}
       </div>
     </div>
   );

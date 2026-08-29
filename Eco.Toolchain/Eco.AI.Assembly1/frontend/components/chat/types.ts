@@ -18,6 +18,7 @@ export type HarnessPhase =
   | "coding"
   | "building"
   | "testing"
+  | "review"
   | "failed_escalated"
   | "done";
 
@@ -28,11 +29,10 @@ export type PipelineNode =
   | "coder"
   | "builder"
   | "tester"
+  | "reviewer"
   | "escalate";
 
-// 5 stages visible in the top stepper. "failed_escalated" is not a stage,
-// it surfaces as an Escalation block inside the message stream.
-export const STEPPER_PHASES: HarnessPhase[] = ["planning", "setup", "coding", "building", "testing"];
+// Stepper steps are dynamic per working mode — see stepperStepsForMode().
 
 export const PHASE_LABEL: Record<HarnessPhase, string> = {
   planning: "Planning",
@@ -41,9 +41,78 @@ export const PHASE_LABEL: Record<HarnessPhase, string> = {
   coding: "Coding",
   building: "Building",
   testing: "Testing",
+  review: "Review",
   failed_escalated: "Escalated",
   done: "Done",
 };
+
+// One stepper step: a pipeline phase (or the terminal "done" marker) + label.
+export interface StepperStep {
+  phase: HarnessPhase;
+  label: string;
+}
+
+// Token accounting for one pipeline phase / the whole session.
+export interface TokenStat {
+  input: number;
+  output: number;
+  total: number;
+}
+
+// Tokens consumed per pipeline phase (usage events bucketed server-side).
+export type PhaseTokenMap = Partial<Record<HarnessPhase, TokenStat>>;
+
+// Steps shown in the top progress bar, per working mode:
+// - auto / migrate run the full plan→implement→verify pipeline;
+// - single-phase modes (plan / code / test / review) run exactly one agent,
+//   so the bar collapses to "1 — <step name>" and "2 — End".
+export function stepperStepsForMode(mode: WorkingMode): StepperStep[] {
+  switch (mode) {
+    case "plan":
+      return [
+        { phase: "planning", label: "Plan" },
+        { phase: "done", label: "End" },
+      ];
+    case "code":
+      return [
+        { phase: "coding", label: "Code" },
+        { phase: "done", label: "End" },
+      ];
+    case "test":
+      return [
+        { phase: "testing", label: "Test" },
+        { phase: "done", label: "End" },
+      ];
+    case "review":
+      return [
+        { phase: "review", label: "Review" },
+        { phase: "done", label: "End" },
+      ];
+    case "migrate":
+    case "auto":
+    default:
+      return [
+        { phase: "planning", label: "Planning" },
+        { phase: "coding", label: "Coding" },
+        { phase: "testing", label: "Testing" },
+        { phase: "done", label: "End" },
+      ];
+  }
+}
+
+// First phase a mode's pipeline enters — used to highlight the bar as soon
+// as the user sends a request (before the first phase_change arrives).
+export function initialPhaseForMode(mode: WorkingMode | undefined): HarnessPhase {
+  switch (mode) {
+    case "code": return "coding";
+    case "test": return "testing";
+    case "review": return "review";
+    case "plan":
+    case "migrate":
+    case "auto":
+    default: return "planning";
+  }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Plan / component DTOs (from planner.submit_plan stop tool)
@@ -326,6 +395,21 @@ export interface PipelineDoneEvent extends ServerEventBase {
   tester_report_md: string;
 }
 
+// Per-LLM-call token accounting, bucketed by the pipeline phase that was
+// running when the call completed. Drives the phase stepper counters.
+export interface UsageEvent extends ServerEventBase {
+  type: "usage";
+  node: PipelineNode;
+  phase: HarnessPhase;
+  usage: {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+    total: number;
+  };
+}
+
 export interface ErrorEvent extends ServerEventBase {
   type: "error";
   content: string;
@@ -342,6 +426,7 @@ export type ServerEvent =
   | PlanReviewRequiredEvent
   | EscalationRequiredEvent
   | PipelineDoneEvent
+  | UsageEvent
   | ErrorEvent;
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -410,6 +495,13 @@ export interface SessionInfo {
   created_at: string;
   updated_at: string;
   status: SessionStatus;
+  // Optional trace-bookkeeping fields (returned by /api/sessions/{id}/trace
+  // and surfaced on /api/sessions/{id}/messages since the ses- prefix
+  // minimal-first-cut). All optional so older payloads keep parsing.
+  trace_dir?: string;
+  trace_last_file?: string | null;
+  trace_last_error?: string | null;
+  trace_call_count?: number;
 }
 
 export interface ProjectInfo {
@@ -432,4 +524,11 @@ export interface FsListing {
   path: string;
   parent: string | null;
   entries: FsEntry[];
+}
+
+// GET /api/fs/roots — locations the server-side picker is allowed to browse.
+export interface FsRoots {
+  home: string;
+  output_root?: string;
+  roots: string[];
 }

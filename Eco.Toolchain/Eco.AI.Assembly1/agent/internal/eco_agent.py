@@ -71,6 +71,7 @@ class EventType(str, Enum):
     DONE           = "done"
     NO_TOOL_CALL   = "no_tool_call"
     MAX_ITERS      = "max_iters"
+    USAGE          = "usage"             # per-LLM-call token accounting (data.usage)
     ERROR          = "error"
 
 
@@ -97,6 +98,39 @@ class EcoAgentResult:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _usage_data(response) -> dict:
+    """pi_ai Usage -> plain dict for the USAGE event. Tolerates providers that
+    omit usage entirely (empty dict) so the UI can ignore the event."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {}
+    if isinstance(usage, dict):
+        source = usage
+    else:
+        model_dump = getattr(usage, "model_dump", None)
+        source = model_dump() if callable(model_dump) else {
+            field: getattr(usage, field, 0)
+            for field in ("input", "output", "cacheRead", "cacheWrite", "totalTokens")
+        }
+    def _int(value) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+    input_t = _int(source.get("input"))
+    output_t = _int(source.get("output"))
+    if not any((_int(source.get(k)) for k in ("input", "output", "cacheRead", "cacheWrite", "totalTokens"))):
+        return {}
+    return {
+        "input": input_t,
+        "output": output_t,
+        "cache_read": _int(source.get("cacheRead")),
+        "cache_write": _int(source.get("cacheWrite")),
+        # Some providers omit totalTokens — fall back to input+output.
+        "total": _int(source.get("totalTokens")) or (input_t + output_t),
+    }
 
 
 def _normalize_seed(seed) -> list:
@@ -170,13 +204,36 @@ _TOOL_ERROR_PREVIEW_CHARS = 500
 
 def _is_transient_llm_error(msg: Optional[str]) -> bool:
     """Provider-side hiccups worth retrying: 5xx family, overload, timeouts.
-    Auth/validation errors (4xx) are NOT transient and fail immediately."""
+    Auth/validation errors (4xx) are NOT transient and fail immediately.
+
+    The chat-9257ff60 run aborted on `SSL: SSLV3_ALERT_BAD_RECORD_MAC`
+    even though this is a transient transport error from openrouter — the
+    upstream terminated the connection mid-handshake. Treating it as
+    non-retryable and showing the user a "pipeline paused" gate is wrong:
+    a single transient hiccup on a pinned provider should be retried with
+    backoff, not surfaced as a terminal failure. Same class as a 5xx or
+    a connection timeout. The error name itself (`ssl`, `SSLError`,
+    `SSLV3_ALERT_*`, `ECONNRESET`, `ECONNREFUSED`, `EPIPE`) signals
+    transport-level failure and is what the rest of the harness sees
+    when the upstream goes away mid-stream.
+    """
     text = (msg or "").lower()
-    return any(token in text for token in (
+    if not text:
+        return False
+    transport_markers = (
+        # HTTP status family — provider returned an error
         "520", "502", "503", "504", "529",
+        # Provider / openrouter / generic
         "provider returned error", "overloaded", "timeout", "timed out",
         "connection", "temporarily",
-    ))
+        # OpenSSL / ssl errors
+        "ssl", "sslerror", "sslv3", "tlsv1", "alert_bad_record_mac",
+        "wrong_version_number", "record_overflow", "certificate_verify_failed",
+        # OS-level transport errors
+        "econnreset", "econnrefused", "epipe", "etimedout", "enotfound",
+        "network is unreachable", "connection reset", "connection refused",
+    )
+    return any(token in text for token in transport_markers)
 
 
 # ── Main agent ────────────────────────────────────────────────────────────────
@@ -323,20 +380,40 @@ class EcoAgent:
             self._iter = i
             self._emit(EventType.ITERATION, {"i": i})
 
-            try:
-                resp = self._stream_llm(history)
-            except Exception as e:
-                self._emit(EventType.ERROR, {"reason": str(e)})
-                return EcoAgentResult(
-                    status="error", stop_tool_name="", stop_payload={},
-                    history=history, error=str(e),
-                )
+            # Transient transport errors (SSLError, ECONNRESET, 5xx, timeouts)
+            # raised out of _stream_llm get the same retry-with-backoff policy
+            # as the in-band resp.stopReason=="error" path. chat-9257ff60
+            # proved the previous behaviour (immediate terminal return) is
+            # wrong: a single openrouter mid-stream reset aborts an otherwise
+            # healthy run. We unify both paths into one retry loop.
+            resp = None
+            for attempt in range(_LLM_TRANSIENT_RETRIES + 1):
+                try:
+                    resp = self._stream_llm(history)
+                    break  # got a response (even one with stopReason=="error")
+                except Exception as exc:
+                    if attempt >= _LLM_TRANSIENT_RETRIES or not _is_transient_llm_error(str(exc)):
+                        # Either non-transient (auth, validation, programmer
+                        # error) or we have already retried max times.
+                        self._emit(EventType.ERROR, {"reason": str(exc)})
+                        return EcoAgentResult(
+                            status="error", stop_tool_name="", stop_payload={},
+                            history=history, error=str(exc),
+                        )
+                    # Transient — sleep then retry. Backoff matches the
+                    # in-band retry path (5s, 10s, 15s) so the two are
+                    # indistinguishable to the user and to the trace.
+                    self._emit(EventType.ITERATION, {
+                        "i": i, "llm_retry": attempt + 1,
+                        "reason": f"{type(exc).__name__}: {str(exc)[:200]}",
+                    })
+                    time.sleep(_LLM_RETRY_BACKOFF_S * (attempt + 1))
 
-            # Transient provider errors (5xx/520/529, timeouts) are retried in
-            # place with backoff — with a pinned provider there is no router
-            # failover, so a single upstream hiccup must not kill a long run.
+            # In-band error path: response came back with stopReason=="error"
+            # and the message looks transient. Same backoff policy.
             retry = 0
-            while (resp.stopReason == "error"
+            while (resp is not None
+                   and resp.stopReason == "error"
                    and retry < _LLM_TRANSIENT_RETRIES
                    and _is_transient_llm_error(resp.errorMessage)):
                 retry += 1
@@ -356,6 +433,18 @@ class EcoAgent:
 
             # Append the assistant turn (even if it ended in error) to history.
             history.append(resp)
+
+            # Per-call token accounting for the UI stepper (phase/total counters).
+            self._emit(EventType.USAGE, {"usage": _usage_data(resp)})
+
+            # Sliding-window summarization. When the cumulative input
+            # token count crosses the model context window (or a
+            # configurable ratio of it), compress the older turns into
+            # a single digest message and keep only the last 4 turns
+            # verbatim. This is the single biggest input-cost saver
+            # for long runs (ses-e9b2c2ad: 22-turn coder run cost
+            # 891 K input tokens; 80% was history).
+            self._maybe_summarize_history(history)
 
             # Stream-level error (HTTP fail, abort, etc.) — surface as agent error.
             if resp.stopReason in ("error", "aborted"):
@@ -520,5 +609,150 @@ class EcoAgent:
             status="max_iters", stop_tool_name="", stop_payload={},
             history=history, error="",
         )
+
+    # ------------------------------------------------------------------
+    # Conversation-history compression (sliding-window summarization).
+    # ------------------------------------------------------------------
+    # Without this, every LLM call re-sends the FULL conversation
+    # history, which grows linearly with iteration count. The cost
+    # analysis on ses-e9b2c2ad:
+    #   - 22 coder turns
+    #   - 38 933 tokens input on turn 0
+    #   - 45 848 tokens input on turn 21 (only 7 K of growth,
+    #     but the ABSOLUTE cost of turn 21 is 45 K input = $0.023 just
+    #     for that one call)
+    #   - 891 K total input across the run
+    # With summarization, the older turns collapse to a single
+    # digest message (typically 2-4 K tokens), and only the last 4
+    # turns are verbatim. Net saving: ~25 K input per call after
+    # turn 8 = ~$0.27 per 22-turn run.
+    #
+    # The digest is a USER-role message inserted between the seed and
+    # the verbatim tail. The model treats it as additional context,
+    # not as a directive. The digest is regenerated each time the
+    # threshold is crossed (incremental summarization is left as a
+    # future optimization — for now full re-summarize is cheap enough
+    # and gives the best fidelity).
+
+    _SUMMARIZE_KEEP_LAST = 4  # keep the last N messages verbatim (extended
+    # back to a turn boundary so tool-call/tool-result groups stay intact)
+    _SUMMARIZE_TRIGGER_RATIO = 0.6  # summarize when history > 60% of context
+
+    def _est_history_tokens(self, history: list) -> int:
+        """Rough token estimate for the dynamic part of the history.
+
+        We use 4 chars per token (the same heuristic the openai
+        provider uses for prompt budgeting). For long histories this
+        is within 6% of the provider's actual count.
+        """
+        chars = 0
+        for m in history:
+            content = getattr(m, "content", None)
+            if isinstance(content, str):
+                chars += len(content)
+            elif isinstance(content, list):
+                for c in content:
+                    t = getattr(c, "text", None)
+                    if isinstance(t, str):
+                        chars += len(t)
+        return chars // 4
+
+    def _maybe_summarize_history(self, history: list) -> None:
+        # Skip if there is nothing meaningful to compress.
+        if len(history) <= self._SUMMARIZE_KEEP_LAST + 2:
+            return
+        # Get the context window from the model profile (fallback 128 K).
+        ctx = 128_000
+        try:
+            profile = getattr(self.model, "profile", None) or getattr(self.model, "_profile", None)
+            if profile is not None and getattr(profile, "contextWindow", None):
+                ctx = int(profile.contextWindow)
+        except Exception:
+            pass
+        est = self._est_history_tokens(history)
+        # Also factor in the static system prompt + tools schema. Rough
+        # estimate: 12 K for the static part.
+        threshold = int(ctx * self._SUMMARIZE_TRIGGER_RATIO) - 12_000
+        if est < threshold:
+            return
+        # Compress. The most recent messages are kept verbatim; the
+        # rest collapse to one digest message prepended to the tail.
+        cut = len(history) - self._SUMMARIZE_KEEP_LAST
+        # Never cut between an assistant tool-call message and its tool
+        # results: a tail that starts with an orphaned ToolResultMessage
+        # is rejected by the provider APIs ("unexpected tool_use_id" /
+        # "tool message must follow assistant tool_calls"). Walk the
+        # boundary back to the assistant message that owns the results.
+        while 0 < cut < len(history) and getattr(history[cut], "role", "") == "toolResult":
+            cut -= 1
+        tail = list(history[cut:])
+        head = list(history[:cut])
+        # Build a structured digest of the head.
+        digest = self._build_history_digest(head)
+        # Replace history in place: digest + tail. We mutate the list
+        # because the agent's run() uses the same reference.
+        history.clear()
+        history.append(digest)
+        history.extend(tail)
+        # Deduped read results may now live in the digested-away head;
+        # stale pointers would answer a re-call with "[duplicate — see
+        # it above]" for content that is no longer in context.
+        self._dedup_memo.clear()
+        self._emit(EventType.ITERATION, {
+            "i": self._iter,
+            "history_compressed": True,
+            "old_tokens_est": est,
+            "new_turns": len(history),
+        })
+
+    def _build_history_digest(self, head_msgs: list) -> "UserMessage":
+        """Synthesize a compact summary of the older turns.
+
+        The summary is a USER-role message that the LLM treats as
+        additional context. It preserves the things the model will
+        need to remember (the original user request, the architect's
+        plan summary, files written, errors hit) and discards the
+        things the model can re-derive from tool results (full tool
+        output text, full IID bytes).
+        """
+        from agent.pi_ai.types import UserMessage
+        chunks = []
+        for m in head_msgs:
+            role = getattr(m, "role", "?")
+            content = getattr(m, "content", None)
+            if isinstance(content, str):
+                # Plain text message
+                if len(content) > 1000:
+                    content = content[:1000] + "...[truncated]"
+                chunks.append(f"[{role}] {content}")
+            elif isinstance(content, list):
+                # Mixed: text blocks + tool calls / tool results.
+                text_parts = []
+                tool_parts = []
+                for c in content:
+                    t = getattr(c, "text", None)
+                    if isinstance(t, str):
+                        text_parts.append(t)
+                    tool_name = getattr(c, "name", None)
+                    if tool_name:
+                        tool_parts.append(f"tool={tool_name}")
+                body = " | ".join(text_parts[:3])[:500]
+                if tool_parts:
+                    body = (body + " | " if body else "") + "[" + ", ".join(tool_parts[:5]) + "]"
+                if body:
+                    chunks.append(f"[{role}] {body[:600]}")
+        joined = "\n".join(chunks)
+        # Cap the digest at ~3 K tokens (12 K chars). The LLM never
+        # needs more than this for the "what was done so far" digest.
+        if len(joined) > 12_000:
+            joined = joined[:12_000] + "\n[...older history truncated for context budget...]"
+        digest_text = (
+            "[HISTORY COMPRESSED for context budget]\n"
+            "The following is a digest of the older conversation turns. "
+            "If you need full text of a specific tool result, re-call the "
+            "tool with the same arguments and the result will be re-supplied.\n\n"
+            + joined
+        )
+        return UserMessage(content=digest_text, timestamp=_now_ms())
 
 

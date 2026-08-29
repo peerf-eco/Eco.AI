@@ -60,7 +60,7 @@ static int16_t ECOCALLMETHOD CEcoCalculatorD_QueryInterface(/* in */ IEcoCalcula
         *ppv = 0;
         return ERR_ECO_NOINTERFACE;
     }
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 /*
@@ -207,7 +207,7 @@ static int16_t ECOCALLMETHOD CEcoCalculatorD_IEcoCalculatorY_QueryInterface(/* i
         *ppv = 0;
         return ERR_ECO_NOINTERFACE;
     }
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 /*
@@ -456,7 +456,7 @@ int16_t ECOCALLMETHOD createCEcoCalculatorD(/* in */ IEcoUnknown* pIUnkSystem, /
     /* Освобождение */
     pIBus->pVTbl->Release(pIBus);
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 /*

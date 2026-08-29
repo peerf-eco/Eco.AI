@@ -21,8 +21,15 @@ roles:
       acom_framework: "1"
       eco_wizard: "1"
       component_author: "1"
+    # chat-8fc99e0c regression: 300 000 caused the provider to reject the
+    # coder's first turn with HTTP 400 because the assembled request
+    # (system prompt + tools + a healthy completion budget) overran the
+    # 262 144-token HY3 window. 200 000 leaves enough headroom for the
+    # stitched-source system prompt (~25 K) plus the openai_completions
+    # clamp's 16 K safety margin, and a 200 K completion budget is plenty
+    # for the single EcoMain.c the coder writes per cycle.
     budgets:
-      per_query_tokens: 300000
+      per_query_tokens: 200000
       per_query_usd: 3
       per_day_usd: 40
       max_iters: 60

@@ -37,21 +37,55 @@ stack (these are REQUIRED, not optional — do not omit them, and do not add the
 "by rote" either; they are the baseline the contract depends on):
 
 - `Eco.InterfaceBus1`: interface bus services (component discovery / registration).
-- `Eco.MemoryManager1`: memory manager services (core allocation). NOTE the
-  correct spelling is `Eco.MemoryManager1` (with double `n` in `Manager`) —
-  do NOT use a misspelling such as `MemoryManger`.
+- `Eco.MemoryManager1`: memory manager services (core allocation).
 - `Eco.FileSystemManagement1`: filesystem services — include when the component
   performs file I/O.
 - `Eco.System1`: the system LIBRARY (not an ACOM component — no CID; its
   binary is a GID-named static lib) that provides the real platform `main()`
   which calls the application's `EcoMain` entry, plus system services
-  (`IEcoSystemInformation1`, `IEcoCommandArguments1`). APPLICATIONS
-  statically link the platform-specific `Eco.System1` library; plain
-  components and libraries never have an entry point and never link it.
+  (`IEcoSystemInformation1`, `IEcoCommandArguments1`). The library is
+  actually a unikernel: it ships a minimal ACOM microkernel that has the
+  Interface Bus built-in as its main, passive code path. The Interface
+  Bus itself has no compute process of its own and therefore cannot register itself — it is a passive piece of
+  microkernel that other components register into. So
+  `Eco.System1` likewise does NOT register itself on the bus; the
+  application code (and the `EcoMain` glue) is what
+  `RegisterComponent`'s the actually-running ACOM components on top of
+  the unikernel's built-in bus. APPLICATIONS statically link the
+  platform-specific `Eco.System1` library; plain components and static libraries
+  never have an entry point and never link it. The unikernel is never
+  pulled with `eco_cli` with CID (only by marketplace id first found by Name) and never `RegisterComponent`-ed — it is just
+  linked, and the target OS resolves its `main()` symbol.
 
 Include ONLY the `SharedFiles/` subfolder of each framework/dependency package
 (the public API). Never read or compile another package's `HeaderFiles/` or
 `SourceFiles/`.
+
+### Component & project conventions (generic ACOM)
+
+These hold for every language and every role; language-specific detail lives in
+the per-language skill.
+
+- **Naming**: `[PROJECT_NAME]` is CamelCase; `[UPPER_PROJECT_NAME]` is
+  UPPER_CASE. If a name does not already start with the `Eco` prefix, add it
+  automatically (e.g. `Math` → `EcoMath`).
+- **Component generation order**: describe interfaces in `.idl` first; create
+  exactly one factory implementing `IEcoComponentFactory`; a single component
+  may implement N interfaces via one or multiple VTbls; default to a
+  stand-alone component.
+- **Application lifecycle**: System → Bus → Component → Release (the same order
+  as the bootstrap flow above).
+- **`Eco.System1` library variants**: for each target platform the marketplace
+  ships two prebuilt library builds — `StaticRelease` (bundles all system ACOM
+  components: InterfaceBus, MemoryManager, FileSystemManager, …) and
+  `DynamicRelease` (a small loader for InterfaceBus + MemoryManager + optional
+  FileSystemManager). **Default to `StaticRelease` for applications.** The C
+  skill references this when stating the link step.
+- **Standard project directories**: `AssemblyFiles`, `BuildFiles`,
+  `DependenciesFiles`, `DesignFiles`, `HeaderFiles`, `SharedFiles`,
+  `SourceFiles`, `UnitTestFiles`. For cross-platform work, create one subfolder
+  per platform under `AssemblyFiles` (`Android`, `EcoOS`, `iOS`, `Linux`, `Mac`,
+  `Windows`), and a per-toolchain folder under each.
 
 ### Coding conventions are per-language
 

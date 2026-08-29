@@ -58,7 +58,7 @@ static int16_t ECOCALLMETHOD CEcoCalculatorC_QueryInterface(/* in */ IEcoCalcula
         *ppv = 0;
         return ERR_ECO_NOINTERFACE;
     }
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 /*
@@ -200,7 +200,7 @@ static int16_t ECOCALLMETHOD CEcoCalculatorC_IEcoCalculatorY_QueryInterface(/* i
         *ppv = 0;
         return ERR_ECO_NOINTERFACE;
     }
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 /*
@@ -329,7 +329,7 @@ int16_t ECOCALLMETHOD initCEcoCalculatorC(/*in*/ IEcoCalculatorXPtr_t me, /* in 
 
     /* Инициализация данных */
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 /* Create Virtual Table */
@@ -437,7 +437,7 @@ int16_t ECOCALLMETHOD createCEcoCalculatorC(/* in */ IEcoUnknown* pIUnkSystem, /
     /* Освобождение */
     pIBus->pVTbl->Release(pIBus);
 
-    return ERR_ECO_SUCCESES;
+    return ERR_ECO_SUCCESS;
 }
 
 /*

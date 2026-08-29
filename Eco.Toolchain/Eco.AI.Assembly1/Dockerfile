@@ -89,5 +89,9 @@ fi\n\
 # Entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# API is the production entrypoint. Use `docker compose run api shell` for a shell.
+# API is the production entrypoint. NOTE: docker-compose.yml disables this
+# entrypoint (entrypoint: [] — the /app monorepo mount shadows it), so the
+# old `docker compose run api shell` no longer works. Use instead:
+#   docker compose exec api bash            (container running)
+#   docker compose run api bash             (lands in working_dir, nested project)
 CMD ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000"]

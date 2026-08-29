@@ -213,6 +213,7 @@ def make_role_agent(
     on_event=None,
     trace_dir: Path | None = None,
     mode: str = "create",
+    pipeline: bool = False,
 ):
     role_spec = config.roles.get(role, RoleSpec())
     backend_name = _backend_name(role_spec)
@@ -287,6 +288,7 @@ def make_role_agent(
             max_iters=role_spec.budgets.max_iters,
             trace_dir=trace_dir,
             on_event=on_event,
+            pipeline=pipeline,
         )
     else:
         raise ValueError(f"Unsupported role: {role}")

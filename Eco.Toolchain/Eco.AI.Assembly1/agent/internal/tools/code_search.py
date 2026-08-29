@@ -457,10 +457,13 @@ def make_code_search_tools(
             description=(
                 "POSIX extended-regex content search across files. Uses "
                 "grep -rnE under the hood; output is `file:line:match` "
-                "as a single string. Searches marketplace_cache by "
-                "default — pass path='.' to search project_dir instead. "
-                "Use this FIRST to find which header / file mentions a "
-                "type, function, constant, or macro."
+                "as a single string. The `path` argument MUST be a "
+                "DIRECTORY (e.g. 'marketplace_cache', '.', or a subdir), "
+                "never a single file. To inspect one file's contents use "
+                "read() instead. Searches marketplace_cache by default — "
+                "pass path='.' to search project_dir instead. Use this "
+                "FIRST to find which header / file mentions a type, "
+                "function, constant, or macro."
             ),
             args_schema=_GrepArgs,
             execute=lambda a: _grep(a, allowed),

@@ -227,6 +227,64 @@ The static block headings are the authoritative sections for this role.
 """
 
 
+def _make_coder_after_tool_call():
+    """Factory for the coder-side name-keyed memo for read/read_file/glob.
+
+    Re-asking for the same file within a single coder run returns a
+    one-line pointer instead of re-including the file content (4 KB)
+    in the cumulative input. ses-e9b2c2ad: the coder paginated
+    `IEcoStdIOC89.h` 3 times (calls 016/017/018) at offsets 90, 210, 410
+    — each read added its 4 KB output to the prompt forever, and the
+    model never re-looked at the previous offsets. With this memo, the
+    2nd and 3rd paginated reads of the same file return a one-line
+    pointer that says "see the previous read in your conversation".
+
+    Scope: file content (read/read_file) and directory listing (glob),
+    keyed per (tool, path) so paginated reads of the same file at
+    different offsets are deduped too. The memo state is per-agent
+    (created fresh by this factory for every make_coder call) — a
+    module-level set would leak pointers across sessions and make the
+    second coder session see "[duplicate ...]" for files it never read.
+    Any tool outside the read-only trio (write_file, run_build, ...)
+    clears the memo, mirroring EcoAgent's _dedup_memo semantics, so a
+    re-read after an edit returns fresh content.
+    """
+    seen: set = set()
+
+    def _after_tool_call(name: str, args_obj, result):
+        if result.is_error:
+            return result
+        if name not in ("read", "read_file", "glob"):
+            # Potentially mutating tool — drop the memo so post-edit
+            # re-reads are not answered with a stale pointer.
+            seen.clear()
+            return result
+        try:
+            path = (args_obj.path if hasattr(args_obj, "path") else None) or ""
+        except Exception:
+            return result
+        if not path:
+            return result
+        key = (name, path)
+        if key in seen:
+            # The full content was already returned above; return a
+            # one-line pointer.
+            return result.__class__(
+                content=(f"[duplicate - {name}({path!r}"
+                         + (f", offset={args_obj.offset}"
+                            if hasattr(args_obj, "offset") and getattr(args_obj, "offset", None)
+                            else "")
+                         + ") result is in your earlier conversation in this run; "
+                         "reuse it. If you need a different offset or a different "
+                         "file, call again with new arguments.]"),
+                details=result.details,
+            )
+        seen.add(key)
+        return result
+
+    return _after_tool_call
+
+
 def make_coder(
     *,
     model,
@@ -282,6 +340,12 @@ def make_coder(
         stop_tool=["to_tester", "to_architect", "fail"],
         max_iters=max_iters,
         dedup_tools=dedup,
+        # Name-keyed memo for read/read_file/glob (see
+        # _make_coder_after_tool_call docstring for the ses-e9b2c2ad
+        # regression that motivated this hook). Per-agent instance so
+        # sessions never share memo state. Architect has the same
+        # pattern for read_component_profile.
+        after_tool_call=_make_coder_after_tool_call(),
         trace_dir=trace_dir,
         trace_label="coder",
         on_event=on_event,

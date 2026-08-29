@@ -49,3 +49,48 @@ def test_eco_agent_result_has_status_and_stop_payload():
     assert r.stop_tool_name == "submit"
     assert r.stop_payload == {"x": 1}
 
+
+# ── _usage_data: pi_ai Usage -> USAGE event payload ─────────────────────────
+
+def test_usage_data_from_pydantic_usage():
+    from agent.pi_ai.types import Usage
+    from agent.internal.eco_agent import _usage_data
+
+    class _Resp:
+        usage = Usage(input=100, output=20, cacheRead=50, cacheWrite=10, totalTokens=180)
+    data = _usage_data(_Resp())
+    assert data == {
+        "input": 100, "output": 20,
+        "cache_read": 50, "cache_write": 10, "total": 180,
+    }
+
+
+def test_usage_data_falls_back_to_input_plus_output():
+    from agent.pi_ai.types import Usage
+    from agent.internal.eco_agent import _usage_data
+
+    class _Resp:
+        usage = Usage(input=7, output=3, totalTokens=0)
+    assert _usage_data(_Resp())["total"] == 10
+
+
+def test_usage_data_missing_usage_is_empty():
+    from agent.internal.eco_agent import _usage_data
+
+    class _Resp:
+        usage = None
+    assert _usage_data(_Resp()) == {}
+
+
+def test_usage_data_all_zero_usage_is_empty():
+    from agent.pi_ai.types import Usage
+    from agent.internal.eco_agent import _usage_data
+
+    class _Resp:
+        usage = Usage()
+    assert _usage_data(_Resp()) == {}
+
+
+def test_usage_event_type_registered():
+    assert EventType.USAGE.value == "usage"
+

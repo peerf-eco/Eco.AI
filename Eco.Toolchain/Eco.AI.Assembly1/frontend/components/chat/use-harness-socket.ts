@@ -11,6 +11,7 @@ import type {
   WorkingMode,
   Attachment,
 } from "./types";
+import { initialPhaseForMode, type PhaseTokenMap, type TokenStat } from "./types";
 
 export interface WorktreeRef {
   name: string;
@@ -126,6 +127,9 @@ export interface UseHarnessSocketResult {
   isProcessing: boolean;
   currentPhase: HarnessPhase | null;
   completedPhases: HarnessPhase[];
+  // Token counters for the phase stepper: per-phase buckets + session total.
+  phaseTokens: PhaseTokenMap;
+  totalTokens: TokenStat;
   threadId: string | null;
   // Set when the backend creates an isolated worktree for this session;
   // kept until New session so the name/path stays available for reference.
@@ -148,6 +152,12 @@ export interface UseHarnessSocketResult {
   sendEscalationDecision: (blockId: string, cont: boolean) => void;
   sendAbort: () => void;
   clearMessages: () => void;
+  // Load a reconstructed transcript (from /api/sessions/{id}/messages) into the
+  // chat area — used when the user opens a past session from the panel.
+  loadMessages: (messages: ChatMessage[]) => void;
+  // Re-point the live WebSocket at a specific thread (to re-attach to a session
+  // the user opened) or null for a fresh thread (return to live).
+  connectThread: (threadId: string | null) => void;
 }
 
 export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
@@ -156,6 +166,8 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentPhase, setCurrentPhase] = useState<HarnessPhase | null>(null);
   const [completedPhases, setCompletedPhases] = useState<HarnessPhase[]>([]);
+  const [phaseTokens, setPhaseTokens] = useState<PhaseTokenMap>({});
+  const [totalTokens, setTotalTokens] = useState<TokenStat>({ input: 0, output: 0, total: 0 });
   const [threadId, setThreadId] = useState<string | null>(null);
   const [worktree, setWorktree] = useState<WorktreeRef | null>(null);
 
@@ -274,10 +286,39 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
         return;
       }
 
+      case "usage": {
+        // Bucket this LLM call's tokens into the phase that was running.
+        const u = ev.usage ?? { input: 0, output: 0 };
+        const total = u.total ?? (u.input ?? 0) + (u.output ?? 0);
+        if (!total) return;
+        const phase = ev.phase;
+        setPhaseTokens((prev) => {
+          const cur = prev[phase] ?? { input: 0, output: 0, total: 0 };
+          return {
+            ...prev,
+            [phase]: {
+              input: cur.input + (u.input ?? 0),
+              output: cur.output + (u.output ?? 0),
+              total: cur.total + total,
+            },
+          };
+        });
+        setTotalTokens((prev) => ({
+          input: prev.input + (u.input ?? 0),
+          output: prev.output + (u.output ?? 0),
+          total: prev.total + total,
+        }));
+        return;
+      }
+
       case "pipeline_done": {
         setIsProcessing(false);
         if (currentPhase) {
           setCompletedPhases((p) => (p.includes(currentPhase) ? p : [...p, currentPhase]));
+        }
+        // Success lights the terminal "End" step in the stepper.
+        if (ev.status === "success") {
+          setCompletedPhases((p) => (p.includes("done") ? p : [...p, "done"]));
         }
         setMessages((prev) => {
           const collapsed = finalizeActiveStreaming(prev);
@@ -420,6 +461,11 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
 
       case "error": {
         setIsProcessing(false);
+        // A rejected request (e.g. "project_dir is outside the allowed roots")
+        // never started a session, so drop the pre-set phase highlight — otherwise
+        // the PhaseStepper keeps spinning on "planning" with nothing running.
+        setCurrentPhase(null);
+        setCompletedPhases([]);
         setMessages((prev) => appendBlock(prev, {
           id: newId("err"),
           type: "error",
@@ -435,7 +481,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
   }, [handleEvent]);
 
   // ── connect with exponential backoff + ?thread_id resume ────────────────
-  const connect = useCallback(() => {
+  const connect = useCallback((explicitThread?: string | null) => {
     if (
       wsRef.current?.readyState === WebSocket.OPEN ||
       wsRef.current?.readyState === WebSocket.CONNECTING
@@ -444,7 +490,9 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     intentionalClose.current = false;
 
     let tid: string | null = null;
-    if (typeof window !== "undefined") {
+    if (explicitThread !== undefined) {
+      tid = explicitThread;
+    } else if (typeof window !== "undefined") {
       tid = sessionStorage.getItem(THREAD_ID_KEY);
     }
     const qs = tid ? `?thread_id=${encodeURIComponent(tid)}` : "";
@@ -532,8 +580,10 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
       { id: newId("msg"), role: "user", text: trimmed, blocks: [], attachments },
     ]);
     setIsProcessing(true);
-    setCurrentPhase("planning");
+    setCurrentPhase(initialPhaseForMode(opts?.mode));
     setCompletedPhases([]);
+    setPhaseTokens({});
+    setTotalTokens({ input: 0, output: 0, total: 0 });
     send({
       type: "user_request",
       user_request: trimmed,
@@ -593,10 +643,30 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     setIsProcessing(false);
   }, [send]);
 
+  // Re-point the live socket at a specific thread (re-attach to a session the
+  // user opened from the panel) or null for a brand-new thread. Sessions are
+  // loaded separately via loadMessages; this only (re)opens the channel so a
+  // still-running session streams live events and the panel's Stop can reach it.
+  const connectThread = useCallback((threadId: string | null) => {
+    intentionalClose.current = true;
+    wsRef.current?.close();
+    setThreadId(threadId);
+    if (typeof window !== "undefined") {
+      if (threadId) sessionStorage.setItem(THREAD_ID_KEY, threadId);
+      else sessionStorage.removeItem(THREAD_ID_KEY);
+    }
+    setTimeout(() => {
+      intentionalClose.current = false;
+      connect(threadId);
+    }, 60);
+  }, [connect]);
+
   const clearMessages = useCallback(() => {
     setMessages([]);
     setCurrentPhase(null);
     setCompletedPhases([]);
+    setPhaseTokens({});
+    setTotalTokens({ input: 0, output: 0, total: 0 });
     setWorktree(null);
     if (typeof window !== "undefined") {
       sessionStorage.removeItem(THREAD_ID_KEY);
@@ -611,12 +681,25 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     }, 50);
   }, [connect]);
 
+  // Inject a reconstructed transcript (past session) into the chat area.
+  const loadMessages = useCallback((msgs: ChatMessage[]) => {
+    setMessages(msgs);
+    setIsProcessing(false);
+    setCurrentPhase(null);
+    setCompletedPhases([]);
+    setPhaseTokens({});
+    setTotalTokens({ input: 0, output: 0, total: 0 });
+    setWorktree(null);
+  }, []);
+
   return {
     messages,
     isConnected,
     isProcessing,
     currentPhase,
     completedPhases,
+    phaseTokens,
+    totalTokens,
     threadId,
     worktree,
     sendUserRequest,
@@ -624,5 +707,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     sendEscalationDecision,
     sendAbort,
     clearMessages,
+    loadMessages,
+    connectThread,
   };
 }

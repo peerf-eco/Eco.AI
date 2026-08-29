@@ -276,13 +276,24 @@ class RagStore:
         at 500 to bound latency.
         """
         if kind or component:
-            limit = min(k * 3, 500)
+            knn_k = min(k * 3, 500)
         else:
-            limit = k
+            knn_k = k
+        # KNN candidates are constrained via the hidden ``k`` column, NOT via
+        # a LIMIT clause. sqlite-vec's xBestIndex only sees a LIMIT when the
+        # runtime SQLite feeds it the SQLITE_INDEX_CONSTRAINT_LIMIT
+        # pseudo-constraint — SQLite 3.45 (dev hosts) does, but 3.40.x
+        # (python:3.11-slim-bookworm, the api image base) does not, so every
+        # search_marketplace call failed there at prepare time with
+        # "A LIMIT or 'k = ?' constraint is required on vec0 knn queries."
+        # ``k = ?`` behaves identically on all supported runtimes. The two
+        # forms are mutually exclusive in vec0 ("Only LIMIT or 'k =?' can be
+        # provided, not both") — never combine them. vec0's hard cap is
+        # k <= 4096; our 500 overfetch ceiling stays well below it.
         cur = self._conn.execute(
             "SELECT id, distance FROM vec_chunks "
-            "WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-            (_serialize_vec(query_vec), limit),
+            "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+            (_serialize_vec(query_vec), knn_k),
         )
         rows = cur.fetchall()
         if not (kind or component):

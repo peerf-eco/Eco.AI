@@ -48,6 +48,7 @@ frontend/node_modules/
 # Agent output
 output/
 traces/
+.playwright-mcp/
 
 # EcoOS CLI (193MB binary)
 eco.cli/
@@ -63,6 +64,8 @@ test_results/
 # eco_framework package agent/internal/ and silently dropped required files
 # (architect/coder/tester/_taxonomy) from git, breaking clone→run. Fixed 2026-06-22.
 /agents/
+NewProject/
+NewProject*
 
 # Docker
 *.log
@@ -77,7 +80,7 @@ hf_cache/
 *.cache
 token_analysis.json
 
-# RAG (V7) — large generated artifacts, regenerated via
+# RAG — large generated artifacts, regenerated via
 # scripts/build_marketplace_index.py
 marketplace_index.sqlite
 marketplace_cache/

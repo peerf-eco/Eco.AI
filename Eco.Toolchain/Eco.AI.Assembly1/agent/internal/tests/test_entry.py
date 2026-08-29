@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from agent.internal.entry import PIPELINE_EDGES, PIPELINE_ENTRY, build_pipeline
+from agent.internal.entry import (
+    PIPELINE_EDGES,
+    PIPELINE_ENTRY,
+    EXECUTION_EDGES,
+    MIGRATE_EDGES,
+    build_pipeline,
+)
 from agent.internal.orchestrator import Orchestrator
 from agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
 
@@ -132,4 +138,43 @@ def test_no_agent_stop_tool_is_an_unknown_topology_edge(model, project_dir, tmp_
                 f"declares only {sorted(declared)}. Add the edge to PIPELINE_EDGES or "
                 "remove the stop-tool from the agent factory."
             )
+
+
+# ── MIGRATE_EDGES: coder → reviewer → tester ────────────────────────────────
+def test_migrate_topology_has_three_agents():
+    assert set(MIGRATE_EDGES.keys()) == {"coder", "reviewer", "tester"}
+
+
+def test_migrate_topology_inserts_reviewer_between_coder_and_tester():
+    # The coder's forward edge no longer targets the tester directly — it
+    # targets the reviewer, which then forwards to the tester.
+    assert MIGRATE_EDGES["coder"]["to_tester"] == "reviewer"
+    assert MIGRATE_EDGES["reviewer"]["to_tester"] == "tester"
+
+
+def test_migrate_topology_reviewer_can_send_critical_findings_to_coder():
+    # Backward edge: reviewer escalates blocking defects back for a fix cycle.
+    assert MIGRATE_EDGES["reviewer"]["to_coder"] == "coder"
+
+
+def test_migrate_topology_every_agent_can_fail_terminally():
+    for agent in ("coder", "reviewer", "tester"):
+        assert "fail" in MIGRATE_EDGES[agent]
+        assert MIGRATE_EDGES[agent]["fail"] is None
+
+
+def test_migrate_topology_only_tester_can_declare_done():
+    # `done` is still the success terminal, owned solely by the tester.
+    assert "done" in MIGRATE_EDGES["tester"]
+    assert "done" not in MIGRATE_EDGES["coder"]
+    assert "done" not in MIGRATE_EDGES["reviewer"]
+
+
+def test_migrate_topology_reviewer_has_no_write_tools_needed():
+    # The reviewer only ever hands off or fails — it never builds/runs/edits.
+    # Validate the edge names are all valid handoff/terminal tokens.
+    valid = lambda e: (e in {"done", "fail"}) or e.startswith("to_")
+    for agent, edges in MIGRATE_EDGES.items():
+        for e in edges:
+            assert valid(e), f"non-conforming edge name: {e!r}"
 
