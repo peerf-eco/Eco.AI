@@ -62,7 +62,7 @@ export function StreamMessage({ message, disabled, onPlanDecision, onEscalationD
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg glass">
         <Bot size={14} />
       </div>
-      <div className="flex max-w-[80%] flex-col gap-2 flex-1">
+      <div className="flex min-w-0 max-w-[80%] flex-1 flex-col gap-2">
         {message.blocks.map((block) => (
           <BlockView
             key={block.id}
@@ -91,10 +91,11 @@ function BlockView({
   switch (block.type) {
     case "text":
       return (
-        <div className="rounded-xl px-4 py-3 glass">
-          <div className="prose prose-sm prose-invert max-w-none leading-relaxed
+        <div className="min-w-0 overflow-x-auto rounded-xl px-4 py-3 glass">
+          <div className="prose prose-sm prose-invert max-w-none break-words leading-relaxed
             prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5
-            prose-li:my-0.5 prose-pre:my-2 prose-strong:text-white
+            prose-li:my-0.5 prose-pre:my-2 prose-pre:overflow-x-auto prose-pre:whitespace-pre
+            prose-strong:text-white
             prose-code:text-blue-300 prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded">
             <EnhancedMarkdown>{block.content}</EnhancedMarkdown>
           </div>
@@ -106,10 +107,11 @@ function BlockView({
       // Never collapses into a reasoning card; isActive only drives the live
       // streaming caret.
       return (
-        <div className="rounded-xl px-4 py-3 glass border border-blue-500/15">
-          <div className="prose prose-sm prose-invert max-w-none leading-relaxed
+        <div className="min-w-0 overflow-x-auto rounded-xl px-4 py-3 glass border border-blue-500/15">
+          <div className="prose prose-sm prose-invert max-w-none break-words leading-relaxed
             prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5
-            prose-li:my-0.5 prose-pre:my-2 prose-strong:text-white
+            prose-li:my-0.5 prose-pre:my-2 prose-pre:overflow-x-auto prose-pre:whitespace-pre
+            prose-strong:text-white
             prose-code:text-blue-300 prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded">
             <EnhancedMarkdown>{block.content}</EnhancedMarkdown>
             {block.isActive && <span className="thinking-caret" aria-hidden />}

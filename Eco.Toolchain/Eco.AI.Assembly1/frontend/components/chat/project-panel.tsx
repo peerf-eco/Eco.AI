@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
+  Copy,
   Download,
   FileText,
+  FileWarning,
   FolderClosed,
   FolderDown,
   FolderSearch,
@@ -22,6 +24,13 @@ import { EcoosLogo } from "./ecoos-logo";
 
 export type ExportFormat = "jsonl" | "txt";
 
+// Panel width is user-resizable (UI_PRD I-7): drag the right border,
+// clamped to these bounds and persisted across reloads.
+const PANEL_WIDTH_STORAGE_KEY = "eco_harness.panel_width";
+const PANEL_MIN_WIDTH = 220;
+const PANEL_MAX_WIDTH = 480;
+const PANEL_DEFAULT_WIDTH = 272;
+
 interface ProjectsPanelProps {
   open: boolean;
   onToggle: () => void;
@@ -36,10 +45,14 @@ interface ProjectsPanelProps {
   onSelectSession?: (session: SessionInfo) => void;
   // Stop a running/suspended session (backend abort).
   onStopSession?: (session: SessionInfo) => void;
-  // Copy a session's trace dir path to the clipboard (minimal-first-cut
-  // affordance for the ses- naming; full "open in file browser" comes
-  // in a follow-up).
+  // Copy a session's trace dir path to the clipboard.
   onCopyTracePath?: (traceDir: string) => void;
+  // Copy a session's short id (ses-<id8>) to the clipboard.
+  onCopySessionId?: (session: SessionInfo) => void;
+  // Open the Trace Browser modal on a session (UI_PRD I-12).
+  onOpenTraceBrowser?: (session: SessionInfo) => void;
+  // Copy the project folder path to the clipboard (UI_PRD I-14).
+  onCopyProjectPath?: (project: ProjectInfo) => void;
   // Currently opened session (highlighted in the list).
   activeSessionId?: string | null;
   exportBusy?: boolean;
@@ -49,10 +62,13 @@ interface ProjectsPanelProps {
 
 // ────────────────────────────────────────────────────────────────────────────
 // Left vertical panel: whitelisted projects + per-project coding sessions.
-// Collapses to an icon rail; selection highlights the current project card,
-// past projects stay gray; clicking a card reveals its sessions. Each card
-// carries a 3-dot menu (session export / remove from panel); the panel
-// header offers combined export of all projects.
+// Collapses to an icon rail; the expanded width is user-resizable by the
+// right-border handle (UI_PRD I-7). Selection highlights the current project
+// card, past projects stay gray; clicking a card reveals its sessions. Each
+// card carries a 3-dot menu (trace browser, copy path, export, remove) and
+// each session row its own menu (trace browser, copy trace path / id, stop).
+// ID prefixes follow docs/ID_NAMING.md: `proj-` project refs, `ses-`
+// session ids/trace dirs.
 // ────────────────────────────────────────────────────────────────────────────
 
 export function ProjectsPanel({
@@ -68,6 +84,9 @@ export function ProjectsPanel({
   onSelectSession,
   onStopSession,
   onCopyTracePath,
+  onCopySessionId,
+  onOpenTraceBrowser,
+  onCopyProjectPath,
   activeSessionId,
   exportBusy = false,
   notice,
@@ -78,6 +97,42 @@ export function ProjectsPanel({
   useEffect(() => {
     if (activeProjectId) setExpandedId(activeProjectId);
   }, [activeProjectId]);
+
+  // I-7: drag-to-resize. Width lives in state, persisted on mouseup.
+  const [width, setWidth] = useState(PANEL_DEFAULT_WIDTH);
+  const widthRef = useRef(width);
+  widthRef.current = width;
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
+      const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+      if (!Number.isNaN(parsed)) {
+        setWidth(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, parsed)));
+      }
+    } catch {
+      // storage unavailable — keep the default width
+    }
+  }, []);
+  const startResize = useCallback((downEvent: React.MouseEvent) => {
+    downEvent.preventDefault();
+    const startX = downEvent.clientX;
+    const startWidth = widthRef.current;
+    const onMove = (moveEvent: MouseEvent) => {
+      const next = startWidth + (moveEvent.clientX - startX);
+      setWidth(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, next)));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      try {
+        window.localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, String(widthRef.current));
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
 
   if (!open) {
     return (
@@ -114,11 +169,20 @@ export function ProjectsPanel({
   return (
     <motion.aside
       initial={{ width: 60 }}
-      animate={{ width: 272 }}
+      animate={{ width }}
       exit={{ width: 60 }}
       transition={{ type: "spring", damping: 28, stiffness: 260 }}
       className="relative z-20 flex h-full shrink-0 flex-col border-r border-white/[0.06] glass overflow-hidden"
     >
+      {/* Right-border resize handle (UI_PRD I-7). Sits above the panel
+          content; purely visual drag affordance with a hover highlight. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize projects panel"
+        onMouseDown={startResize}
+        className="absolute right-0 top-0 z-30 h-full w-1.5 cursor-col-resize transition-colors hover:bg-blue-500/30"
+      />
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -185,12 +249,19 @@ export function ProjectsPanel({
         {projects.map((project) => {
           const active = project.id === activeProjectId;
           const expanded = project.id === expandedId && project.sessions.length > 0;
+          // Most recent session drives the "last status" line (UI_PRD I-11);
+          // sessions arrive sorted by updated_at desc.
+          const lastSession = project.sessions[0];
+          const lastFailedSession = project.sessions.find(
+            (s) => s.status === "failed" || s.status === "aborted",
+          );
+          const isHarnessRef = project.name.startsWith("proj-");
           return (
             <div key={project.id} className="relative group/card">
               <button
                 type="button"
                 onClick={() => onSelect(project)}
-                title={`${project.name}\n${project.path}`}
+                title={`${project.name}\nid: ${project.id}\n${project.path}`}
                 className={cn(
                   "flex w-full items-start gap-2.5 rounded-xl border px-3 py-2.5",
                   "text-left transition-colors",
@@ -213,17 +284,53 @@ export function ProjectsPanel({
                 <div className="min-w-0 flex-1 pr-4">
                   <div className="flex min-w-0 items-center gap-1.5">
                     <ProjectStatusDot project={project} selected={active} />
-                    <div
-                      className={cn(
-                        "truncate text-xs font-medium",
-                        active ? "text-foreground" : "text-muted-foreground",
-                      )}
-                    >
-                      {project.name}
-                    </div>
+                    {isHarnessRef ? (
+                      <span className="shrink-0 rounded-sm bg-white/[0.04] px-1 py-px font-mono text-[10px] text-muted-foreground">
+                        {project.name}
+                      </span>
+                    ) : (
+                      <div
+                        className={cn(
+                          "truncate text-xs font-medium",
+                          active ? "text-foreground" : "text-muted-foreground",
+                        )}
+                      >
+                        {project.name}
+                      </div>
+                    )}
                   </div>
                   <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/50">
                     {project.path}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[10px] leading-none">
+                    <span
+                      role={project.sessions.length > 0 ? "button" : undefined}
+                      tabIndex={project.sessions.length > 0 ? -1 : undefined}
+                      onClick={(e) => {
+                        if (project.sessions.length === 0) return;
+                        e.stopPropagation();
+                        onOpenTraceBrowser?.(project.sessions[0]);
+                      }}
+                      title={
+                        project.sessions.length > 0
+                          ? "Open the trace browser on the most recent session"
+                          : undefined
+                      }
+                      className={cn(
+                        "font-mono text-muted-foreground/60",
+                        project.sessions.length > 0 &&
+                          "cursor-pointer underline decoration-dotted underline-offset-2 hover:text-blue-300",
+                      )}
+                    >
+                      {project.session_count ?? project.sessions.length} sessions ·{" "}
+                      {project.trace_count ?? 0} traces
+                    </span>
+                    {lastSession && (
+                      <span className="text-muted-foreground/45">
+                        · last: {lastSession.status} (
+                        {relativeTime(lastSession.updated_at)})
+                      </span>
+                    )}
                   </div>
                 </div>
               </button>
@@ -231,8 +338,16 @@ export function ProjectsPanel({
               <ProjectCardMenu
                 project={project}
                 active={active}
+                lastFailedSession={lastFailedSession}
                 onExport={(format) => onExportProject?.(project, format)}
                 onRemove={() => onRemoveProject?.(project)}
+                onCopyPath={() => onCopyProjectPath?.(project)}
+                onShowTraces={() =>
+                  project.sessions[0] && onOpenTraceBrowser?.(project.sessions[0])
+                }
+                onOpenLastFailed={() =>
+                  lastFailedSession && onOpenTraceBrowser?.(lastFailedSession)
+                }
               />
 
               {/* Sessions revealed under the selected project */}
@@ -252,6 +367,8 @@ export function ProjectsPanel({
                       onSelect={onSelectSession}
                       onStop={onStopSession}
                       onCopyTracePath={onCopyTracePath}
+                      onCopySessionId={onCopySessionId}
+                      onOpenTraceBrowser={onOpenTraceBrowser}
                     />
                   ))}
                 </motion.div>
@@ -296,13 +413,21 @@ function useDismissable(open: boolean, close: () => void) {
 function ProjectCardMenu({
   project,
   active,
+  lastFailedSession,
   onExport,
   onRemove,
+  onCopyPath,
+  onShowTraces,
+  onOpenLastFailed,
 }: {
   project: ProjectInfo;
   active: boolean;
+  lastFailedSession?: SessionInfo;
   onExport: (format: ExportFormat) => void;
   onRemove: () => void;
+  onCopyPath?: () => void;
+  onShowTraces?: () => void;
+  onOpenLastFailed?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
@@ -337,11 +462,49 @@ function ProjectCardMenu({
         <div
           role="menu"
           className={cn(
-            "absolute right-0 top-full mt-1 z-50 min-w-[176px]",
+            "absolute right-0 top-full mt-1 z-50 min-w-[200px]",
             "rounded-xl border border-white/10 glass-strong",
             "shadow-[0_16px_48px_-12px_rgba(0,0,0,0.8)] p-1.5 space-y-0.5",
           )}
         >
+          <MenuItem
+            icon={<Copy className="h-3.5 w-3.5 text-blue-300/90" />}
+            label="Copy project path"
+            onClick={() => {
+              close();
+              onCopyPath?.();
+            }}
+            disabled={!onCopyPath}
+          />
+          <MenuItem
+            icon={<FolderSearch className="h-3.5 w-3.5 text-blue-300/90" />}
+            label="Show trace browser"
+            onClick={() => {
+              close();
+              onShowTraces?.();
+            }}
+            disabled={!onShowTraces || project.sessions.length === 0}
+            title={
+              project.sessions.length === 0
+                ? "This project has no sessions yet"
+                : "Open the trace browser"
+            }
+          />
+          <MenuItem
+            icon={<FileWarning className="h-3.5 w-3.5 text-amber-300/90" />}
+            label="Open last failed trace"
+            onClick={() => {
+              close();
+              onOpenLastFailed?.();
+            }}
+            disabled={!onOpenLastFailed}
+            title={
+              lastFailedSession
+                ? `Jump to the most recent failed/aborted session (${lastFailedSession.id})`
+                : "No failed or aborted sessions in this project"
+            }
+          />
+          <div className="my-1 h-px bg-white/[0.08]" role="separator" />
           <MenuItem
             icon={<Download className="h-3.5 w-3.5 text-blue-300/90" />}
             label="Export sessions · JSONL"
@@ -445,25 +608,29 @@ function MenuItem({
   onClick,
   danger,
   title,
+  disabled,
 }: {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
   danger?: boolean;
   title?: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="menuitem"
       title={title ?? label}
+      disabled={disabled}
       onClick={onClick}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5",
         "text-left text-xs transition-colors",
-        danger
+        disabled && "cursor-not-allowed opacity-40",
+        !disabled && (danger
           ? "text-red-300 hover:bg-red-500/15"
-          : "text-white hover:bg-white/10",
+          : "text-white hover:bg-white/10"),
       )}
     >
       {icon}
@@ -500,14 +667,21 @@ function SessionRow({
   onSelect,
   onStop,
   onCopyTracePath,
+  onCopySessionId,
+  onOpenTraceBrowser,
 }: {
   session: SessionInfo;
   active?: boolean;
   onSelect?: (session: SessionInfo) => void;
   onStop?: (session: SessionInfo) => void;
   onCopyTracePath?: (traceDir: string) => void;
+  onCopySessionId?: (session: SessionInfo) => void;
+  onOpenTraceBrowser?: (session: SessionInfo) => void;
 }) {
   const running = session.status === "running";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const menuRef = useDismissable(menuOpen, closeMenu);
   // Minimal-first-cut: prepend the `ses-` prefix to the session id so the
   // panel id and the on-disk trace dir name are visually identical
   // (sessions live in traces/ses-<id8>/ — the project panel id is the
@@ -518,6 +692,8 @@ function SessionRow({
   const tipLines = [
     session.title || "(untitled)",
     sessionRef,
+    session.created_at ? `started: ${formatTimestamp(session.created_at)}` : null,
+    session.updated_at ? `updated: ${formatTimestamp(session.updated_at)} (${relativeTime(session.updated_at)} ago)` : null,
     session.trace_dir ? `trace: ${session.trace_dir}` : null,
     session.trace_last_file ? `last: ${session.trace_last_file}` : null,
     session.trace_last_error
@@ -548,34 +724,79 @@ function SessionRow({
           {relativeTime(session.updated_at)}
         </span>
       </button>
-      {session.trace_dir && onCopyTracePath && (
+      <div ref={menuRef} className="relative shrink-0">
         <button
           type="button"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          title="Session actions"
           onClick={(e) => {
             e.stopPropagation();
-            onCopyTracePath(session.trace_dir!);
+            setMenuOpen((v) => !v);
           }}
-          title={`Copy trace path: ${session.trace_dir}`}
-          aria-label="Copy trace path"
-          className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-blue-500/10 hover:text-blue-300 group-hover/session:opacity-100"
+          className={cn(
+            "rounded-md p-1 text-muted-foreground transition-opacity",
+            "hover:bg-white/10 hover:text-foreground",
+            "opacity-0 group-hover/session:opacity-100 focus:opacity-100",
+            menuOpen && "opacity-100",
+          )}
         >
-          <FolderSearch className="h-3.5 w-3.5" />
+          <MoreVertical className="h-3.5 w-3.5" />
         </button>
-      )}
-      {running && onStop && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onStop(session);
-          }}
-          title="Stop this session"
-          aria-label="Stop session"
-          className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-red-500/10 hover:text-red-400 group-hover/session:opacity-100"
-        >
-          <StopCircle className="h-3.5 w-3.5" />
-        </button>
-      )}
+        {menuOpen && (
+          <div
+            role="menu"
+            className={cn(
+              "absolute right-0 top-full z-50 min-w-[180px]",
+              "rounded-xl border border-white/10 glass-strong",
+              "shadow-[0_16px_48px_-12px_rgba(0,0,0,0.8)] p-1.5 space-y-0.5",
+            )}
+          >
+            <MenuItem
+              icon={<FolderSearch className="h-3.5 w-3.5 text-blue-300/90" />}
+              label="Open trace browser"
+              onClick={() => {
+                closeMenu();
+                onOpenTraceBrowser?.(session);
+              }}
+              disabled={!onOpenTraceBrowser}
+            />
+            {session.trace_dir && onCopyTracePath && (
+              <MenuItem
+                icon={<Copy className="h-3.5 w-3.5 text-blue-300/90" />}
+                label="Copy trace path"
+                onClick={() => {
+                  closeMenu();
+                  onCopyTracePath(session.trace_dir!);
+                }}
+              />
+            )}
+            <MenuItem
+              icon={<Copy className="h-3.5 w-3.5 text-blue-300/90" />}
+              label="Copy session id"
+              onClick={() => {
+                closeMenu();
+                onCopySessionId?.(session);
+              }}
+              disabled={!onCopySessionId}
+            />
+            {running && onStop && (
+              <>
+                <div className="my-1 h-px bg-white/[0.08]" role="separator" />
+                <MenuItem
+                  danger
+                  icon={<StopCircle className="h-3.5 w-3.5" />}
+                  label="Stop session"
+                  onClick={() => {
+                    closeMenu();
+                    onStop(session);
+                  }}
+                />
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -585,7 +806,7 @@ function truncateForTooltip(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max - 1) + "\u2026";
 }
 
-function StatusDot({ status }: { status: SessionStatus }) {
+export function StatusDot({ status }: { status: SessionStatus }) {
   const cls: Record<SessionStatus, string> = {
     running: "bg-blue-400 animate-pulse shadow-[0_0_6px_rgba(96,165,250,0.6)]",
     success: "bg-emerald-400",
@@ -646,4 +867,18 @@ function relativeTime(iso: string): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d`;
   return `${Math.floor(days / 30)}mo`;
+}
+
+// Absolute local timestamp for tooltips and the session-view banner — the
+// compact relativeTime on cards is not enough to answer "when did this run
+// actually happen" (UI_PRD I-3). Locale-driven, e.g. "29 Aug, 14:03".
+export function formatTimestamp(iso: string): string {
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return "";
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(ts);
 }

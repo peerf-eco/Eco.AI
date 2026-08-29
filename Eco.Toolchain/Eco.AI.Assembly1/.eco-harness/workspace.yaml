@@ -13,8 +13,8 @@ roles:
     reasoning: low
   reviewer:
     backend: internal
-    model: cheap_fast
-    reasoning: medium
+    model: coding_balanced
+    reasoning: high
 languages:
   C:
     prompt: prompts/languages/C.md
@@ -36,21 +36,7 @@ languages:
     skill_versions:
       acom_framework: '1'
     eco_wizard: Java
-models:
-  reasoning_heavy:
-    id: tencent/hy3
-    provider: openrouter
-    reasoning: xhigh
-    temperature: null
-    max_tokens: null
-    provider_pin: tencent
-  coding_balanced:
-    id: tencent/hy3
-    provider: openrouter
-    reasoning: high
-    temperature: null
-    max_tokens: null
-    provider_pin: tencent
+models: {}
 providers: {}
 permissions:
   defaults:

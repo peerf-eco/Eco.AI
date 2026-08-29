@@ -397,6 +397,9 @@ export interface PipelineDoneEvent extends ServerEventBase {
 
 // Per-LLM-call token accounting, bucketed by the pipeline phase that was
 // running when the call completed. Drives the phase stepper counters.
+// context_used / context_window drive the header context-load gauge
+// (UI_PRD I-6): context_used is the prompt side of THIS call (input +
+// cache buckets), NOT a session sum — each usage event replaces it.
 export interface UsageEvent extends ServerEventBase {
   type: "usage";
   node: PipelineNode;
@@ -407,6 +410,8 @@ export interface UsageEvent extends ServerEventBase {
     cache_read: number;
     cache_write: number;
     total: number;
+    context_used?: number;
+    context_window?: number;
   };
 }
 
@@ -511,6 +516,10 @@ export interface ProjectInfo {
   added_at: string;
   auto?: boolean;
   sessions: SessionInfo[];
+  // Badge data from GET /api/projects (UI_PRD I-8) — optional so older
+  // backend payloads keep parsing.
+  session_count?: number;
+  trace_count?: number;
 }
 
 export interface FsEntry {
@@ -531,4 +540,25 @@ export interface FsRoots {
   home: string;
   output_root?: string;
   roots: string[];
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Trace Browser (GET /api/sessions/{id}/trace) — UI_PRD I-12
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface TraceFileInfo {
+  path: string;
+  name: string;
+  size: number;
+  error: string;
+  label: string;
+  ts: string;
+}
+
+export interface SessionTraceInfo {
+  trace_dir: string;
+  trace_last_file: string | null;
+  trace_last_error: string | null;
+  trace_call_count: number;
+  files: TraceFileInfo[];
 }

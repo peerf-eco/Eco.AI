@@ -62,7 +62,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--rebuild", action="store_true",
-        help="Force rebuild even if marketplace_index.sqlite exists.",
+        help="Force rebuild even if the index exists.",
+    )
+    parser.add_argument(
+        "--merge", action="store_true",
+        help="Update an existing index in place: re-ingest the corpus and "
+             "add only NEW/changed chunks (add_chunks dedupes on "
+             "component+file+line range+text). Chunks of removed files stay "
+             "until the next full --rebuild. Used by the Settings → RAG "
+             "'Update Index from marketplace' flow.",
     )
     parser.add_argument(
         "--target-chars", type=int, default=400,
@@ -116,9 +124,10 @@ def main() -> int:
         else:
             INDEX_PATH.unlink()
 
-    if INDEX_PATH.is_file() and not args.rebuild:
+    if INDEX_PATH.is_file() and not args.rebuild and not args.merge:
         logger.info(
-            "Index exists at %s. Re-run with --rebuild to wipe + re-embed.",
+            "Index exists at %s. Re-run with --rebuild to wipe + re-embed, "
+            "or --merge to update it in place.",
             INDEX_PATH,
         )
         return 0
@@ -130,7 +139,11 @@ def main() -> int:
         "Embedder ready: model=%s dim=%d", embedder.model, embedder.dim,
     )
 
-    store = RagStore.create(INDEX_PATH, embed_dim=embedder.dim, reset=True)
+    # --merge keeps the existing index (and any user-imported chunks) and
+    # only appends new/changed chunks; --rebuild wipes everything.
+    store = RagStore.create(
+        INDEX_PATH, embed_dim=embedder.dim, reset=bool(args.rebuild),
+    )
     try:
         chunker = ASTChunker(target_chars=args.target_chars)
         stats = ingest_cache(corpus_dir, store, chunker, embedder)

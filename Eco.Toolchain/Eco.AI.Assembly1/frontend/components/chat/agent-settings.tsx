@@ -1,15 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, memo, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo, type ReactNode } from "react";
 import {
   Save, RotateCcw, DraftingCompass, Code2, FlaskConical, ScanEye, Cpu,
   ShieldCheck, Plus, Trash2, Pencil, Check, X, FileSearch, PenLine, Hammer,
   Play, BookOpen, Layers, Globe, Terminal, Info, Bot, Server,
+  RefreshCw, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { RagSection } from "./rag-import";
+import { formatTimestamp } from "./project-panel";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
 
@@ -134,6 +136,23 @@ const COMMAND_ALLOWLIST_HELP = [
 
 type TabId = "roles" | "models" | "access" | "rag" | "providers";
 
+// Background job behind the RAG tab's "Update Index from marketplace"
+// button (server runs scripts/fetch_marketplace.py then
+// scripts/build_marketplace_index.py and the UI polls the status).
+interface RagUpdateJob {
+  state: "idle" | "running" | "success" | "failed";
+  step: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  log_tail: string[];
+}
+
+const RAG_STEP_LABEL: Record<string, string> = {
+  fetch_marketplace: "Fetching marketplace components…",
+  build_index: "Rebuilding marketplace index…",
+};
+
 const TABS: { id: TabId; label: string; icon: typeof Code2 }[] = [
   { id: "roles", label: "Roles", icon: Code2 },
   { id: "models", label: "Models", icon: Cpu },
@@ -219,6 +238,89 @@ export function AgentSettings() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [loaded, setLoaded] = useState(false);
+
+  // RAG marketplace index update job (RAG tab replaces Save with it).
+  const [ragJob, setRagJob] = useState<RagUpdateJob | null>(null);
+  const [ragStarting, setRagStarting] = useState(false);
+  // Bumped when an update finishes so <RagSection> remounts and re-reads
+  // the chunk/size badge from /rag/status.
+  const [ragRefreshKey, setRagRefreshKey] = useState(0);
+  // Marketplace data last-update timestamp for the sticky-bar line under
+  // the "Update Index" button (newer of index mtime / fetch summary).
+  const [ragIndexUpdated, setRagIndexUpdated] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab !== "rag") return;
+    fetch(`${API_URL}/rag/status`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: { last_updated?: string | null } | null) =>
+        setRagIndexUpdated(body?.last_updated ?? null))
+      .catch(() => {});
+  }, [tab, ragRefreshKey]);
+
+  const ragJobRef = useRef<RagUpdateJob | null>(null);
+  const applyRagJob = useCallback((job: RagUpdateJob) => {
+    // Detect the running → settled transition outside the state updater
+    // (updaters must stay pure; StrictMode would double-fire the bump).
+    const previous = ragJobRef.current;
+    ragJobRef.current = job;
+    setRagJob(job);
+    if (
+      previous &&
+      previous.state === "running" &&
+      (job.state === "success" || job.state === "failed")
+    ) {
+      setRagRefreshKey((key) => key + 1);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetch(`${API_URL}/rag/update-index/status`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((job: RagUpdateJob | null) => job && setRagJob(job))
+      .catch(() => {});
+  }, []);
+
+  // Poll while a job is running; the interval is re-created on every state
+  // change so it self-tears-down when the job settles.
+  useEffect(() => {
+    if (ragJob?.state !== "running") return;
+    const timer = setInterval(() => {
+      fetch(`${API_URL}/rag/update-index/status`)
+        .then((response) => (response.ok ? response.json() : null))
+        .then((job: RagUpdateJob | null) => job && applyRagJob(job))
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [ragJob?.state, applyRagJob]);
+
+  const startRagUpdate = async () => {
+    setRagStarting(true);
+    try {
+      const response = await fetch(`${API_URL}/rag/update-index`, { method: "POST" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail || "Failed to start index update");
+      applyRagJob({
+        state: "running",
+        step: null,
+        started_at: new Date().toISOString(),
+        finished_at: null,
+        error: null,
+        log_tail: [],
+      });
+    } catch (error) {
+      applyRagJob({
+        state: "failed",
+        step: null,
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "Failed to start index update",
+        log_tail: [],
+      });
+    } finally {
+      setRagStarting(false);
+    }
+  };
 
   const applyConfig = (body: ConfigResponse) => {
     setRoles(body.roles || {});
@@ -568,7 +670,7 @@ export function AgentSettings() {
           </>
         )}
 
-        {tab === "rag" && <RagSection onImported={markDirty} />}
+        {tab === "rag" && <RagSection key={ragRefreshKey} onImported={markDirty} />}
 
         {tab === "providers" && (
           <ProvidersSection
@@ -581,33 +683,101 @@ export function AgentSettings() {
         )}
       </div>
 
-      {/* Sticky save bar */}
+      {/* Sticky action bar. The RAG tab has no editable settings — Save
+          would be a no-op there — so it gets the "Update Index from
+          marketplace" action instead (runs fetch → rebuild scripts). */}
       <div className="sticky bottom-0 -mx-5 mt-5 border-t border-white/[0.06] bg-[#0a0a10]/90 px-5 py-3 backdrop-blur-xl">
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            onClick={save}
-            disabled={saving || !loaded}
-            className="h-8 flex-1 rounded-lg bg-gradient-to-r from-blue-500 to-violet-500 text-xs font-medium text-white shadow-lg shadow-blue-500/20 transition-all hover:from-blue-600 hover:to-violet-600"
-          >
-            <Save className="mr-1.5 h-3.5 w-3.5" />
-            {saving ? "Saving…" : "Save settings"}
-          </Button>
-          {dirty && (
+        {tab === "rag" ? (
+          <>
             <Button
               type="button"
-              variant="ghost"
               size="sm"
-              onClick={discard}
-              disabled={saving}
-              className="h-8 rounded-lg px-2.5 text-xs text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+              onClick={() => void startRagUpdate()}
+              disabled={ragStarting || ragJob?.state === "running"}
+              title={
+                ragJob?.state === "running"
+                  ? "An index update is already running"
+                  : "Re-pull marketplace components and rebuild the RAG index (ecoPackage.json, _profiles and marketplace_index.sqlite)"
+              }
+              className="h-8 w-full rounded-lg bg-gradient-to-r from-blue-500 to-violet-500 text-xs font-medium text-white shadow-lg shadow-blue-500/20 transition-all hover:from-blue-600 hover:to-violet-600"
             >
-              <RotateCcw className="mr-1 h-3 w-3" />
-              Discard
+              {ragJob?.state === "running" ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              {ragJob?.state === "running"
+                ? RAG_STEP_LABEL[ragJob.step ?? ""] || "Updating index…"
+                : ragStarting
+                  ? "Starting…"
+                  : "Update Index from marketplace"}
             </Button>
-          )}
-        </div>
+            {ragIndexUpdated && ragJob?.state !== "running" && (
+              <p
+                className="mt-1.5 text-center text-[10px] text-muted-foreground/60"
+                title={ragIndexUpdated}
+              >
+                Last updated: {formatTimestamp(ragIndexUpdated)}
+              </p>
+            )}
+            {ragJob && ragJob.state !== "idle" && (
+              <p
+                className={cn(
+                  "mt-2 text-[11px] leading-relaxed",
+                  ragJob.state === "failed"
+                    ? "text-red-400"
+                    : ragJob.state === "success"
+                      ? "text-emerald-400"
+                      : "text-muted-foreground",
+                )}
+                title={ragJob.log_tail?.slice(-3).join("\n")}
+              >
+                {ragJob.state === "running" && (
+                  <span>
+                    Running on the server — this takes a few minutes (network
+                    fetch, then embedding). You can close Settings; the panel
+                    will show the result when you reopen it.
+                  </span>
+                )}
+                {ragJob.state === "success" && (
+                  <span>
+                    Index updated — marketplace cache, ecoPackage.json,
+                    _profiles and marketplace_index.sqlite are current.
+                  </span>
+                )}
+                {ragJob.state === "failed" && `Index update failed: ${ragJob.error ?? "unknown error"}`}
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={save}
+                disabled={saving || !loaded}
+                className="h-8 flex-1 rounded-lg bg-gradient-to-r from-blue-500 to-violet-500 text-xs font-medium text-white shadow-lg shadow-blue-500/20 transition-all hover:from-blue-600 hover:to-violet-600"
+              >
+                <Save className="mr-1.5 h-3.5 w-3.5" />
+                {saving ? "Saving…" : "Save settings"}
+              </Button>
+              {dirty && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={discard}
+                  disabled={saving}
+                  className="h-8 rounded-lg px-2.5 text-xs text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+                >
+                  <RotateCcw className="mr-1 h-3 w-3" />
+                  Discard
+                </Button>
+              )}
+            </div>
+          </>
+        )}
         {status && (
           <p className={cn("mt-2 text-[11px]", status.startsWith("Saved") ? "text-emerald-400" : "text-muted-foreground")}>
             {status}

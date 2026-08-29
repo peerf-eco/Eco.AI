@@ -3,25 +3,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Send, Bot, User, Settings, X, Sparkles, StopCircle,
+  Send, Bot, User, Settings, X, Sparkles, StopCircle, Coins, Copy,
   GitBranch, Workflow, Plus, File as FileIcon, Image as ImageIcon,
   FolderClosed as FolderClosedIcon, AlertCircle as AlertCircleIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { PhaseStepper } from "./phase-stepper";
+import { PhaseStepper, formatTokens } from "./phase-stepper";
 import { StreamMessage } from "./stream-message";
 import { useHarnessSocket } from "./use-socket";
 import { Dropdown, type DropdownOption } from "./dropdown";
 import { PlatformSelector, PLATFORM_OPTIONS, DEFAULT_PLATFORM, type PlatformOption } from "./platform-selector";
 import { LanguageSelector, LANGUAGE_OPTIONS, type ProgrammingLanguage } from "./language-selector";
-import { ProjectsPanel, type ExportFormat } from "./project-panel";
+import { ProjectsPanel, formatTimestamp, type ExportFormat } from "./project-panel";
+import { TraceBrowser } from "./trace-browser";
 import { FolderBrowser } from "./folder-browser";
 import { EcoosLogo } from "./ecoos-logo";
 import { AgentSettings } from "./agent-settings";
 import type {
-  Attachment, AttachmentKind, ChatMessage, FsEntry, ProjectInfo, SessionInfo, WorkingMode,
+  Attachment, AttachmentKind, ChatMessage, FsEntry, ProjectInfo, SessionInfo,
+  TokenStat, WorkingMode,
 } from "./types";
 
 const MAX_PASTE_BYTES = 5 * 1024 * 1024; // 5 MB cap on pasted/base64 content
@@ -456,6 +458,7 @@ export function ChatInterface() {
     completedPhases,
     phaseTokens,
     totalTokens,
+    contextUsage,
     threadId,
     worktree,
     sendUserRequest,
@@ -469,6 +472,8 @@ export function ChatInterface() {
 
   // Session being inspected from the left panel (read-only transcript view).
   const [viewing, setViewing] = useState<SessionInfo | null>(null);
+  // Trace Browser modal target (UI_PRD I-12); null = closed.
+  const [traceSession, setTraceSession] = useState<SessionInfo | null>(null);
 
   // ── Open a past/suspended session from the panel into the main view ──────
   // Fetches the reconstructed transcript and re-points the live socket at that
@@ -513,30 +518,72 @@ export function ChatInterface() {
     await refreshProjects();
   }, [refreshProjects, viewing]);
 
-  // Minimal-first-cut: copy a session's on-disk trace dir to the clipboard.
-  // The full "open in file browser" UX comes in a follow-up; copying the
-  // path is enough to ssh/inspect without leaving the chat.
-  const handleCopyTracePath = useCallback(async (traceDir: string) => {
+  // Clipboard helper with a fallback for browsers without async-clipboard
+  // (e.g. http://localhost). Shared by trace path / project path / session id
+  // copies (UI_PRD I-14).
+  const copyText = useCallback(async (text: string): Promise<boolean> => {
     try {
       if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(traceDir);
-      } else {
-        // Fallback for browsers without async-clipboard (e.g. http://localhost).
-        const ta = document.createElement("textarea");
-        ta.value = traceDir;
-        ta.setAttribute("readonly", "");
-        ta.style.position = "absolute";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
+        await navigator.clipboard.writeText(text);
+        return true;
       }
-      setPanelNotice(`Copied trace path: ${traceDir}`);
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return true;
     } catch {
-      setPanelNotice(`Failed to copy trace path: ${traceDir}`);
+      return false;
     }
   }, []);
+
+  // T-UI-11: copy confirmations auto-dismiss after 1.5 s instead of lingering
+  // until the user clicks the X. Failures keep the manual-dismiss behavior.
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashNotice = useCallback((message: string) => {
+    setPanelNotice(message);
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => setPanelNotice(null), 1500);
+  }, []);
+  useEffect(() => () => {
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+  }, []);
+
+  const handleCopyTracePath = useCallback(async (traceDir: string) => {
+    const ok = await copyText(traceDir);
+    if (ok) flashNotice(`Copied trace path: ${traceDir}`);
+    else setPanelNotice(`Failed to copy trace path: ${traceDir}`);
+  }, [copyText, flashNotice]);
+
+  const handleCopyProjectPath = useCallback(async (project: ProjectInfo) => {
+    const ok = await copyText(project.path);
+    if (ok) flashNotice(`Copied project path: ${project.path}`);
+    else setPanelNotice(`Failed to copy project path: ${project.path}`);
+  }, [copyText, flashNotice]);
+
+  const handleCopySessionId = useCallback(async (session: SessionInfo) => {
+    const ref = `ses-${session.id}`;
+    const ok = await copyText(ref);
+    if (ok) flashNotice(`Copied session id: ${ref}`);
+    else setPanelNotice(`Failed to copy session id: ${ref}`);
+  }, [copyText, flashNotice]);
+
+  const handleOpenTraceBrowser = useCallback((session: SessionInfo) => {
+    setTraceSession(session);
+  }, []);
+
+  // T-UI-19: one-click copy of the current session id from the header —
+  // for support tickets and for pasting to the architect when debugging.
+  const handleCopyThreadId = useCallback(async () => {
+    if (!threadId) return;
+    const ok = await copyText(threadId);
+    if (ok) flashNotice(`Copied session id: ses-${threadId.slice(0, 8)}`);
+  }, [copyText, flashNotice, threadId]);
 
   // Return from a session transcript view to a fresh live thread.
   const handleReturnToLive = useCallback(() => {
@@ -655,6 +702,9 @@ export function ChatInterface() {
         onSelectSession={handleSelectSession}
         onStopSession={handleStopSession}
         onCopyTracePath={handleCopyTracePath}
+        onCopySessionId={handleCopySessionId}
+        onOpenTraceBrowser={handleOpenTraceBrowser}
+        onCopyProjectPath={handleCopyProjectPath}
         activeSessionId={viewing?.id ?? null}
         exportBusy={exportBusy}
         notice={panelNotice}
@@ -736,6 +786,23 @@ export function ChatInterface() {
         )}
       </AnimatePresence>
 
+      {/* Trace Browser modal (UI_PRD I-12): sessions of the project that owns
+          the targeted session, opened on that session. */}
+      <AnimatePresence>
+        {traceSession && (
+          <TraceBrowser
+            sessions={
+              projects.find((p) =>
+                p.sessions.some((s) => s.id === traceSession.id),
+              )?.sessions ?? [traceSession]
+            }
+            initialSessionId={traceSession.id}
+            onCopyPath={(path) => void handleCopyTracePath(path)}
+            onClose={() => setTraceSession(null)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col relative z-10">
         {/* Header */}
@@ -767,6 +834,18 @@ export function ChatInterface() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-3">
+            <SessionTotalsChip tokens={totalTokens} contextUsage={contextUsage} />
+            {threadId && (
+              <button
+                type="button"
+                onClick={() => void handleCopyThreadId()}
+                title={`Current session id: ${threadId}\nClick to copy (support tickets / debugging).`}
+                className="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-black/30 px-2.5 py-1 font-mono text-[10px] text-muted-foreground/80 transition-colors hover:bg-white/[0.06] hover:text-foreground"
+              >
+                <span className="text-foreground/70">ses-{threadId.slice(0, 8)}</span>
+                <Copy className="h-3 w-3 text-muted-foreground/50" />
+              </button>
+            )}
             <div className="flex items-center gap-2 rounded-full glass px-3 py-1.5">
               <div className={cn(
                 "h-2 w-2 rounded-full transition-colors",
@@ -800,13 +879,14 @@ export function ChatInterface() {
           </div>
         </header>
 
-        {/* Phase stepper — steps + token counters follow the working mode */}
+        {/* Phase stepper — steps + token counters follow the working mode.
+            Session totals live in the header chip (SessionTotalsChip), not
+            here, so the counters never collide with the bar graphics. */}
         <PhaseStepper
           mode={mode}
           currentPhase={currentPhase}
           completedPhases={completedPhases}
           phaseTokens={phaseTokens}
-          totalTokens={totalTokens}
         />
 
         {/* Worktree reference strip — appears once the backend isolates this
@@ -839,6 +919,16 @@ export function ChatInterface() {
             <span className="min-w-0 flex-1 truncate text-foreground/80" title={viewing.title}>
               {viewing.title || "(untitled)"}
             </span>
+            {viewing.created_at && (
+              <span
+                className="shrink-0 text-muted-foreground/60"
+                title={`Started: ${viewing.created_at}${viewing.updated_at ? `\nUpdated: ${viewing.updated_at}` : ""}`}
+              >
+                started {formatTimestamp(viewing.created_at)}
+                {viewing.status !== "running" && viewing.updated_at &&
+                  ` · ended ${formatTimestamp(viewing.updated_at)}`}
+              </span>
+            )}
             <span className="shrink-0 text-muted-foreground/60">{viewing.status}</span>
             {viewing.status === "running" && (
               <Button
@@ -872,7 +962,7 @@ export function ChatInterface() {
           </div>
         )}
         <ScrollArea className="flex-1">
-          <div className="mx-auto max-w-3xl px-4 py-6 space-y-5">
+          <div className="mx-auto max-w-4xl 2xl:max-w-5xl px-4 py-6 space-y-5">
             {messages.length === 0 && !isProcessing && !viewing && (
               <EmptyState onPick={setInput} />
             )}
@@ -900,7 +990,7 @@ export function ChatInterface() {
         {/* Input dock — message box on top, selector row inside the frame below */}
         {!viewing && (
         <div className="px-4 pb-4 pt-2">
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-4xl 2xl:max-w-5xl">
             <div
               className="relative rounded-2xl glass-strong shadow-2xl transition-colors focus-within:border-blue-500/30 focus-within:glow-blue border border-transparent"
               onDrop={onDrop}
@@ -1114,6 +1204,53 @@ export function ChatInterface() {
 // ────────────────────────────────────────────────────────────────────────────
 // Sub-components
 // ────────────────────────────────────────────────────────────────────────────
+
+// Session token totals + context-load gauge, parked in the header (right of
+// the connection pill) instead of on the phase-stepper strip — the old
+// absolute-positioned chip on the bar collided with the per-phase counter
+// ovals. The context % is the prompt side of the most recent LLM call
+// against the configured window (UI_PRD I-6); it is an estimate, so the
+// tooltip says so.
+function SessionTotalsChip({
+  tokens,
+  contextUsage,
+}: {
+  tokens: TokenStat;
+  contextUsage: { used: number; window: number } | null;
+}) {
+  if (tokens.total <= 0) return null;
+  const pct =
+    contextUsage && contextUsage.window > 0
+      ? Math.min(100, Math.round((contextUsage.used / contextUsage.window) * 100))
+      : null;
+  const pctTone =
+    pct == null ? ""
+    : pct >= 90 ? "text-red-300"
+    : pct >= 70 ? "text-amber-300"
+    : "text-emerald-300/90";
+  return (
+    <div
+      className="flex items-center gap-1 rounded-full border border-white/[0.08] bg-black/30 px-2.5 py-1 text-[10px] font-mono text-muted-foreground/80"
+      title={
+        `Session total: ${tokens.total.toLocaleString()} tokens\n` +
+        `input: ${tokens.input.toLocaleString()} · output: ${tokens.output.toLocaleString()}` +
+        (contextUsage
+          ? `\n\nContext: ~${contextUsage.used.toLocaleString()} / ${contextUsage.window.toLocaleString()} tokens (${pct}%)\nestimate from the most recent model call`
+          : "")
+      }
+    >
+      <Coins className="h-3 w-3 text-amber-300/80" />
+      <span className="text-foreground/80">{formatTokens(tokens.total)}</span>
+      <span className="text-muted-foreground/50">tokens</span>
+      {pct != null && (
+        <>
+          <span className="text-muted-foreground/40">·</span>
+          <span className={cn("font-medium", pctTone)}>{pct}% ctx</span>
+        </>
+      )}
+    </div>
+  );
+}
 
 function EmptyState({ onPick }: { onPick: (text: string) => void }) {
   return (

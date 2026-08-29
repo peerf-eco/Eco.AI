@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Loader2, Coins } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import {
@@ -18,7 +18,6 @@ interface PhaseStepperProps {
   currentPhase: HarnessPhase | null;
   completedPhases: HarnessPhase[];
   phaseTokens: PhaseTokenMap;
-  totalTokens: TokenStat;
 }
 
 type StepState = "pending" | "active" | "completed";
@@ -36,25 +35,10 @@ export function PhaseStepper({
   currentPhase,
   completedPhases,
   phaseTokens,
-  totalTokens,
 }: PhaseStepperProps) {
   const steps = stepperStepsForMode(mode);
   return (
     <div className="relative glass border-b border-white/[0.06] px-6 py-3">
-      {/* Whole-pipeline token counter, above the bar (right corner). */}
-      {totalTokens.total > 0 && (
-        <div
-          className="absolute right-4 top-1 z-10 flex items-center gap-1 rounded-full border border-white/[0.08] bg-black/30 px-2 py-0.5 text-[10px] font-mono text-muted-foreground/80"
-          title={
-            `Session total: ${totalTokens.total.toLocaleString()} tokens\n` +
-            `input: ${totalTokens.input.toLocaleString()} · output: ${totalTokens.output.toLocaleString()}`
-          }
-        >
-          <Coins className="h-3 w-3 text-amber-300/80" />
-          <span className="text-foreground/80">{formatTokens(totalTokens.total)}</span>
-          <span className="text-muted-foreground/50">tokens</span>
-        </div>
-      )}
       <div className="flex items-center gap-2">
         {steps.map((step, i) => {
           const state = stepState(step, currentPhase, completedPhases);
@@ -65,6 +49,7 @@ export function PhaseStepper({
               {!isLast && (
                 <Connector
                   active={state === "completed"}
+                  stepActive={state === "active"}
                   phase={step.phase}
                   tokens={phaseTokens[step.phase]}
                 />
@@ -119,7 +104,23 @@ function StepDot({ step, state, index }: StepDotProps) {
   );
 }
 
-function Connector({ active, phase, tokens }: { active: boolean; phase: HarnessPhase; tokens?: TokenStat }) {
+function Connector({
+  active,
+  stepActive,
+  phase,
+  tokens,
+}: {
+  active: boolean;
+  stepActive: boolean;
+  phase: HarnessPhase;
+  tokens?: TokenStat;
+}) {
+  // UI_PRD I-5: the counter oval used to render only after the phase's first
+  // completed LLM call — during a long in-flight call it was missing (or
+  // stale) with no affordance. While the step is active the oval now always
+  // shows, pulsing until the first usage event lands.
+  const showOval = (tokens && tokens.total > 0) || stepActive;
+  const label = `Tokens spent in ${PHASE_LABEL[phase] ?? phase}`;
   return (
     <div className="relative h-px flex-1 min-w-[16px] bg-white/[0.06]">
       <motion.div
@@ -128,23 +129,26 @@ function Connector({ active, phase, tokens }: { active: boolean; phase: HarnessP
         transition={{ duration: 0.4, ease: "easeOut" }}
         className="absolute inset-0 origin-left bg-emerald-500/40"
       />
-      {/* Per-phase token counter sitting on the thin connector line. */}
-      {tokens && tokens.total > 0 && (
+      {showOval && (
         <span
           className={cn(
             "absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-1/2",
             "rounded-full border px-1.5 py-px text-[9px] font-mono leading-none whitespace-nowrap",
-            active
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90"
-              : "border-white/[0.08] bg-zinc-900 text-muted-foreground/70",
+            stepActive
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90 animate-pulse"
+              : active
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90"
+                : "border-white/[0.08] bg-zinc-900 text-muted-foreground/70",
           )}
           title={
-            `Tokens spent in ${PHASE_LABEL[phase] ?? phase}\n` +
-            `total: ${tokens.total.toLocaleString()}\n` +
-            `input: ${tokens.input.toLocaleString()} · output: ${tokens.output.toLocaleString()}`
+            tokens && tokens.total > 0
+              ? `${label}\n` +
+                `total: ${tokens.total.toLocaleString()}\n` +
+                `input: ${tokens.input.toLocaleString()} · output: ${tokens.output.toLocaleString()}`
+              : `${label}\naccounting updates after each model call completes`
           }
         >
-          {formatTokens(tokens.total)}
+          {tokens && tokens.total > 0 ? formatTokens(tokens.total) : "…"}
         </span>
       )}
     </div>
@@ -152,7 +156,7 @@ function Connector({ active, phase, tokens }: { active: boolean; phase: HarnessP
 }
 
 // Compact token count: 940 → "940", 12_300 → "12.3k", 4_560_000 → "4.56M".
-function formatTokens(n: number): string {
+export function formatTokens(n: number): string {
   if (n < 1_000) return String(n);
   if (n < 1_000_000) return `${(n / 1_000).toFixed(n < 10_000 ? 2 : 1).replace(/\.?0+$/, "")}k`;
   return `${(n / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`;

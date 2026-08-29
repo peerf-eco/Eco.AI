@@ -1,8 +1,9 @@
 """Session export: turn-level records from chat traces (fine-tuning data).
 
 Pure, stdlib-only functions that reconstruct Q/A training pairs from the
-per-call LLM traces the harness writes under ``traces/chat-<id8>/``
-(``agent/internal/call_trace.py``):
+per-call LLM traces the harness writes under ``traces/ses-<id8>/``
+(legacy ``traces/chat-<id8>/`` remains readable; see docs/ID_NAMING.md for
+the proj- / ses- / devkit-id convention; ``agent/internal/call_trace.py``):
 
   - every conversation turn shares the SAME seeded last-user message
     (``workspace_header + attached_block + user_req``, plain chat:

@@ -326,3 +326,23 @@ Each item should be picked up as its own PR with:
 - [x] `GET /api/sessions/{id}/messages` surfaces trace meta inline.
 - [x] Legacy `traces/chat-<id>/` is still discoverable so old exports
       keep working (regression guard in `TestSessionTraceEndpoint`).
+
+## Done (UI_PRD phases 1–3, see docs/UI_PRD.md)
+
+- [x] Historical-session text overflow fix (I-1); session totals moved to
+      the header (I-2); timestamps on the viewing banner + tooltips (I-3);
+      responsive chat column `max-w-4xl/5xl` (I-4).
+- [x] Live per-phase token ovals incl. active phase + tooltips (I-5);
+      context-load % in the header chip, `usage` event extended (I-6).
+- [x] Resizable projects panel with persisted width (I-7).
+- [x] `N sessions · M traces` badge + `last:` status line on project cards
+      (UI-2/UI-5); projects sorted by activity (UI-14).
+- [x] Session-row 3-dot menu: trace browser / copy trace path / copy
+      session id / stop (UI-8).
+- [x] Trace Browser modal + project-menu entries "Copy project path",
+      "Show trace browser", "Open last failed trace" (UI-4/UI-6/UI-3).
+- [x] `proj-` ref naming, `proj-<8hex>` default dir, chat→proj remap
+      (UI-1/UI-7); `docs/ID_NAMING.md` convention doc (UI-18).
+- [x] Folder-picker tip + friendly outside-allowed-roots message
+      (UI-9/UI-20); auto-dismiss copy notices (UI-11); project id in card
+      tooltip (UI-10); last-session-id chip in the header (UI-19).

@@ -6,6 +6,11 @@ code (you have no write tool) — you hand a closed plan to the coder via
 `to_coder`. Your output is a compact, verified handoff — not a re-stitch
 of the marketplace or the system context.
 
+ID prefixes you will see in paths and logs follow one convention
+(`proj-` project dirs, `ses-` session trace dirs, devkit ids for
+marketplace components) — see `docs/ID_NAMING.md` before reasoning about
+a path that "looks like a session but is a project" or vice versa.
+
 ## Tools you actually have
 - `grep` / `glob` / `read` — over `project_dir` AND `marketplace_cache`
   (read-only). Use these to inspect headers when you need a specific

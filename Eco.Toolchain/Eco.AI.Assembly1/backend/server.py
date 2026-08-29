@@ -9,6 +9,8 @@ import shutil
 import hashlib
 import base64
 import time
+import subprocess
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -100,6 +102,15 @@ ACTIVE_SESSIONS: dict[str, "WebSocket"] = {}
 
 def _output_root() -> Path:
     return Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")).resolve()
+
+
+def _context_window() -> int:
+    """Configured model context window (tokens) for the session context-load
+    gauge. Override with HARNESS_CONTEXT_WINDOW; the default is a safe 128k."""
+    try:
+        return max(1024, int(os.getenv("HARNESS_CONTEXT_WINDOW", "131072")))
+    except (TypeError, ValueError):
+        return 131072
 
 
 def _registry_path() -> Path:
@@ -277,12 +288,58 @@ def _now_iso() -> str:
 
 
 def _project_entry(path: Path) -> dict:
+    """Registry entry for a whitelisted project folder.
+
+    Naming convention (see docs/ID_NAMING.md): harness-generated dirs
+    (``output/proj-<8hex>``, legacy ``output/chat-<8hex>``) get the short
+    ``proj-XXXX`` base32 ref as both id and display name so the panel card
+    reads like a project, not a session id. User-registered folders keep
+    the SHA-1-based id and the directory basename."""
+    if _is_harness_project_path(path):
+        ref = _harness_project_ref(path)
+        return {
+            "id": ref,
+            "path": str(path),
+            "name": ref,
+            "added_at": _now_iso(),
+        }
     return {
         "id": hashlib.sha1(str(path).encode("utf-8")).hexdigest()[:12],
         "path": str(path),
         "name": path.name or str(path),
         "added_at": _now_iso(),
     }
+
+
+# Harness-generated project dirs sit directly under the output root and
+# carry the chat-<8hex> / proj-<8hex> naming from _default_project_dir.
+_HARNESS_DIR_RE = re.compile(r"(?:chat|proj)-[0-9a-f]{8}")
+
+# Crockford base32 alphabet (32 chars; excludes I/L/O/U so a proj- ref
+# can be read aloud or typed reliably).
+_HARNESS_REF_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def _is_harness_project_path(path: Path) -> bool:
+    """True when `path` is a harness-generated project dir directly under
+    the output root (``proj-<8hex>`` or the legacy ``chat-<8hex>``)."""
+    try:
+        rel = path.resolve().relative_to(_output_root().resolve())
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return len(rel.parts) == 1 and bool(_HARNESS_DIR_RE.fullmatch(rel.parts[0]))
+
+
+def _harness_project_ref(path: Path) -> str:
+    """Stable short card ref (``proj-XXXX``, 4 base32 chars) derived from
+    the SHA-1 of the path. Stable across renames of the registry entry and
+    identical for the same folder, so a re-added project keeps its ref."""
+    digest = hashlib.sha1(str(path).encode("utf-8")).digest()
+    value = int.from_bytes(digest[:4], "big")
+    suffix = "".join(
+        _HARNESS_REF_ALPHABET[(value >> (5 * i)) & 0x1F] for i in range(4)
+    )
+    return f"proj-{suffix}"
 
 
 class ProjectRegisterRequest(BaseModel):
@@ -338,12 +395,23 @@ def _remap_to_output_root(candidate: Path) -> Path:
     roots and every new run that selects them is rejected before it starts —
     surfacing as "project_dir is outside the allowed roots".
 
+    Also repairs the chat- → proj- default-dir rename (UI_PRD I-13): a
+    registry entry pointing at a legacy ``<root>/chat-<id8>`` dir is remapped
+    to the ``<root>/proj-<id8>`` sibling whenever that sibling exists on
+    disk, so sessions recorded before the rename stay attached to their
+    project folder.
+
     We only repair the specific drift where the path is ``<X>/output/<name>`` but
     the harness now resolves its output root to a different ``<Y>/output``. This
     keeps the security boundary intact: genuinely foreign paths (e.g.
     ``/etc/secrets``) are left untouched and still rejected, while the remapped
     result always lands inside the current output root."""
     candidate = candidate.resolve()
+    m = re.fullmatch(r"chat-([0-9a-f]{8})", candidate.name)
+    if m:
+        proj_sibling = candidate.parent / f"proj-{m.group(1)}"
+        if proj_sibling.is_dir() and _is_within_allowed(proj_sibling):
+            return proj_sibling
     if _is_within_allowed(candidate):
         return candidate
     if candidate.parent.name == "output":
@@ -631,6 +699,14 @@ def _build_project_list() -> list[dict]:
     Computing _session_trace_meta() is cheap (a listdir per session + at
     most one 4 KB read); for a typical project with N<=20 sessions the
     whole request is under a millisecond on warm disk.
+
+    Response extras (UI_PRD I-8/I-10/I-13):
+      • session_count / trace_count — panel badge data, no extra round trip.
+      • Projects are sorted by most recent session activity (falling back
+        to added_at) so the project the user touched last rises to the top.
+      • Legacy harness dirs still registered under a ``chat-`` name get the
+        computed ``proj-XXXX`` ref as their display name (id/path stay as
+        stored so DELETE/export lookups keep working).
     """
     registry = _load_registry()
     whitelisted: dict[str, dict] = {
@@ -653,9 +729,32 @@ def _build_project_list() -> list[dict]:
         # fields are the same shape the messages endpoint already returns,
         # so the panel can render them on a GET /api/projects response too.
         enriched = [{**s, **_session_trace_meta(s)} for s in proj_sessions]
-        result.append({**entry, "sessions": enriched})
-    result.sort(key=lambda p: (p.get("added_at") or ""), reverse=True)
+        display = {**entry}
+        try:
+            is_harness = _is_harness_project_path(Path(entry["path"]))
+        except (OSError, RuntimeError):
+            is_harness = False
+        if is_harness and not str(entry.get("name", "")).startswith("proj-"):
+            display["name"] = _harness_project_ref(Path(entry["path"]))
+        result.append({
+            **display,
+            "sessions": enriched,
+            "session_count": len(enriched),
+            "trace_count": sum(s.get("trace_call_count") or 0 for s in enriched),
+        })
+    result.sort(key=_project_activity_key, reverse=True)
     return result
+
+
+def _project_activity_key(project: dict) -> str:
+    """Sort key: the project's most recent session update, falling back to
+    when the project was added (UI_PRD I-10 — users re-open what they
+    touched last, not what they added last)."""
+    latest = max(
+        (s.get("updated_at") or "" for s in project.get("sessions", [])),
+        default="",
+    )
+    return latest or project.get("added_at") or ""
 
 
 @app.post("/api/projects/cleanup-legacy")
@@ -1422,12 +1521,26 @@ def _marketplace_index_path() -> Path:
     ))
 
 
+def _fetch_summary_path() -> Path:
+    """marketplace_cache/_fetch_summary.json — written by
+    scripts/fetch_marketplace.py on every marketplace pull."""
+    return Path(__file__).resolve().parent.parent / (
+        "marketplace_cache/_fetch_summary.json"
+    )
+
+
 @app.get("/rag/status")
 async def rag_status():
     """Index summary for the settings panel: size, chunk count, last import."""
     index_path = _marketplace_index_path()
     if not index_path.is_file():
-        return {"available": False, "chunks": 0, "size_bytes": 0, "last_import": None}
+        return {
+            "available": False,
+            "chunks": 0,
+            "size_bytes": 0,
+            "last_import": None,
+            "last_updated": None,
+        }
 
     size_bytes = index_path.stat().st_size
 
@@ -1449,11 +1562,24 @@ async def rag_status():
                 last_import = None
         finally:
             connection.close()
+
+        # Last full update of the marketplace data (UI: "Last updated" under
+        # the Update Index button): the newer of the index file mtime (any
+        # build/merge/import) and the fetch summary (last marketplace pull).
+        markers = [index_path, _fetch_summary_path()]
+        last_updated = max(
+            (m.stat().st_mtime for m in markers if m.is_file()), default=0,
+        )
+        last_updated_iso = (
+            datetime.fromtimestamp(last_updated, tz=timezone.utc).isoformat()
+            if last_updated else None
+        )
         return {
             "available": True,
             "chunks": chunks,
             "size_bytes": size_bytes,
             "last_import": last_import,
+            "last_updated": last_updated_iso,
         }
 
     try:
@@ -1461,6 +1587,183 @@ async def rag_status():
     except Exception:
         logger.exception("RAG status read failed")
         return {"available": True, "chunks": 0, "size_bytes": size_bytes, "last_import": None}
+
+
+# ── Marketplace index update (Settings → RAG "Update Index") ─────────────────
+# Runs the two existing maintenance scripts sequentially:
+#   1. scripts/fetch_marketplace.py   — re-pulls component DEVKITs into
+#      marketplace_cache/ (updating ecoPackage.json + _profiles/<name>.json)
+#   2. scripts/build_marketplace_index.py — rebuilds the sqlite vector index
+#      (marketplace_index.sqlite) from the refreshed cache
+# Both are long-running (fetch is network-bound, build embeds ~1200 chunks),
+# so the work happens in a daemon thread and the UI polls the job status.
+_RAG_UPDATE_STEPS = [
+    ("fetch_marketplace", "scripts/fetch_marketplace.py"),
+    ("build_index", "scripts/build_marketplace_index.py"),
+]
+_RAG_UPDATE_LOG_LINES = 200
+_RAG_UPDATE_STEP_TIMEOUT = 1800  # seconds per script before it is killed
+
+_rag_update_lock = threading.Lock()
+_rag_update_job: Dict[str, Any] = {"state": "idle"}
+
+
+def _rag_update_finish(state: str, error: str | None = None) -> None:
+    with _rag_update_lock:
+        _rag_update_job.update({
+            "state": state,
+            "finished_at": _now_iso(),
+            "error": error,
+        })
+
+
+def _rag_update_append_log(line: str) -> None:
+    with _rag_update_lock:
+        tail: List[str] = _rag_update_job.setdefault("log_tail", [])
+        tail.append(line.rstrip())
+        del tail[:-_RAG_UPDATE_LOG_LINES]
+
+
+def _run_rag_update() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    index_path = _marketplace_index_path()
+    try:
+        for step, script in _RAG_UPDATE_STEPS:
+            with _rag_update_lock:
+                _rag_update_job["step"] = step
+            script_path = repo_root / script
+            if not script_path.is_file():
+                raise RuntimeError(f"Script not found: {script}")
+            # build_marketplace_index.py without flags skips when the index
+            # already exists — update runs must use --merge (in-place, only
+            # new/changed chunks, user imports kept) for an existing index,
+            # and a plain first build when there is none.
+            step_args = ["--merge"] if step == "build_index" and index_path.is_file() else []
+            try:
+                process = subprocess.Popen(
+                    [sys.executable, str(script_path), *step_args],
+                    cwd=str(repo_root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except OSError as error:
+                raise RuntimeError(f"Failed to start {script}: {error}") from error
+            try:
+                assert process.stdout is not None
+                for line in process.stdout:
+                    _rag_update_append_log(line)
+                returncode = process.wait(timeout=_RAG_UPDATE_STEP_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                raise RuntimeError(f"{script} timed out after {_RAG_UPDATE_STEP_TIMEOUT}s")
+            if returncode != 0:
+                with _rag_update_lock:
+                    last_lines = _rag_update_job.get("log_tail", [])[-5:]
+                raise RuntimeError(
+                    f"{script} exited with code {returncode}: "
+                    + " | ".join(last_lines)
+                )
+        _rag_update_finish("success")
+    except Exception as error:
+        logger.exception("RAG marketplace index update failed")
+        _rag_update_finish("failed", str(error))
+
+
+@app.post("/rag/update-index")
+async def start_rag_update():
+    """Kick off the fetch → rebuild pipeline for the marketplace RAG index."""
+    with _rag_update_lock:
+        if _rag_update_job.get("state") == "running":
+            raise HTTPException(status_code=409, detail="Index update is already running")
+        _rag_update_job.clear()
+        _rag_update_job.update({
+            "state": "running",
+            "step": None,
+            "started_at": _now_iso(),
+            "finished_at": None,
+            "error": None,
+            "log_tail": [],
+        })
+    threading.Thread(target=_run_rag_update, daemon=True, name="rag-update").start()
+    return {"status": "started"}
+
+
+@app.get("/rag/update-index/status")
+async def rag_update_status():
+    """Poll the marketplace index update job (state, current step, log tail)."""
+    with _rag_update_lock:
+        snapshot = {**_rag_update_job, "log_tail": list(_rag_update_job.get("log_tail", []))}
+    return snapshot
+
+
+# ── Marketplace token (Settings → RAG) ───────────────────────────────────────
+# scripts/fetch_marketplace.py reads ECO_API_TOKEN from the environment. The
+# default comes from .env; these endpoints let the user set or replace it
+# from the UI. The value is applied to the RUNNING process env (so the next
+# update job's subprocesses inherit it) and persisted to the repo .env. It
+# is never echoed back — only a masked preview is returned.
+
+class RagTokenUpdate(BaseModel):
+    token: str = ""
+
+
+def _env_file_path() -> Path:
+    return Path(__file__).resolve().parent.parent / ".env"
+
+
+def _mask_token(token: str) -> str | None:
+    if not token:
+        return None
+    return f"••••{token[-4:]}" if len(token) >= 8 else "••••"
+
+
+def _upsert_env_file(key: str, value: str | None) -> None:
+    """Set KEY=value in the repo .env (replace or append). value=None removes
+    the line. Every other line is preserved verbatim."""
+    env_path = _env_file_path()
+    lines: List[str] = []
+    if env_path.is_file():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    prefix = f"{key}="
+    lines = [line for line in lines if not line.strip().startswith(prefix)]
+    if value:
+        lines.append(f"{key}={value}")
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+@app.get("/rag/token")
+async def get_rag_token():
+    """Whether a marketplace token is configured + a masked preview."""
+    token = os.getenv("ECO_API_TOKEN", "")
+    return {"configured": bool(token), "masked": _mask_token(token)}
+
+
+@app.put("/rag/token")
+async def set_rag_token(payload: RagTokenUpdate):
+    """Set (or clear with an empty token) the marketplace token at runtime
+    and persist it to the repo .env for future server starts."""
+    token = payload.token.strip()
+    if token:
+        os.environ["ECO_API_TOKEN"] = token
+    else:
+        os.environ.pop("ECO_API_TOKEN", None)
+    try:
+        await asyncio.to_thread(_upsert_env_file, "ECO_API_TOKEN", token or None)
+    except OSError as error:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Token applied for this session but could not be persisted "
+                f"to .env: {error}"
+            ),
+        ) from error
+    return {"configured": bool(token), "masked": _mask_token(token)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2320,8 +2623,8 @@ async def chat_endpoint(websocket: WebSocket):
     make_env_path = os.getenv("ECO_MAKE_EXE") or "make"
     make_exe = Path(make_env_path)
 
-    # A caller-supplied thread_id becomes the session id and the chat-<id>
-    # trace folder; sanitize it so it can never carry "/" or ".." into a
+    # A caller-supplied thread_id becomes the session id and the proj-<id>
+    # project folder; sanitize it so it can never carry "/" or ".." into a
     # filesystem path. Reconnects send the same raw value and get the same id.
     requested_thread_id = websocket.query_params.get("thread_id")
     thread_id = _safe_id(requested_thread_id) if requested_thread_id else str(uuid.uuid4())
@@ -2357,7 +2660,7 @@ async def chat_endpoint(websocket: WebSocket):
                 base = base.resolve()
         else:
             base = (repo_root / "output").resolve()
-        return base / f"chat-{thread_id[:8]}"
+        return base / f"proj-{thread_id[:8]}"
 
     project_dir = _default_project_dir()
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -2378,9 +2681,10 @@ async def chat_endpoint(websocket: WebSocket):
     #
     # Minimal-first-cut naming (full split in a follow-up): the trace folder
     # uses the `ses-` prefix so the on-disk path and the project-panel
-    # session-card id are visually identical. The project folder keeps the
-    # current `chat-<8hex>` default for now (a single project hosts many
-    # sessions; the trace dir is 1:1 with a session, NOT with a project).
+    # session-card id are visually identical. The project folder uses the
+    # `proj-<8hex>` default (renamed from the legacy `chat-<8hex>` —
+    # _remap_to_output_root heals old registry entries to the proj- sibling
+    # when it exists; see docs/ID_NAMING.md).
     #
     # Like _default_project_dir above, the trace dir is anchored to the
     # repository root so the path is independent of the server's CWD — the
@@ -2504,8 +2808,17 @@ async def chat_endpoint(websocket: WebSocket):
                     })
             elif etype == "usage":
                 # Per-LLM-call token accounting for the phase stepper counters.
-                usage = (ev.data or {}).get("usage") or {}
+                usage = dict((ev.data or {}).get("usage") or {})
                 if usage:
+                    # Context-load gauge (UI_PRD I-6): the prompt side of THIS
+                    # call against the configured window. Sent per call (the
+                    # frontend replaces, not accumulates) so the gauge tracks
+                    # the live context size as the session grows.
+                    usage.setdefault("context_window", _context_window())
+                    usage.setdefault("context_used", sum(
+                        usage.get(k) or 0
+                        for k in ("input", "cache_read", "cache_write")
+                    ))
                     await websocket.send_json({
                         "type":  "usage",
                         "node":  NODE_OF.get(agent, "planner"),

@@ -397,6 +397,13 @@ export function FolderBrowser({
 
         {/* Directory / file list. select-none: rapid Back/Up clicking must
             not sweep-select the row labels (browser text selection). */}
+        {!isFileMode && (
+          <p className="mx-5 mb-1.5 text-[10px] leading-relaxed text-muted-foreground/60">
+            Tip: navigate <span className="text-foreground/80">into</span> a
+            project folder before selecting it — selecting a parent folder
+            includes all of its subfolders in the project list.
+          </p>
+        )}
         <div className="mx-5 h-64 select-none overflow-y-auto rounded-xl border border-white/[0.06] bg-white/[0.02] thin-scroll">
           {loading ? (
             <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -444,20 +451,23 @@ export function FolderBrowser({
           )}
         </div>
 
-        {/* Error */}
+        {/* Error. The "outside allowed roots" 400 gets a friendly, actionable
+            message instead of the raw server detail (UI_PRD I-15 / T-UI-20). */}
         {error && (
           <div className="mx-5 mt-2 space-y-1 rounded-lg border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-300">
             <div className="flex items-start gap-2">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {/* break-words, not truncate: the "outside the allowed roots"
                   detail names the offending path and must stay readable. */}
-              <span className="break-words">{error}</span>
+              <span className="break-words">
+                {/outside the allowed roots/i.test(error)
+                  ? "This folder is outside the harness allowed roots. Add it to HARNESS_ALLOWED_ROOTS to enable."
+                  : error}
+              </span>
             </div>
             {/allowed roots/i.test(error) && rootsInfo && (
               <p className="break-words pl-6 text-[10px] leading-relaxed text-red-300/70">
-                The picker browses the server&apos;s filesystem (inside the api
-                container), not this browser machine&apos;s disks. Allowed roots:{" "}
-                {rootsInfo.roots.join(", ")}
+                Allowed roots: {rootsInfo.roots.join(", ")}
               </p>
             )}
           </div>
@@ -475,6 +485,14 @@ export function FolderBrowser({
               <div className="break-all font-mono text-[11px] leading-snug text-foreground/80">
                 {listing?.path ?? "—"}
               </div>
+              {/* Mis-click guard (UI_PRD I-15): a parent-folder select is the
+                  common mistake, so warn instead of silently accepting it. */}
+              {!isFileMode && listing && listing.entries.some((e) => e.type === "dir") && (
+                <div className="mt-0.5 text-[10px] leading-snug text-amber-300/80">
+                  This folder still has subfolders — navigate in if you meant
+                  to pick one of them.
+                </div>
+              )}
             </div>
           </div>
           {isFileMode ? (

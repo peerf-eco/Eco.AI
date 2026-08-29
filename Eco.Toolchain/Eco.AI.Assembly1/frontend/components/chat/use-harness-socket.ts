@@ -130,6 +130,10 @@ export interface UseHarnessSocketResult {
   // Token counters for the phase stepper: per-phase buckets + session total.
   phaseTokens: PhaseTokenMap;
   totalTokens: TokenStat;
+  // Context-load gauge (UI_PRD I-6): the prompt side of the MOST RECENT LLM
+  // call against the model window. Replaced per usage event, never summed;
+  // null while no usage event has carried a context_window yet.
+  contextUsage: { used: number; window: number } | null;
   threadId: string | null;
   // Set when the backend creates an isolated worktree for this session;
   // kept until New session so the name/path stays available for reference.
@@ -168,6 +172,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
   const [completedPhases, setCompletedPhases] = useState<HarnessPhase[]>([]);
   const [phaseTokens, setPhaseTokens] = useState<PhaseTokenMap>({});
   const [totalTokens, setTotalTokens] = useState<TokenStat>({ input: 0, output: 0, total: 0 });
+  const [contextUsage, setContextUsage] = useState<{ used: number; window: number } | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [worktree, setWorktree] = useState<WorktreeRef | null>(null);
 
@@ -308,6 +313,12 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
           output: prev.output + (u.output ?? 0),
           total: prev.total + total,
         }));
+        if (u.context_window && u.context_window > 0) {
+          setContextUsage({
+            used: u.context_used ?? ((u.input ?? 0) + (u.cache_read ?? 0) + (u.cache_write ?? 0)),
+            window: u.context_window,
+          });
+        }
         return;
       }
 
@@ -584,6 +595,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     setCompletedPhases([]);
     setPhaseTokens({});
     setTotalTokens({ input: 0, output: 0, total: 0 });
+    setContextUsage(null);
     send({
       type: "user_request",
       user_request: trimmed,
@@ -667,6 +679,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     setCompletedPhases([]);
     setPhaseTokens({});
     setTotalTokens({ input: 0, output: 0, total: 0 });
+    setContextUsage(null);
     setWorktree(null);
     if (typeof window !== "undefined") {
       sessionStorage.removeItem(THREAD_ID_KEY);
@@ -689,6 +702,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     setCompletedPhases([]);
     setPhaseTokens({});
     setTotalTokens({ input: 0, output: 0, total: 0 });
+    setContextUsage(null);
     setWorktree(null);
   }, []);
 
@@ -700,6 +714,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     completedPhases,
     phaseTokens,
     totalTokens,
+    contextUsage,
     threadId,
     worktree,
     sendUserRequest,
