@@ -36,7 +36,21 @@ languages:
     skill_versions:
       acom_framework: '1'
     eco_wizard: Java
-models: {}
+models:
+  reasoning_heavy:
+    id: tencent/hy3
+    provider: openrouter
+    reasoning: xhigh
+    temperature: null
+    max_tokens: null
+    provider_pin: tencent
+  coding_balanced:
+    id: tencent/hy3
+    provider: openrouter
+    reasoning: high
+    temperature: null
+    max_tokens: null
+    provider_pin: tencent
 providers: {}
 permissions:
   defaults:

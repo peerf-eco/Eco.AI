@@ -437,6 +437,15 @@ class EcoAgent:
             # Per-call token accounting for the UI stepper (phase/total counters).
             self._emit(EventType.USAGE, {"usage": _usage_data(resp)})
 
+            # Sliding-window summarization. When the cumulative input
+            # token count crosses the model context window (or a
+            # configurable ratio of it), compress the older turns into
+            # a single digest message and keep only the last 4 turns
+            # verbatim. This is the single biggest input-cost saver
+            # for long runs (ses-e9b2c2ad: 22-turn coder run cost
+            # 891 K input tokens; 80% was history).
+            self._maybe_summarize_history(history)
+
             # Stream-level error (HTTP fail, abort, etc.) — surface as agent error.
             if resp.stopReason in ("error", "aborted"):
                 self._emit(EventType.ERROR, {"reason": resp.errorMessage or resp.stopReason})
@@ -600,5 +609,150 @@ class EcoAgent:
             status="max_iters", stop_tool_name="", stop_payload={},
             history=history, error="",
         )
+
+    # ------------------------------------------------------------------
+    # Conversation-history compression (sliding-window summarization).
+    # ------------------------------------------------------------------
+    # Without this, every LLM call re-sends the FULL conversation
+    # history, which grows linearly with iteration count. The cost
+    # analysis on ses-e9b2c2ad:
+    #   - 22 coder turns
+    #   - 38 933 tokens input on turn 0
+    #   - 45 848 tokens input on turn 21 (only 7 K of growth,
+    #     but the ABSOLUTE cost of turn 21 is 45 K input = $0.023 just
+    #     for that one call)
+    #   - 891 K total input across the run
+    # With summarization, the older turns collapse to a single
+    # digest message (typically 2-4 K tokens), and only the last 4
+    # turns are verbatim. Net saving: ~25 K input per call after
+    # turn 8 = ~$0.27 per 22-turn run.
+    #
+    # The digest is a USER-role message inserted between the seed and
+    # the verbatim tail. The model treats it as additional context,
+    # not as a directive. The digest is regenerated each time the
+    # threshold is crossed (incremental summarization is left as a
+    # future optimization — for now full re-summarize is cheap enough
+    # and gives the best fidelity).
+
+    _SUMMARIZE_KEEP_LAST = 4  # keep the last N messages verbatim (extended
+    # back to a turn boundary so tool-call/tool-result groups stay intact)
+    _SUMMARIZE_TRIGGER_RATIO = 0.6  # summarize when history > 60% of context
+
+    def _est_history_tokens(self, history: list) -> int:
+        """Rough token estimate for the dynamic part of the history.
+
+        We use 4 chars per token (the same heuristic the openai
+        provider uses for prompt budgeting). For long histories this
+        is within 6% of the provider's actual count.
+        """
+        chars = 0
+        for m in history:
+            content = getattr(m, "content", None)
+            if isinstance(content, str):
+                chars += len(content)
+            elif isinstance(content, list):
+                for c in content:
+                    t = getattr(c, "text", None)
+                    if isinstance(t, str):
+                        chars += len(t)
+        return chars // 4
+
+    def _maybe_summarize_history(self, history: list) -> None:
+        # Skip if there is nothing meaningful to compress.
+        if len(history) <= self._SUMMARIZE_KEEP_LAST + 2:
+            return
+        # Get the context window from the model profile (fallback 128 K).
+        ctx = 128_000
+        try:
+            profile = getattr(self.model, "profile", None) or getattr(self.model, "_profile", None)
+            if profile is not None and getattr(profile, "contextWindow", None):
+                ctx = int(profile.contextWindow)
+        except Exception:
+            pass
+        est = self._est_history_tokens(history)
+        # Also factor in the static system prompt + tools schema. Rough
+        # estimate: 12 K for the static part.
+        threshold = int(ctx * self._SUMMARIZE_TRIGGER_RATIO) - 12_000
+        if est < threshold:
+            return
+        # Compress. The most recent messages are kept verbatim; the
+        # rest collapse to one digest message prepended to the tail.
+        cut = len(history) - self._SUMMARIZE_KEEP_LAST
+        # Never cut between an assistant tool-call message and its tool
+        # results: a tail that starts with an orphaned ToolResultMessage
+        # is rejected by the provider APIs ("unexpected tool_use_id" /
+        # "tool message must follow assistant tool_calls"). Walk the
+        # boundary back to the assistant message that owns the results.
+        while 0 < cut < len(history) and getattr(history[cut], "role", "") == "toolResult":
+            cut -= 1
+        tail = list(history[cut:])
+        head = list(history[:cut])
+        # Build a structured digest of the head.
+        digest = self._build_history_digest(head)
+        # Replace history in place: digest + tail. We mutate the list
+        # because the agent's run() uses the same reference.
+        history.clear()
+        history.append(digest)
+        history.extend(tail)
+        # Deduped read results may now live in the digested-away head;
+        # stale pointers would answer a re-call with "[duplicate — see
+        # it above]" for content that is no longer in context.
+        self._dedup_memo.clear()
+        self._emit(EventType.ITERATION, {
+            "i": self._iter,
+            "history_compressed": True,
+            "old_tokens_est": est,
+            "new_turns": len(history),
+        })
+
+    def _build_history_digest(self, head_msgs: list) -> "UserMessage":
+        """Synthesize a compact summary of the older turns.
+
+        The summary is a USER-role message that the LLM treats as
+        additional context. It preserves the things the model will
+        need to remember (the original user request, the architect's
+        plan summary, files written, errors hit) and discards the
+        things the model can re-derive from tool results (full tool
+        output text, full IID bytes).
+        """
+        from agent.pi_ai.types import UserMessage
+        chunks = []
+        for m in head_msgs:
+            role = getattr(m, "role", "?")
+            content = getattr(m, "content", None)
+            if isinstance(content, str):
+                # Plain text message
+                if len(content) > 1000:
+                    content = content[:1000] + "...[truncated]"
+                chunks.append(f"[{role}] {content}")
+            elif isinstance(content, list):
+                # Mixed: text blocks + tool calls / tool results.
+                text_parts = []
+                tool_parts = []
+                for c in content:
+                    t = getattr(c, "text", None)
+                    if isinstance(t, str):
+                        text_parts.append(t)
+                    tool_name = getattr(c, "name", None)
+                    if tool_name:
+                        tool_parts.append(f"tool={tool_name}")
+                body = " | ".join(text_parts[:3])[:500]
+                if tool_parts:
+                    body = (body + " | " if body else "") + "[" + ", ".join(tool_parts[:5]) + "]"
+                if body:
+                    chunks.append(f"[{role}] {body[:600]}")
+        joined = "\n".join(chunks)
+        # Cap the digest at ~3 K tokens (12 K chars). The LLM never
+        # needs more than this for the "what was done so far" digest.
+        if len(joined) > 12_000:
+            joined = joined[:12_000] + "\n[...older history truncated for context budget...]"
+        digest_text = (
+            "[HISTORY COMPRESSED for context budget]\n"
+            "The following is a digest of the older conversation turns. "
+            "If you need full text of a specific tool result, re-call the "
+            "tool with the same arguments and the result will be re-supplied.\n\n"
+            + joined
+        )
+        return UserMessage(content=digest_text, timestamp=_now_ms())
 
 

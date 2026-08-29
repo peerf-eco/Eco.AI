@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, memo, type ReactNode } from "react";
-import { motion } from "framer-motion";
 import {
   Save, RotateCcw, DraftingCompass, Code2, FlaskConical, ScanEye, Cpu,
   ShieldCheck, Plus, Trash2, Pencil, Check, X, FileSearch, PenLine, Hammer,
@@ -431,13 +430,16 @@ export function AgentSettings() {
               tab === entry.id ? "text-foreground" : "text-muted-foreground hover:text-foreground/80",
             )}
           >
-            {tab === entry.id && (
-              <motion.span
-                layoutId="settings-tab-pill"
-                transition={{ type: "spring", stiffness: 500, damping: 35 }}
-                className="absolute inset-0 -z-10 rounded-lg border border-white/[0.08] bg-white/[0.07]"
-              />
-            )}
+            {/* CSS-transition pill instead of framer-motion layoutId: layout
+                projections inside this panel block AnimatePresence exit
+                completion, leaving an invisible click-blocking backdrop when
+                the settings sidebar closes (see chat-interface.tsx). */}
+            <span
+              className={cn(
+                "absolute inset-0 -z-10 rounded-lg border border-white/[0.08] bg-white/[0.07] transition-opacity duration-150",
+                tab === entry.id ? "opacity-100" : "opacity-0",
+              )}
+            />
             <entry.icon className="h-3.5 w-3.5" />
             {entry.label}
           </button>
@@ -1383,18 +1385,20 @@ function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative flex shrink-0 items-center rounded-full px-0.5 transition-colors duration-200",
+        "relative flex shrink-0 items-center justify-start rounded-full px-0.5 transition-colors duration-200",
         small ? "h-4 w-7" : "h-5 w-9",
-        checked ? "justify-end bg-blue-500/80" : "justify-start bg-white/[0.12]",
+        checked ? "bg-blue-500/80" : "bg-white/[0.12]",
         disabled && "cursor-not-allowed opacity-40",
       )}
     >
-      <motion.span
-        layout
-        transition={{ type: "spring", stiffness: 550, damping: 32 }}
+      {/* CSS transform knob instead of framer-motion `layout` — layout
+          projections inside this panel can block AnimatePresence exit
+          completion (invisible click-blocking backdrop after close). */}
+      <span
         className={cn(
-          "rounded-full bg-white shadow-sm",
+          "rounded-full bg-white shadow-sm transition-transform duration-200",
           small ? "h-3 w-3" : "h-4 w-4",
+          checked ? (small ? "translate-x-3" : "translate-x-4") : "translate-x-0",
         )}
       />
     </button>

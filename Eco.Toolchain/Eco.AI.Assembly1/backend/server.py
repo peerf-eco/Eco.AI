@@ -8,6 +8,7 @@ import logging
 import shutil
 import hashlib
 import base64
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -108,48 +109,104 @@ def _registry_path() -> Path:
 def _sweep_legacy_nested_app_dirs(output_root: Path) -> list[Path]:
     """Detect leftover `--app/...` nested project dirs from pre-fix runs.
 
-    Bug history (ses-9257ff60 → ses-6acd93e6): the previous
-    implementation of `_default_project_dir` used
-    `Path("./output").resolve()`, which is CWD-relative. When the server
-    was started with CWD = an old project's working dir, the new default
-    project_dir became nested INSIDE the old one as
-    `output/<old_project>/output/<old_project>/--app/Eco.Toolchain/...`.
-    The eco-wizard then wrote the new project's files into that nested
-    tree, and subsequent runs picking up the same project saw TWO project
-    trees and spent 8 turns on directory exploration.
+    Bug history (ses-9257ff60 → ses-6acd93e6 → ses-e9b2c2ad): the
+    previous implementation of `_default_project_dir` used
+    `Path("./output").resolve()`, which is CWD-relative. When the
+    server was started with CWD = an old project's working dir, the
+    new default project_dir became nested INSIDE the old one as
+    `output/<old>/output/<old>/--app/Eco.Toolchain/...`. The eco-wizard
+    then wrote the new project's files into that nested tree, and
+    subsequent runs picked up the same project and saw TWO project
+    trees (ses-e9b2c2ad's 22-turn coder run spent 7 turns on
+    list_dir/glob trying to disambiguate `Eco.TrigTable` from
+    `--app/Eco.Toolchain/.../Eco.TrigTable`).
 
     The fix in `_default_project_dir` and the trace-dir construction
     anchors paths to the repo root, preventing NEW nesting. This sweep
     detects EXISTING nested residue so the user (and the panel) can
-    clean it up explicitly. It does NOT auto-delete; the user must
-    decide whether the nested tree contains work to keep.
+    clean it up explicitly. It does NOT auto-delete; deletion happens
+    only via POST /api/projects/cleanup-legacy (or the scoped
+    end-of-session helper) and is subject to the 24 h plan.md guard.
 
-    The function is a pure walker: it returns a list of `Path`s whose
-    basename is literally "--app". The caller can then log a warning,
-    list them in the project panel, or add a one-click "delete" button.
+    Heuristic — a candidate must show the actual nesting-bug signature,
+    otherwise live projects (every chat dir legitimately contains an
+    `--app/Eco.Toolchain/...` tree) would match:
+      (a) its name is literally "--app", AND
+      (b) its ancestor chain below `output_root` contains a directory
+          named `output` — the residue of the CWD-relative
+          `Path("./output").resolve()` bug — AND
+      (c) it contains at least one ACOM component marker (SourceFiles/,
+          MakefileExe, ...) proving a pre-fix run created a project
+          here.
+
+    Pure walker: returns the list of `Path`s that match; never follows
+    symlinks and never returns anything outside `output_root`.
     """
     if not output_root or not output_root.is_dir():
         return []
-    candidates: list[Path] = []
-    for top in output_root.iterdir():
-        if not top.is_dir() or top.name != "--app":
-            continue
-        # Only flag --app dirs that look like the CWD-nesting bug
-        # (i.e. they contain a path-shaped subdir with >= 2 segments).
+    root = output_root.resolve()
+    ACOM_MARKERS = (
+        "SourceFiles", "SharedFiles", "HeaderFiles", "DesignFiles",
+        "AssemblyFiles", "BuildFiles", "DependenciesFiles", "EcoMain.c",
+        "MakefileExe", "EcoSystem1", "EcoMathC89", "EcoInterfaceBus1",
+    )
+
+    def _has_nested_output_component(p: Path) -> bool:
+        # The CWD-nesting bug is the ONLY way an `output` component can
+        # appear between the output root and an `--app` dir: live
+        # projects look like `<output_root>/<chat-*>/--app` with no
+        # `output` component below the root.
         try:
-            subdirs = [d for d in top.iterdir() if d.is_dir()]
+            rel = p.resolve().relative_to(root)
+        except (OSError, ValueError):
+            return False
+        return "output" in rel.parts
+
+    def _has_acom_marker(d: Path) -> bool:
+        # Depth-bounded walk for an ACOM project marker. Capped at 6
+        # levels deep and 2000 entries; exceeding the cap is NOT a
+        # match (size alone proves nothing — only a marker does).
+        try:
+            count = 0
+            for root_dir, dirs, files in d.walk(on_error=lambda e: None,
+                                                follow_symlinks=False):
+                depth = len(root_dir.relative_to(d).parts) if root_dir != d else 0
+                if depth > 6:
+                    dirs.clear()
+                    continue
+                for marker in ACOM_MARKERS:
+                    if marker in dirs or marker in files:
+                        return True
+                count += len(files) + len(dirs)
+                if count > 2000:
+                    return False
+        except OSError:
+            pass
+        return False
+
+    from collections import deque
+    queue = deque([(root, 0)])
+    scanned = 0
+    candidates: list[Path] = []
+    while queue and scanned < 10_000:
+        d, depth = queue.popleft()
+        scanned += 1
+        if depth > 5:
+            continue
+        try:
+            entries = list(d.iterdir())
         except OSError:
             continue
-        if not subdirs:
-            continue
-        # Heuristic: at least one of the children has a subdir that
-        # contains another "output" subdir (the recursive nesting
-        # signature).  No need to be exact — false positives just show
-        # up as "candidate" in the panel.
-        for d in subdirs:
-            if any(c.is_dir() and c.name == "output" for c in d.iterdir()):
-                candidates.append(top)
-                break
+        for e in entries:
+            # Never follow symlinks: a symlinked component could point
+            # the sweep (and any later rmtree) outside the output root.
+            if e.is_symlink() or not e.is_dir():
+                continue
+            if e.name == "--app":
+                if (_has_nested_output_component(e) and _has_acom_marker(e)):
+                    candidates.append(e)
+            elif depth < 5:
+                queue.append((e, depth + 1))
     return candidates
 
 
@@ -161,8 +218,18 @@ def _load_registry() -> dict:
             data.setdefault("sessions", [])
             # Repair paths recorded with a stale output-root prefix so the panel
             # and subsequent runs point at the harness's current output root.
-            if _heal_registry_paths(data):
-                _save_registry(data)
+            # The heal-save must never discard the loaded registry: if the
+            # file is read-only to us (e.g. written by a root-owned server
+            # run), the in-memory heal still applies and the panel renders.
+            try:
+                if _heal_registry_paths(data):
+                    _save_registry(data)
+            except OSError:
+                logger.warning(
+                    "registry path heal could not be persisted (%s is not "
+                    "writable); serving healed paths from memory",
+                    _registry_path(),
+                )
             return data
     except (OSError, json.JSONDecodeError):
         pass
@@ -504,20 +571,25 @@ async def fs_search(
 async def list_projects():
     """Whitelisted projects with their grouped sessions.
 
-    ALSO returns a `legacy_nested_app_dirs` list — empty when there is no
-    residue. The frontend shows a yellow "leftover state" banner when
-    the list is non-empty, with a one-click "delete" button (the delete
-    endpoint is `POST /api/projects/cleanup-legacy`).
+    ALSO returns a `legacy_nested_app_dirs` list — the detected legacy
+    `--app` residue (empty when there is none). GET is report-only:
+    the frontend can surface the list, and deletion happens only via
+    the explicit `POST /api/projects/cleanup-legacy` endpoint.
     """
     output_root = _output_root()
-    legacy_dirs = _sweep_legacy_nested_app_dirs(output_root)
+    # Sweep in a worker thread: the BFS walk is disk-bound and must not
+    # block the event loop while other sessions are streaming. GET is
+    # report-only — deletion happens exclusively via the explicit
+    # POST /api/projects/cleanup-legacy endpoint (review before delete).
+    legacy_dirs = await run_in_threadpool(
+        _sweep_legacy_nested_app_dirs, output_root,
+    )
     if legacy_dirs:
-        # Log once per request — the user can hit /api/projects/cleanup
-        # next to actually delete the trees. Logging the resolved paths
-        # helps the user verify they are the expected ones.
-        import logging as _logging
+        # Log once per request — the user can hit /api/projects/cleanup-legacy
+        # to actually delete the trees. Logging the resolved paths helps the
+        # user verify they are the expected ones.
         for d in legacy_dirs:
-            _logging.getLogger(__name__).warning(
+            logger.warning(
                 "legacy nested --app dir detected: %s "
                 "(use POST /api/projects/cleanup-legacy to remove)",
                 d,
@@ -576,29 +648,16 @@ async def cleanup_legacy_nested_app_dirs():
     """Delete the legacy `--app/...` nested project dirs that the
     startup sweep detected on the last GET /api/projects call.
 
-    Safety: any --app tree that contains a `plan.md` newer than 24 h is
-    PRESERVED (the user may be mid-session). Trees that contain only
-    generated source from a completed/aborted run are removed.
+    Safety: any --app tree whose plan.md — in the tree itself or any
+    parent up to the output root — is newer than 24 h is PRESERVED
+    (the user may be mid-session). Trees that contain only generated
+    source from a completed/aborted run are removed.
 
     Returns the list of removed dirs and the list of preserved dirs.
     """
-    import shutil as _shutil
-    import time as _time
-    output_root = _output_root()
-    legacy_dirs = _sweep_legacy_nested_app_dirs(output_root)
-    now = _time.time()
-    removed: list[str] = []
-    preserved: list[str] = []
-    for d in legacy_dirs:
-        plan = d / "plan.md"
-        if plan.is_file() and (now - plan.stat().st_mtime) < 24 * 3600:
-            preserved.append(str(d))
-            continue
-        try:
-            _shutil.rmtree(d)
-            removed.append(str(d))
-        except OSError as e:
-            preserved.append(f"{d} (rmtree failed: {e})")
+    removed, preserved = await run_in_threadpool(
+        _cleanup_legacy_dirs, _output_root(),
+    )
     return {"removed": removed, "preserved": preserved}
 
 
@@ -1035,6 +1094,91 @@ def _record_session_end(thread_id: str, project_dir: Path, status: str) -> None:
         _save_registry(registry)
     except Exception:
         logger.exception("session end recording failed")
+    # End-of-session cleanup: residue from a pre-fix run inside THIS
+    # session's own project dir is now stale (the session either
+    # succeeded or was aborted; either way the work has moved on).
+    # Scoped to the session's own project dir — never the output root,
+    # so other (possibly still-running) sessions' trees are untouched.
+    try:
+        removed, _preserved = _cleanup_legacy_dirs(Path(project_dir).resolve())
+        for d in removed:
+            logger.info("end-of-session legacy cleanup removed: %s", d)
+    except Exception:
+        logger.exception("end-of-session legacy cleanup failed")
+
+
+_LEGACY_PLAN_GUARD_SECONDS = 24 * 3600
+
+
+def _recent_plan_md(candidate: Path, stop_root: Path) -> bool:
+    """24h plan.md safety guard for legacy cleanup.
+
+    A candidate is PRESERVED when a `plan.md` newer than the guard
+    window exists in the candidate itself OR any of its parents up to
+    the sweep's scan root — in the real ACOM layout plan.md lives at
+    the chat-dir root (`output/chat-<id>/plan.md`), not inside `--app`,
+    so checking only the candidate would never protect a live session.
+    """
+    stop = stop_root.resolve() if stop_root else None
+    now = time.time()
+    d = candidate
+    while True:
+        plan = d / "plan.md"
+        try:
+            if plan.is_file() and (now - plan.stat().st_mtime) < _LEGACY_PLAN_GUARD_SECONDS:
+                return True
+        except OSError:
+            # TOCTOU (deleted/locked between is_file and stat):
+            # treat as stale rather than crashing the caller.
+            pass
+        if stop is not None:
+            try:
+                parent = d.parent.resolve()
+            except OSError:
+                return False
+            if parent == d or not parent.is_relative_to(stop):
+                return False
+            d = parent
+        else:
+            parent = d.parent
+            if parent == d:
+                return False
+            d = parent
+
+
+def _cleanup_legacy_dirs(scan_root: Path) -> tuple[list[str], list[str]]:
+    """Single implementation of legacy `--app` residue cleanup, shared
+    by POST /api/projects/cleanup-legacy and the scoped end-of-session
+    helper. Sweeps `scan_root`, deletes each candidate subject to the
+    24 h plan.md guard, and returns (removed, preserved) path lists so
+    every call site reports identical behavior."""
+    try:
+        legacy_dirs = _sweep_legacy_nested_app_dirs(scan_root)
+    except Exception:
+        logger.exception("legacy --app sweep failed for %s", scan_root)
+        return [], []
+    removed: list[str] = []
+    preserved: list[str] = []
+    for d in legacy_dirs:
+        if _recent_plan_md(d, scan_root):
+            preserved.append(str(d))
+            continue
+        try:
+            shutil.rmtree(d)
+            removed.append(str(d))
+        except OSError as e:
+            preserved.append(f"{d} (rmtree failed: {e})")
+    return removed, preserved
+
+
+def cleanup_legacy_nested_app_dirs_thread_safe(scan_root: Path) -> int:
+    """Callable from the server's own code paths (no FastAPI request
+    context). Returns the number of trees removed. Delegates to the
+    shared _cleanup_legacy_dirs implementation (same sweep, same 24 h
+    plan.md guard, same error handling as the cleanup endpoint)."""
+    removed, _preserved = _cleanup_legacy_dirs(scan_root)
+    return len(removed)
+    return removed
 
 
 

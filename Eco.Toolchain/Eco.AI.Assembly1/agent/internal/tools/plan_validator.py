@@ -56,7 +56,27 @@ class Violation:
 _SYSTEM1_HEX = "537973656D31"
 
 _GETALLOC_CALL = re.compile(r"GetAllocator\s*\(|->GetAllocator|\.GetAllocator")
-_CID_SYSTEM1 = re.compile(r"CID_EcoSystem1")
+# CID_EcoSystem1 is a forbidden SYMBOL when USED as a real identifier,
+# but it is allowed in explanatory prose ("Eco.System1 has no CID, in
+# particular no CID_EcoSystem1, because it is a linked unikernel"). The
+# task-generic rule: a forbidden symbol is "used" when it appears as
+#   &CID_EcoSystem1
+#   GetIEcoComponentFactoryPtr_CID_EcoSystem1
+#   RegisterComponent(.*CID_EcoSystem1.*)
+#   QueryComponent(.*CID_EcoSystem1.*)
+#   extern const UGUID CID_EcoSystem1
+# or any other place where a real C identifier would appear. Standalone
+# mentions of the literal text in a comment or explanation are allowed.
+_CID_SYSTEM1_USE = re.compile(
+    r"(&CID_EcoSystem1\b"
+    r"|GetIEcoComponentFactoryPtr_\w*CID_EcoSystem1"
+    r"|RegisterComponent\s*\([^)]*\bCID_EcoSystem1\b"
+    r"|QueryComponent\s*\([^)]*\bCID_EcoSystem1\b"
+    r"|extern\s+const\s+UGUID\s+CID_EcoSystem1"
+    r"|\bCID_EcoSystem1\s*\[\s*\]"
+    r"|\bCID_EcoSystem1\s*=\s*\{)",
+    re.IGNORECASE,
+)
 _SYSTEM1_CID_HEX = re.compile(_SYSTEM1_HEX, re.IGNORECASE)
 _FACTORY_SYSTEM1 = re.compile(
     r"GetIEcoComponentFactoryPtr_[0-9A-Fa-f]{0,32}" + _SYSTEM1_HEX, re.IGNORECASE
@@ -131,11 +151,18 @@ def validate_closed_plan(plan: str) -> list[Violation]:
         ))
 
     # --- Hard: Eco.System1 treated as a component (CID / factory / bus) ------
-    if _CID_SYSTEM1.search(plan):
+    if _CID_SYSTEM1_USE.search(plan):
         vios.append(Violation(
             "block",
-            "Plan references `CID_EcoSystem1`. Eco.System1 is a system library with no "
-            "CID — never search for or register a System1 CID/factory.",
+            "Plan uses `CID_EcoSystem1` as a real symbol. Eco.System1 is a "
+            "statically-linked system library with no CID — never declare, "
+            "register, query, or factory-bind it. Mentions of the literal "
+            "text in explanatory prose are allowed (e.g. 'Eco.System1 has "
+            "no CID, in particular no CID_EcoSystem1, because it is a linked "
+            "unikernel library'); only the USE of the symbol is rejected. "
+            "Bug history (ses-e9b2c2ad): the previous rule rejected the "
+            "literal substring anywhere, forcing a one-turn rephrase with "
+            "no semantic change.",
         ))
     if _SYSTEM1_CID_HEX.search(plan):
         vios.append(Violation(
@@ -290,6 +317,89 @@ def validate_closed_plan(plan: str) -> list[Violation]:
             "path-anchored equivalent of the marketplace table for things that "
             "are NOT pulled via `eco-cli pull -c`.",
         ))
+
+    # --- Hard: objective acceptance criteria -----------------------------
+    # The architect's plan's "Acceptance criteria" section is what the
+    # tester runs. A criterion is "objective" if it contains a
+    # comparison operator (==, !=, <=, >=, <, >), an equals sign, or
+    # a verifiable verb (e.g. "exits 0", "prints", "creates", "writes",
+    # "returns 0"). A criterion that is purely qualitative ("the
+    # values are correct", "should work") is REJECTED — the tester
+    # would have to interpret, and the agent has no way to verify it
+    # mechanically. This is a TASK-GENERIC rule: it applies to any
+    # ACOM app, not to a specific formula. The companion rule is in
+    # the harness (tester.py): a criterion without an objective
+    # predicate gets a warning, and the tester's run_artifact output
+    # is compared against the criterion's expected text/return-code.
+    #
+    # Bug history (ses-e9b2c2ad): the architect's acceptance criteria
+    # were "100->F=212, 25->77, -40->-40" — a list of input/output
+    # pairs, but with NO machine-checkable predicate (the tester's
+    # first run reported "all 4 returned F=32.000000" as "3 of 4
+    # fail" by hand). The rule below forces the architect to write
+    # a "for each (in, expected) pair: run_artifact(stdin=in) must
+    # contain expected" style criterion that the tester can verify
+    # mechanically.
+    if has_table:
+        # The Acceptance criteria section, if present, is required to
+        # be objective. Missing section is allowed (the architect may
+        # delegate criteria to the coder), but if present, every
+        # bullet under it must be objective.
+        accept_match = re.search(
+            r"^##\s*[Aa]cceptance\b[^\n]*$([\s\S]*?)(?=^##\s|\Z)",
+            plan or "", re.MULTILINE,
+        )
+        if accept_match:
+            section_body = accept_match.group(1)
+            # Find each bullet line. Require a real bullet/numbered
+            # prefix — a character class like [\s\-*]* also matches the
+            # empty string, which would turn every wrapped prose line
+            # into a "criterion".
+            bullets = re.findall(
+                r"^\s*(?:[-*+]|\d+[.)])\s+(.+)$",
+                section_body,
+                re.MULTILINE,
+            )
+            # Predicate tokens: comparison ops, "exits 0", "prints",
+            # "creates", "writes", "returns", "contains", or a
+            # quoted "expected" string (e.g. "F=212").
+            predicate_re = re.compile(
+                r"(==|!=|<=|>=|<|>|="
+                r"|\bexits\s+0\b|\bexits\b"
+                r"|\bprints?\b|\bcreates?\b|\bwrites?\b"
+                r"|\breturns?\b|\bcontains?\b"
+                r"|\bproduces?\b|\bgenerates?\b"
+                r'|`[^`]+`|"[^"]+"|\'[^\']+\')',
+                re.IGNORECASE,
+            )
+            vague = []
+            for bullet in bullets:
+                stripped = bullet.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if not predicate_re.search(stripped):
+                    vague.append(stripped)
+            if vague:
+                listed = "\n  - ".join(vague[:5])
+                vios.append(Violation(
+                    "block",
+                    "Acceptance criteria section contains non-objective "
+                    "criteria that the tester cannot verify mechanically. "
+                    "Each criterion must include a comparison operator "
+                    "(==, !=, <=, >=, <, >), an equals sign, a verifiable "
+                    "verb (exits 0, prints, creates, writes, returns, "
+                    "contains, produces, generates), a backtick-quoted "
+                    "expected value, or a quoted expected string. "
+                    "Non-objective criteria:\n  - " + listed + "\n\n"
+                    "Example (objective): `run_artifact(stdin=\"100\") "
+                    "stdout must contain \"212\"`.\n"
+                    "Example (NOT objective, rejected): `the values should "
+                    "be correct for each input`.\n\n"
+                    "This rule is task-generic and applies to any ACOM app; "
+                    "the goal is to make the tester's run_artifact check "
+                    "mechanical so the tester does not have to interpret "
+                    "correctness from qualitative prose.",
+                ))
 
     # --- Hard: new-component spec naming -----------------------------------
     # The parallel-coder spec convention is `docs/specs/Eco<Name>.md` —

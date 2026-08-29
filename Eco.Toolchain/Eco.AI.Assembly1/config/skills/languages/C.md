@@ -204,8 +204,23 @@ int16_t EcoMain(IEcoUnknown* pIUnk) {
         &IID_IEcoMathC89, (void**)&pIMath);
     pIBus->pVTbl->QueryComponent(pIBus, &CID_EcoStdIOC89, 0,
         &IID_IEcoStdIOC89, (void**)&pIStdIO);
-    /* 4. Use (pow/sqrt) */
-    pIStdIO->pVTbl->scanf(pIStdIO, "%lf %lf", &x, &y);
+    /* 4. Use (pow/sqrt). IMPORTANT: every vtable method call's return
+     *    value must be assigned to a volatile / used. The C compiler
+     *    at -O2 / -O3 DEAD-CODE-ELIMINATES any call whose result is
+     *    not consumed — including input calls like scanf / gets /
+     *    fread. The ses-e9b2c2ad temperature-converter run got "F=32
+     *    for every input" because the compiler removed the scanf
+     *    call entirely (the vtable call had no observable side
+     *    effect under the rules gcc plays). Always assign the result
+     *    and handle a zero-item conversion, e.g.:
+     *      int16_t rc = pIStdIO->pVTbl->scanf(pIStdIO, "%lf", &c);
+     *      if (rc != 1) { handle-no-input-or-parse-failure }
+     *    Treat every vtable method's return as load-bearing.
+     *    (NOTE: do NOT nest slash-star comments inside this block —
+     *    C has no nested comments; an inner star-slash would end the
+     *    outer comment early and turn the rest into invalid code.) */
+    int16_t rc = pIStdIO->pVTbl->scanf(pIStdIO, "%lf %lf", &x, &y);
+    if (rc != 2) { return 1; }
     res_pow = pIMath->pVTbl->pow(pIMath, x, y);
     res_sqrt = pIMath->pVTbl->sqrt(pIMath, x);
     pIStdIO->pVTbl->printf(pIStdIO, "pow=%lf sqrt=%lf\n", res_pow, res_sqrt);
