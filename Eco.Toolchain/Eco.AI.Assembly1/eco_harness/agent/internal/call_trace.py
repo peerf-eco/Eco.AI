@@ -49,6 +49,7 @@ def write_call_trace(
     request_context: Any,
     response: Any = None,
     error: str = "",
+    tool_durations: Optional[list[dict]] = None,
 ) -> Optional[Path]:
     """Persist one LLM request/response to ``trace_dir/NNN-<label>.json``.
 
@@ -77,17 +78,27 @@ def write_call_trace(
             ],
         }
 
+        meta: dict[str, Any] = {
+            "label": label,
+            "seq": seq,
+            "call_no": call_no,
+            "iteration": iteration,
+            "model": model_id,
+            "stop_reason": getattr(response, "stopReason", "") or "",
+            "error": error or (getattr(response, "errorMessage", None) or ""),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        # Tool calls executed between this call and the previous one, with
+        # wall-clock durations. Observability for tool-latency regressions
+        # (e.g. the 21.8s write_file / 13.9s glob seen in ses-8c3431c2).
+        if tool_durations:
+            meta["tool_durations"] = tool_durations
+            meta["tool_seconds"] = round(
+                sum(float(d.get("ms", 0) or 0) for d in tool_durations) / 1000.0, 3,
+            )
+
         payload = {
-            "meta": {
-                "label": label,
-                "seq": seq,
-                "call_no": call_no,
-                "iteration": iteration,
-                "model": model_id,
-                "stop_reason": getattr(response, "stopReason", "") or "",
-                "error": error or (getattr(response, "errorMessage", None) or ""),
-                "ts": datetime.now(timezone.utc).isoformat(),
-            },
+            "meta": meta,
             "request": request,
             "response": _dump(response),
         }

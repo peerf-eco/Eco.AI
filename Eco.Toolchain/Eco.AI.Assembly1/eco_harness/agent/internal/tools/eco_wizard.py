@@ -39,6 +39,96 @@ def _resolve_wizard() -> str | None:
     return str(resolved) if resolved else None
 
 
+def _scan_generated_tree(project_dir: Path, out_dir: Path) -> dict:
+    """Post-generation scan: what did the wizard actually create?
+
+    Session 8c3431c2 lesson: the old tool result said only
+    "eco_wizard created <name> (...)" with no paths, so the coder guessed
+    the layout, passed a doubled path to run_build (BUILD FAIL) and burned
+    4 extra LLM calls + a 13.9s marketplace-wide glob recovering. The
+    result contract now answers the coder's next three questions directly:
+    where are the files, which one has the EcoMain entry point, and what
+    project_subdir does run_build need.
+    """
+    rel_root: str = "."
+    try:
+        rel_root = out_dir.relative_to(project_dir).as_posix() or "."
+    except ValueError:
+        rel_root = "."
+
+    files: list[str] = []
+    entry_candidates: list[str] = []
+    makefile_candidates: list[str] = []
+    stray_flagged_dirs: list[str] = []
+    max_scan = 500
+
+    def _is_stray(path: Path) -> bool:
+        # Known wizard bug: CLI flags leak as path components (a literal
+        # `--app/...` tree). Everything under a `--`-prefixed component is
+        # flagged and excluded from the build-path answers.
+        try:
+            rel = path.relative_to(project_dir)
+        except ValueError:
+            return True
+        return any(part.startswith("--") for part in rel.parts)
+
+    for path in sorted(out_dir.rglob("*")):
+        if len(files) >= max_scan:
+            break
+        stray = _is_stray(path)
+        if path.is_dir():
+            if stray and path.name.startswith("--"):
+                stray_flagged_dirs.append(
+                    path.relative_to(project_dir).as_posix(),
+                )
+            continue
+        try:
+            rel = path.relative_to(project_dir).as_posix()
+        except ValueError:
+            continue
+        if not stray:
+            files.append(rel)
+            if path.suffix.lower() == ".c":
+                try:
+                    if path.stat().st_size <= 256_000:
+                        text = path.read_text(encoding="utf-8", errors="replace")
+                        # eco-wizard scaffolds SourceFiles/<Name>.c with the
+                        # ACOM EcoMain entry point inside — the file is NOT
+                        # named EcoMain.c.
+                        if "EcoMain" in text:
+                            entry_candidates.append(rel)
+                except OSError:
+                    pass
+            if path.name in ("Makefile", "MakefileExe"):
+                makefile_candidates.append(
+                    path.parent.relative_to(project_dir).as_posix(),
+                )
+
+    # Prefer the shallowest candidates: the top-level build tree wins over
+    # anything accidentally nested deeper.
+    entry_candidates.sort(key=lambda rel: (rel.count("/"), rel))
+    makefile_candidates.sort(key=lambda rel: (rel.count("/"), 0 if rel.endswith("Makefile") else 1, rel))
+    entry_file = entry_candidates[0] if entry_candidates else None
+    build_subdir = makefile_candidates[0] if makefile_candidates else None
+
+    files.sort(key=lambda rel: (rel.count("/"), rel))
+    return {
+        "rel_root": rel_root,
+        "files": files,
+        "entry_file": entry_file,
+        "build_subdir": build_subdir,
+        "stray_flagged_dirs": stray_flagged_dirs,
+    }
+
+
+def _format_tree(files: list[str], limit: int = 40) -> str:
+    shown = files[:limit]
+    lines = [f"  {rel}" for rel in shown]
+    if len(files) > limit:
+        lines.append(f"  ... (+{len(files) - limit} more files)")
+    return "\n".join(lines)
+
+
 def _run_wizard(args: _WizardArgs, project_dir: Path) -> ToolResult:
     executable = _resolve_wizard()
     if not executable:
@@ -97,12 +187,67 @@ def _run_wizard(args: _WizardArgs, project_dir: Path) -> ToolResult:
             details={"stderr": (process.stderr or "")[-1200:]},
             is_error=True,
         )
+    scan = _scan_generated_tree(project_dir, out_dir)
+    # Fallback: when the flag-leak bug swallowed the WHOLE output (no
+    # clean files at all), report the stray-tree files anyway — the coder
+    # still needs the real paths to work with.
+    reported_files = scan["files"]
+    if not reported_files and scan["stray_flagged_dirs"]:
+        for path in sorted(out_dir.rglob("*")):
+            if path.is_file():
+                try:
+                    reported_files = reported_files + [
+                        path.relative_to(project_dir).as_posix(),
+                    ]
+                except ValueError:
+                    pass
+    summary_lines = [
+        f"eco_wizard created {args.name} ({args.language}/{args.project_type}).",
+        f"out_dir: '{scan['rel_root']}' (relative to project_dir — the "
+        f"wizard scaffolds INTO this dir; it does not create a nested "
+        f"'{args.name}/' subdirectory).",
+        "",
+        "Generated files:",
+        _format_tree(reported_files),
+        "",
+    ]
+    if scan["entry_file"]:
+        summary_lines.extend([
+            f"EcoMain entry point: {scan['entry_file']}",
+            "(eco-wizard names the entry file SourceFiles/<Name>.c, NOT "
+            "EcoMain.c — the file contains int16_t EcoMain(IEcoUnknown*). "
+            "Open exactly this file to fill the plan's business logic.)",
+        ])
+    else:
+        summary_lines.append(
+            "EcoMain entry point: no .c file containing EcoMain was found "
+            "under the generated tree — check SourceFiles/ manually.",
+        )
+    if scan["build_subdir"]:
+        summary_lines.extend([
+            "",
+            f"run_build project_subdir: '{scan['build_subdir']}'",
+            "(pass exactly this value to run_build — do not prefix it with "
+            "the project name).",
+        ])
+    if scan["stray_flagged_dirs"]:
+        summary_lines.extend([
+            "",
+            "WARNING: the wizard created stray directory artifact(s) whose "
+            "names look like CLI flags (known wizard bug): "
+            + ", ".join(scan["stray_flagged_dirs"]),
+            "Ignore them; they are not part of the build path.",
+        ])
     return ToolResult(
-        content=f"eco_wizard created {args.name} ({args.language}/{args.project_type}).",
+        content="\n".join(summary_lines),
         details={
             "returncode": process.returncode,
             "stdout_tail": (process.stdout or "")[-1200:],
             "out_dir": str(out_dir),
+            "entry_file": scan["entry_file"],
+            "build_subdir": scan["build_subdir"],
+            "files": scan["files"],
+            "stray_flagged_dirs": scan["stray_flagged_dirs"],
         },
     )
 
@@ -113,8 +258,11 @@ def make_eco_wizard_tool(project_dir: Path) -> EcoTool:
         description=(
             "Generate project or component boilerplate with the locally installed "
             "eco-wizard CLI. Always use this tool instead of writing templates "
-            "or generated structure directly. Returns only a minimal structural "
-            "summary; details contain a bounded output tail."
+            "or generated structure directly. The result lists the exact "
+            "generated file tree, the SourceFiles/<Name>.c file containing the "
+            "EcoMain entry point (the entry file is named after the project, "
+            "NOT EcoMain.c), and the run_build project_subdir — use those "
+            "values verbatim; do NOT re-explore the layout with list_dir/glob."
         ),
         args_schema=_WizardArgs,
         execute=lambda args: _run_wizard(args, project_dir),

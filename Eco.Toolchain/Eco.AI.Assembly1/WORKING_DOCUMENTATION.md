@@ -1011,3 +1011,131 @@ FAIL-class findings.
   warn loudly).
 - The wheel version-bump is part of the release checklist: tag without a
   bump fails CI.
+
+### 18.9 Go-live checklist — making the installer work on all platforms
+
+Concrete actions still required before a customer can run the installer
+end-to-end. Grouped by flow; §18 is the reference for every item. Checkbox
+order = execution order.
+
+#### A. Shared — required for BOTH native and Docker installs
+
+- [ ] **A1. Provision artifact hosting.** Create the S3 bucket (+ CDN in
+      front) and set the public base URL. Expected object layout (matches
+      `build_manifest.py --base-url` and `_download`):
+      `manifest.json`, `dist/eco_harness-<ver>-py3-none-any.whl`,
+      `binaries/<tool>/<os>/<arch>/<artifact>`,
+      `index/marketplace_index.tar.gz`, `install/install.sh`,
+      `install/install.ps1`.
+- [ ] **A2. Commit & push the release workflow** to the MONOREPO root
+      (`.github/workflows/release.yml` — GitHub ignores nested workflow
+      dirs; it currently exists only in the working tree).
+- [ ] **A3. Configure GitHub repo variables/secrets** (Settings → Secrets
+      and variables → Actions): vars `RELEASE_BASE_URL`,
+      `RELEASE_S3_BUCKET`, `RELEASE_AWS_REGION`, `ECOCLI_STAGING_URL`;
+      secrets `RELEASE_AWS_ACCESS_KEY_ID`, `RELEASE_AWS_SECRET_ACCESS_KEY`.
+      No ghcr secret needed (`GITHUB_TOKEN` + `packages: write`).
+- [ ] **A4. Wire the EcoCLI pipeline contract (§18.3).** Build/stage
+      per-OS/arch `eco-cli` + `eco-wizard` artifacts under
+      `release-staging/binaries/<tool>/<os>/<arch>/` for
+      `linux/x86_64`, `linux/arm64`, `darwin/x86_64`, `darwin/arm64`,
+      `windows/x86_64` (no wine builds anywhere), and the prebuilt RAG
+      tarball under `release-staging/index/`. Publish via
+      `ECOCLI_STAGING_URL` (tarball that extracts into `release-staging/`)
+      or by dispatching the release workflow from the EcoCLI pipeline with
+      assets merged.
+- [ ] **A5. Build the prebuilt RAG index** exactly the way
+      `update._refresh_index` expects: tarball root contains
+      `marketplace_index.sqlite` + `marketplace_cache/` (extracting into
+      `$ECO_HOME/data/` must yield `data/marketplace_index.sqlite` and
+      `data/marketplace_cache/`). Rebuild via
+      `scripts/build_marketplace_index.py` (tokens in `.env`), tar with
+      those two entries at the root, record its sha256 (the manifest step
+      computes it).
+- [ ] **A6. Decide PyPI publication.** Both `_pip_upgrade` and the
+      installers fall back to the bare `eco-harness` name when the manifest
+      is unreachable — register the project on PyPI (or accept that the
+      fallback only works for git-URL installs and document it).
+- [ ] **A7. Version discipline.** Bump `pyproject.toml` `version`, commit,
+      tag `v<version>` (workflow fails on mismatch or empty tags). First
+      release: `v1.0.0`.
+- [ ] **A8. Dry-run the release:** run the workflow with `dry_run: true`
+      (workflow_dispatch) — validates the wheel build, artifact staging and
+      download steps without publishing.
+- [ ] **A9. Platform validation matrix** (fresh VM per target, §18.5 +
+      §18.7 as the script): Linux x86_64, Linux arm64, macOS arm64,
+      macOS x86_64, Windows x86_64 — install → `eco-harness doctor` →
+      `/setup` wizard (and the skip path) → `eco-harness serve` → browser
+      smoke chat with the intent gate → `eco-harness-update` round-trip
+      against a second published version.
+- [ ] **A10. Non-localhost security posture.** The API is an
+      unauthenticated local surface (§15); document/provide the reverse
+      proxy + auth (and `CORS_ORIGINS`) for any hosted/team deployment
+      before advertising remote access.
+
+#### B. Native installs only
+
+- [ ] **B1. Verify uv bootstrapping per OS** (`curl astral.sh/uv/install.sh`
+      / PowerShell `irm`: PATH after install, `uv python install 3.11`,
+      `uv venv` creation — no system-python PEP 668 dead ends).
+- [ ] **B2. Verify shims:** POSIX `~/.local/bin/eco-harness{,-update}` are
+      executable and on PATH (or the installer's PATH note is shown);
+      Windows `eco-harness*.cmd` in `$ECO_HOME\bin` reachable from a NEW
+      terminal via the user-PATH update.
+- [ ] **B3. Verify macOS Gatekeeper path:** downloaded unsigned binaries
+      run after the `xattr -d com.apple.quarantine` strip on both arches;
+      schedule codesign/notarization of eco-cli/eco-wizard (and the wheel's
+      binaries) to remove the right-click→Open dance (optional but
+      recommended).
+- [ ] **B4. Verify Windows specifics:** `update._refresh_binaries` downloads
+      `eco-cli.exe`/`eco-wizard.exe` and `resolve_binary`'s
+      `$ECO_HOME/bin/<name>.exe` candidate resolves them; `.env` ends up
+      user-only (icacls); `--project-dir` seeds `ECO_PROJECT_DIR`.
+- [ ] **B5. Verify the verified-wheel install path on each OS:** the
+      sha256-checked local wheel is installed via `uv pip install --python
+      <venv>` (uv venvs have no pip; pip fallback only for non-uv venvs).
+- [ ] **B6. Verify dotenv pickup:** keys saved by `/setup` (written to
+      `$ECO_HOME/.env`) are visible to a RESTARTED server
+      (`load_dotenv(paths.eco_home()/".env")`) and never override
+      process env.
+- [ ] **B7. Verify worktrees on a user project:** point `ECO_PROJECT_DIR`
+      at a real git repo (UI picker), enable Worktree mode —
+      `create_worktree(paths.project_dir(), …)` must succeed and land under
+      the project/`ECO_WORKTREE_ROOT` (never `ECO_HOME`, which is not a
+      repo).
+- [ ] **B8. Document/test uninstall** (delete `$ECO_HOME` + shims + user-PATH
+      entry on Windows).
+
+#### C. Docker installs only
+
+- [ ] **C1. First real multi-arch publish:** confirm
+      `docker/setup-qemu-action` + buildx produce and push
+      `linux/amd64` + `linux/arm64` manifests to ghcr
+      (`ghcr.io/<owner>/<repo>`, lowercase — this MUST match the
+      installers' built-in default `ghcr.io/peerf-eco/eco.ai`).
+- [ ] **C2. Decide visibility & tags:** public vs private ghcr repo (private
+      requires `docker login` on customer hosts — document it), `latest`
+      policy, and that `manifest.image.repo/tag` always point at what was
+      actually pushed.
+- [ ] **C3. Image smoke test:** pull on a clean amd64 and arm64 host;
+      container starts non-root via `entrypoint.sh` (gosu), healthcheck
+      passes, static UI served at `/`, `/setup` reachable, NO wine present
+      (native Linux binaries land in `/data/bin` via the update step).
+- [ ] **C4. Verify the `--docker` install path end-to-end:** generated
+      compose has correct absolute host paths; `up -d --wait` becomes
+      healthy; the `exec … python -m eco_harness update` bootstrap
+      populates `/data/bin` + `/data/data` and they PERSIST on the host
+      across `down && up`.
+- [ ] **C5. Verify container git/worktree behavior:** `safe.directory=/project`,
+      `ECO_WORKTREE_ROOT=/data/worktrees`, worktree creation against the
+      host-owned mounted project succeeds; host `git worktree list`
+      prunable-entry caveat documented as accepted.
+- [ ] **C6. Verify secrets flow:** container reads `/data/.env`
+      (`ECO_HOME=/data` + dotenv), `/setup` writes persist on the host
+      mount and survive recreation.
+- [ ] **C7. Update path:** `docker compose pull && up -d` upgrades the
+      wheel (image) while `data/`, `bin/`, `.env` persist; verify the image
+      tag in the generated compose matches the manifest on each release.
+- [ ] **C8. Size/cost check:** final image is slim (`python:3.11-slim` +
+      git/curl/gosu only) and the binaries/index stay OUT of the image
+      (downloaded into the mounted `/data`).

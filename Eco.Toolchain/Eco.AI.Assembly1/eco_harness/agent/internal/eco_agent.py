@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json as _json
+import os
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -298,36 +299,84 @@ class EcoAgent:
         self.on_event = on_event or (lambda _e: None)
         self.stream_options = stream_options
         self.max_tool_results = max(1, max_tool_results)
+        # Prefix-cache stability (session 8c3431c2 post-mortem): the OLD
+        # _build_context re-elided a sliding window on EVERY call, mutating
+        # early history bytes mid-run and invalidating the provider KV-cache
+        # prefix ~every time the window slid (3 full ~40K-token re-reads in
+        # ses-8c3431c2 alone). Elision now happens ONCE at append time (see
+        # _elide_surplus_tool_results), and small results are never elided at
+        # all — their bytes stay verbatim forever, so the conversation prefix
+        # is append-only and the provider prefix cache holds.
+        self.elide_min_bytes = int(os.getenv("HARNESS_ELIDE_MIN_BYTES", "2048"))
         self.stream_fn: StreamFunction = stream_fn or stream_simple
 
         self._pi_tools = _eco_tools_to_pi_tools(tools)
+
+        # Per-run observability (session 8c3431c2 follow-up): tool durations
+        # between LLM calls and cumulative token usage, surfaced in trace
+        # meta and pipeline_done metrics.
+        self._pending_tool_durations: list[dict] = []
+        self.usage_totals: dict = {
+            "calls": 0,
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+        }
 
     # ── helpers ────────────────────────────────────────────────────────────
     def _emit(self, event_type: EventType, data: Optional[dict] = None):
         self.on_event(EcoAgentEvent(type=event_type, data=data or {}))
 
-    def _build_context(self, history: list) -> Context:
+    def _elide_surplus_tool_results(self, history: list) -> None:
+        """Elide old tool results IN PLACE, once, at append time.
+
+        Keeps at most ``max_tool_results`` recent tool results verbatim.
+        Everything older than that window is collapsed to a one-line
+        placeholder — but only when the stored text is at least
+        ``elide_min_bytes`` long. Small results (listings, wizard summaries,
+        one-line errors) are cheap in context and STAY verbatim forever,
+        which keeps the early-history bytes stable across calls.
+
+        Because mutations happen once (when a result first crosses the
+        window) and never get recomputed, the prompt is append-only from
+        the provider's point of view — the prefix cache survives.
+        """
         tool_result_indexes = [
             index
             for index, message in enumerate(history)
             if isinstance(message, ToolResultMessage)
         ]
-        stale_indexes = set(tool_result_indexes[:-self.max_tool_results])
-        context_history = []
-        for index, message in enumerate(history):
-            if index not in stale_indexes:
-                context_history.append(message)
+        stale_indexes = tool_result_indexes[:-self.max_tool_results]
+        for index in stale_indexes:
+            message = history[index]
+            texts = [
+                getattr(block, "text", "") or ""
+                for block in (message.content or [])
+                if isinstance(getattr(block, "text", None), str)
+            ]
+            if sum(len(t.encode("utf-8", "replace")) for t in texts) < self.elide_min_bytes:
                 continue
-            context_history.append(message.model_copy(update={
+            history[index] = message.model_copy(update={
                 "content": [
                     TextContent(
-                        text="[older tool output elided; full result is retained in trace]"
+                        text=(
+                            f"[older {message.toolName} output elided to keep the "
+                            f"prompt prefix cache-stable; full result is retained "
+                            f"in the trace]"
+                        )
                     )
                 ],
-            }))
+            })
+
+    def _build_context(self, history: list) -> Context:
+        # History is already elision-final (see _elide_surplus_tool_results,
+        # applied at append time). No per-call mutation here — mutating
+        # history in this method was the root cause of the recurring ~40K
+        # full-price cache misses in session 8c3431c2.
         return Context(
             systemPrompt=self.system_prompt,
-            messages=context_history,
+            messages=list(history),
             tools=self._pi_tools or None,
         )
 
@@ -368,7 +417,9 @@ class EcoAgent:
                     request_context=context,
                     response=response,
                     error=error_str,
+                    tool_durations=self._pending_tool_durations,
                 )
+            self._pending_tool_durations = []
 
     # ── main entrypoint ────────────────────────────────────────────────────
     def run(self, seed) -> EcoAgentResult:
@@ -435,7 +486,16 @@ class EcoAgent:
             history.append(resp)
 
             # Per-call token accounting for the UI stepper (phase/total counters).
-            self._emit(EventType.USAGE, {"usage": _usage_data(resp)})
+            usage = _usage_data(resp)
+            self._emit(EventType.USAGE, {"usage": usage})
+            # Cumulative run accounting (surfaced in trace meta / pipeline_done).
+            if usage:
+                totals = self.usage_totals
+                totals["calls"] = totals.get("calls", 0) + 1
+                for key in ("input", "output"):
+                    totals[key] = totals.get(key, 0) + int(usage.get(key, 0) or 0)
+                totals["cacheRead"] = totals.get("cacheRead", 0) + int(usage.get("cache_read", 0) or 0)
+                totals["cacheWrite"] = totals.get("cacheWrite", 0) + int(usage.get("cache_write", 0) or 0)
 
             # Sliding-window summarization. When the cumulative input
             # token count crosses the model context window (or a
@@ -556,10 +616,16 @@ class EcoAgent:
                         })
                         continue
 
-                # 5. execute
+                # 5. execute (duration recorded for trace meta / run metrics)
+                started = time.monotonic()
                 try:
                     result = tool.execute(args_obj)
                 except Exception as e:
+                    self._pending_tool_durations.append({
+                        "name": name,
+                        "ms": int((time.monotonic() - started) * 1000),
+                        "ok": False,
+                    })
                     history.append(ToolResultMessage(
                         toolCallId=call_id, toolName=name,
                         content=[TextContent(text=f"TOOL ERROR: {e}")],
@@ -570,6 +636,11 @@ class EcoAgent:
                         "details": {"reason": f"{type(e).__name__}: {e}"},
                     })
                     continue
+                self._pending_tool_durations.append({
+                    "name": name,
+                    "ms": int((time.monotonic() - started) * 1000),
+                    "ok": not result.is_error,
+                })
 
                 # 6. after_tool_call hook
                 if self.after_tool_call:
@@ -601,6 +672,10 @@ class EcoAgent:
                     isError=result.is_error,
                     timestamp=_now_ms(),
                 ))
+
+            # Elide surplus tool results ONCE, in place, so the prompt the
+            # next LLM call sees is append-only (prefix-cache stable).
+            self._elide_surplus_tool_results(history)
 
             i += 1
 

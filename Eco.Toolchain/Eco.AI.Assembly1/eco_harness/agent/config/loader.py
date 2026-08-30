@@ -111,6 +111,14 @@ class ModeSpec(BaseModel):
     prompt: str
     roles: list[str] = Field(default_factory=list)
     capabilities: list[str] = Field(default_factory=list)
+    # How the architect -> coder plan handoff gate behaves in pipeline modes:
+    #   hitl         — emit plan_review_required and block until the user
+    #                  sends plan_decision (default; interactive modes).
+    #   auto_approve — emit plan_review_required for visibility but do NOT
+    #                  block; the plan is auto-approved. Session 8c3431c2
+    #                  spent 291s of its 431s wall time waiting on this gate
+    #                  in auto mode — the single largest latency item.
+    plan_gate: str = "hitl"
 
 
 class HarnessConfig(BaseModel):
@@ -132,6 +140,13 @@ class HarnessConfig(BaseModel):
     default_permissions: PermissionSpec = Field(default_factory=PermissionSpec)
     worktree_root: Path | None = None
     source_max_bytes: int = 300_000
+    # harness.yaml → core1_stitch_files: the only Eco.Core1/SharedFiles
+    # headers stitched into the static system prompt. The old behaviour
+    # stitched the whole SharedFiles .h tree (capped at 120 KB ≈ 25-30K
+    # tokens) although plans reference just a handful of files; pruning
+    # saves ~15-20K tokens on EVERY LLM call of every role. Empty list →
+    # fall back to the whole-tree stitch (old behaviour).
+    core1_stitch_files: list[str] = Field(default_factory=list)
     dynamic_tail_items: int = 5
     # budgets.yaml → retained_tool_outputs: how many newest tool outputs the
     # agent keeps verbatim in context (wired to EcoAgent.max_tool_results in
@@ -410,6 +425,21 @@ def load_config(root: Path | None = None) -> HarnessConfig:
         source_max_bytes=int(
             os.getenv("HARNESS_SOURCE_MAX_BYTES", merged_harness.get("source_max_bytes", 300_000)),
         ),
+        core1_stitch_files=[
+            str(name)
+            for name in (
+                os.getenv(
+                    "HARNESS_CORE1_STITCH_FILES",
+                    ",".join(merged_harness.get("core1_stitch_files", [])),
+                ).split(",")
+                if (
+                    os.getenv("HARNESS_CORE1_STITCH_FILES")
+                    or merged_harness.get("core1_stitch_files")
+                )
+                else []
+            )
+            if str(name).strip()
+        ],
         dynamic_tail_items=int(
             os.getenv("HARNESS_DYNAMIC_TAIL_ITEMS", merged_harness.get("dynamic_tail_items", 5)),
         ),

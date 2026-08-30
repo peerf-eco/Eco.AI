@@ -129,6 +129,36 @@ def _outside_msg(args_path: str, allowed_roots: list[Path]) -> str:
     )
 
 
+def _zero_match_hint(root: Path, allowed_roots: list[Path]) -> str:
+    """One-line hint attached to 0-match grep/glob results.
+
+    Session 8c3431c2: the coder ran glob('**/Makefile') which silently
+    searched marketplace_cache (the default root), got 0 matches after
+    13.9s, and spent three more calls discovering that the Makefile was
+    in project_dir. The hint turns that dead end into a one-call retry.
+    """
+    if len(allowed_roots) < 2:
+        return ""
+    try:
+        root_resolved = root.resolve(strict=False)
+    except OSError:
+        return ""
+    # The miss hit a read-only extra root (marketplace_cache et al.) —
+    # point the model back at project_dir, which is always first.
+    for extra in allowed_roots[1:]:
+        try:
+            if root_resolved == extra.resolve(strict=False):
+                project_root = allowed_roots[0].resolve(strict=False)
+                return (
+                    f"\nhint: nothing in this read-only root matched. If you "
+                    f"are looking for YOUR project's files, retry with "
+                    f"path='.' (project_dir is {project_root})."
+                )
+        except OSError:
+            continue
+    return ""
+
+
 # ─────────────────────────────────────────────────────────────────────
 # grep
 # ─────────────────────────────────────────────────────────────────────
@@ -224,9 +254,13 @@ def _grep(args: _GrepArgs, allowed_roots: list[Path]) -> ToolResult:
         capped.append(line)
 
     if not capped:
+        content = (
+            f"grep: 0 matches for /{args.pattern}/ in {root} "
+            f"(glob={args.glob})."
+        )
+        content += _zero_match_hint(root, allowed_roots)
         return ToolResult(
-            content=f"grep: 0 matches for /{args.pattern}/ in {root} "
-                    f"(glob={args.glob}).",
+            content=content,
             details={"matches": 0, "root": str(root)},
         )
 
@@ -306,8 +340,10 @@ def _glob(args: _GlobArgs, allowed_roots: list[Path]) -> ToolResult:
     matches = matches[:_GLOB_MAX_RESULTS]
 
     if not matches:
+        content = f"glob: 0 matches for {args.pattern!r} under {root}."
+        content += _zero_match_hint(root, allowed_roots)
         return ToolResult(
-            content=f"glob: 0 matches for {args.pattern!r} under {root}.",
+            content=content,
             details={"matches": 0, "root": str(root)},
         )
 

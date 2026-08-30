@@ -162,6 +162,7 @@ def _static_prompt(
         ),
         tool_contract=tool_contract,
         max_source_bytes=config.source_max_bytes,
+        core1_files=config.core1_stitch_files,
     )
 
 

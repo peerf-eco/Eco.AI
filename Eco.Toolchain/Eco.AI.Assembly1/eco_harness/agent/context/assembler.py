@@ -121,6 +121,48 @@ def _core1_sharedfiles(roots: Iterable[Path]) -> Path | None:
     return None
 
 
+def _core1_stitch(
+    core1: Path,
+    *,
+    max_bytes: int,
+    only_files: Iterable[str] | None = None,
+) -> tuple[str, bool]:
+    """Stitch Eco.Core1/SharedFiles into the static prompt tail.
+
+    With ``only_files`` (curated list, e.g. harness.yaml
+    ``core1_stitch_files``) only those headers are stitched — the ACOM
+    plans reference IEcoBase1/IEcoSystem1/ErrEcoCodes/depend.h, not the
+    whole SharedFiles tree. Session 8c3431c2 carried ~70-90 KB of
+    per-call stitch tokens that no role ever used.
+
+    Returns (stitched_text, curated_used). Falls back to the whole-tree
+    stitch when the curated list is empty or matches nothing on disk.
+    """
+    if only_files:
+        explicit = [
+            core1 / name.strip()
+            for name in only_files
+            if name.strip() and (core1 / name.strip()).is_file()
+        ]
+        if explicit:
+            return (
+                stitch_source_files(
+                    explicit,
+                    max_bytes=max_bytes,
+                    extensions=_CORE1_STITCH_EXTENSIONS,
+                ),
+                True,
+            )
+    return (
+        stitch_source_files(
+            [core1],
+            max_bytes=max_bytes,
+            extensions=_CORE1_STITCH_EXTENSIONS,
+        ),
+        False,
+    )
+
+
 def build_static_system_prompt(
     role_prompt: str,
     *,
@@ -129,6 +171,7 @@ def build_static_system_prompt(
     domain_knowledge: str = "",
     header_path: Path | None = None,
     max_source_bytes: int = 300_000,
+    core1_files: Iterable[str] | None = None,
 ) -> str:
     header_file = header_path or Path(
         os.getenv(
@@ -152,20 +195,27 @@ def build_static_system_prompt(
         # C-only stitch (.h): the .hpp C++ wrappers duplicate the same
         # declarations and would burn ~30% more tokens on a block that is
         # byte-identical across every call (KV-cache prefix).
-        source = stitch_source_files(
-            [core1],
+        source, _curated = _core1_stitch(
+            core1,
             max_bytes=min(max_source_bytes, 120_000),
-            extensions=_CORE1_STITCH_EXTENSIONS,
+            only_files=list(core1_files or ()),
         )
     domain = domain_knowledge or load_acom_domain()
     stable_tools = tool_contract or load_tool_contract()
+    # ORDER MATTERS for the provider prefix cache: header → domain → tool
+    # contract → source stitch are byte-identical across ALL roles; the
+    # role instructions (which differ per role) come LAST, so switching
+    # architect → coder → tester only invalidates the small role tail
+    # instead of the whole ~100K-char prompt (the old order placed the
+    # role block mid-prompt and made every role switch a full-price
+    # cold start — tester call 018 in session 8c3431c2).
     return (
         f"{header.rstrip()}\n\n"
         f"=== STATIC ACOM DOMAIN KNOWLEDGE ===\n{domain.rstrip()}\n\n"
         f"=== STATIC TOOL CONTRACT ===\n{stable_tools.rstrip()}\n\n"
-        f"=== ROLE INSTRUCTIONS ===\n{role_prompt.rstrip()}\n\n"
         f"=== IMMUTABLE SOURCE CODEBASE (curated Eco.Core1 base) ===\n"
-        f"{source or '(Eco.Core1 SharedFiles not found in source_roots)'}"
+        f"{source or '(Eco.Core1 SharedFiles not found in source_roots)'}\n\n"
+        f"=== ROLE INSTRUCTIONS ===\n{role_prompt.rstrip()}"
     )
 
 

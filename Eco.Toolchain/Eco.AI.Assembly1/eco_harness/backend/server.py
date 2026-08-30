@@ -1914,6 +1914,60 @@ _MERMAID_FENCE_RE = re.compile(
 )
 
 
+def _collect_run_metrics(trace_dir) -> dict:
+    """Aggregate per-call KPIs from the run's trace files.
+
+    One trace file per LLM call; each carries meta.tool_durations (P4) and
+    response.usage. Surfaced in pipeline_done so every run reports the
+    optimization KPIs (calls, tokens, cache-hit, tool seconds) that the
+    session 8c3431c2 post-mortem had to reconstruct by hand from timestamps.
+    Never raises — metrics are observability.
+    """
+    metrics: dict = {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "tool_seconds": 0.0,
+    }
+    try:
+        for path in sorted(trace_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            meta = data.get("meta") or {}
+            if not isinstance(meta, dict):
+                continue
+            metrics["calls"] += 1
+            for key in ("tool_seconds",):
+                try:
+                    metrics[key] += float(meta.get(key) or 0.0)
+                except (TypeError, ValueError):
+                    pass
+            response = data.get("response") or {}
+            usage = (response or {}).get("usage") or {}
+            if not isinstance(usage, dict):
+                continue
+            def _int(value) -> int:
+                try:
+                    return int(value or 0)
+                except (TypeError, ValueError):
+                    return 0
+            metrics["input_tokens"] += _int(usage.get("input"))
+            metrics["output_tokens"] += _int(usage.get("output"))
+            metrics["cache_read_tokens"] += _int(usage.get("cacheRead"))
+        total_in = metrics["input_tokens"]
+        if total_in > 0:
+            metrics["cache_hit_rate"] = round(
+                metrics["cache_read_tokens"] / total_in, 4,
+            )
+        metrics["tool_seconds"] = round(metrics["tool_seconds"], 3)
+    except Exception:  # noqa: BLE001 — observability must not break the run
+        logger.exception("run metrics collection failed")
+    return metrics
+
+
 def _last_assistant_text(history: list) -> str:
     """Extract the text content of the most recent assistant turn from a
     pi_ai history list. Used to surface what the model said in failure
@@ -3243,7 +3297,11 @@ async def chat_endpoint(websocket: WebSocket):
                     terminate_chat = True
                     break
 
-                # Planner reached to_coder — show the plan for user review.
+                # Planner reached to_coder — plan gate. hitl (default) shows
+                # the plan for user review and blocks on plan_decision;
+                # auto_approve (mode config / HARNESS_PLAN_GATE) proceeds
+                # immediately — session 8c3431c2 lost 291s (67% of wall time)
+                # waiting on this gate in unattended auto mode.
                 plan_md = (planner_result.stop_payload or {}).get("message", "")
                 await websocket.send_json({
                     "type":         "plan_review_required",
@@ -3252,40 +3310,53 @@ async def chat_endpoint(websocket: WebSocket):
                     "project_name": "",
                 })
 
-                # Wait for the user's plan_decision (or abort).
-                decision_received = False
-                while not decision_received:
-                    raw2 = await websocket.receive_text()
-                    try:
-                        p2 = json.loads(raw2)
-                    except json.JSONDecodeError:
-                        continue
-                    p2_type = p2.get("type")
-                    if p2_type == "abort":
-                        finish_session("aborted")
-                        await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
-                        terminate_chat = True
+                mode_spec = HARNESS_CONFIG.modes.get(mode)
+                plan_gate = (
+                    os.getenv("HARNESS_PLAN_GATE")
+                    or (mode_spec.plan_gate if mode_spec is not None else "hitl")
+                    or "hitl"
+                )
+                if plan_gate == "auto_approve":
+                    logger.info(
+                        "[CHAT WS] plan auto-approved (mode=%s plan_gate=auto_approve) "
+                        "thread_id=%s", mode, thread_id,
+                    )
+                    approved_plan_md = plan_md
+                else:
+                    # Wait for the user's plan_decision (or abort).
+                    decision_received = False
+                    while not decision_received:
+                        raw2 = await websocket.receive_text()
+                        try:
+                            p2 = json.loads(raw2)
+                        except json.JSONDecodeError:
+                            continue
+                        p2_type = p2.get("type")
+                        if p2_type == "abort":
+                            finish_session("aborted")
+                            await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
+                            terminate_chat = True
+                            decision_received = True
+                            break
+                        if p2_type != "plan_decision":
+                            # ignore stale events
+                            continue
+                        if bool(p2.get("approved")):
+                            approved_plan_md = p2.get("modified_plan_md") or plan_md
+                            decision_received = True
+                            break
+                        # Rejected — re-run planner with feedback appended.
+                        reason = (p2.get("reason") or "").strip()
+                        planner_seed = workspace + attached_block + user_req
+                        if reason:
+                            planner_seed = workspace + attached_block + (
+                                user_req
+                                + "\n\n=== Feedback on your previous plan ===\n"
+                                + reason
+                                + "\n\nRevise the plan addressing this feedback."
+                            )
                         decision_received = True
-                        break
-                    if p2_type != "plan_decision":
-                        # ignore stale events
-                        continue
-                    if bool(p2.get("approved")):
-                        approved_plan_md = p2.get("modified_plan_md") or plan_md
-                        decision_received = True
-                        break
-                    # Rejected — re-run planner with feedback appended.
-                    reason = (p2.get("reason") or "").strip()
-                    planner_seed = workspace + attached_block + user_req
-                    if reason:
-                        planner_seed = workspace + attached_block + (
-                            user_req
-                            + "\n\n=== Feedback on your previous plan ===\n"
-                            + reason
-                            + "\n\nRevise the plan addressing this feedback."
-                        )
-                    decision_received = True
-                    # Outer while restarts planner with the new seed.
+                        # Outer while restarts planner with the new seed.
 
                 if terminate_chat or approved_plan_md is not None:
                     break
@@ -3509,6 +3580,7 @@ async def chat_endpoint(websocket: WebSocket):
                     "build_artifact":   build_artifact,
                     "tester_report_md": result.last_message
                                         + f"\n\n(orchestrator: {result.status}, hops={len(result.hops)})",
+                    "metrics":          _collect_run_metrics(trace_dir),
                 })
                 break
 
@@ -3577,6 +3649,7 @@ async def chat_endpoint(websocket: WebSocket):
                     "status":           "failed",
                     "build_artifact":   build_artifact,
                     "tester_report_md": result.last_message,
+                    "metrics":          _collect_run_metrics(trace_dir),
                 })
             break
 

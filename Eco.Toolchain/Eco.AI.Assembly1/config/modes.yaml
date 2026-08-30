@@ -5,6 +5,11 @@ modes:
     prompt: prompts/modes/auto.md
     roles: [architect, coder, tester]
     pipeline: true
+    # HITL plan approval is the biggest wall-clock item in an unattended
+    # auto run (session 8c3431c2: 291s of 431s = 67% waiting on the gate).
+    # auto_approve emits plan_review_required for visibility but proceeds
+    # immediately. Override per run with HARNESS_PLAN_GATE=hitl.
+    plan_gate: auto_approve
     capabilities:
       - marketplace_assembly
       - eco_wizard_generation

@@ -6,6 +6,51 @@
 
 ---
 
+## 🔄 v1.1 STATUS UPDATE (2026-08-30) — READ BEFORE IMPLEMENTING
+
+A raw-trace re-verification (`traces/ses-8c3431c2/`) **corrected the root-cause
+analysis** this guide was built on, and the highest-impact items are now
+**implemented** (see "Implemented" table in `OPTIMIZATION_PLAN.md` §v1.1).
+Corrections to the phases below:
+
+1. **The system prompts never contained timestamps or session IDs.** Phase 1's
+   premise (STEP 1.1 Change 1/2, `test_no_timestamps_in_system_prompt`) targets
+   content that does not exist. The actual cache killer was
+   `EcoAgent._build_context` re-eliding a sliding tool-result window on every
+   call — **fixed** (append-time elision + `HARNESS_ELIDE_MIN_BYTES` size gate,
+   regression tests in `test_eco_agent.py`).
+2. **Static prompt ordering fixed differently than §1.1.1 Change 3 describes:**
+   the real fix moves ROLE INSTRUCTIONS to the END (after the source stitch) so
+   header/domain/tool-contract/source are byte-identical across roles, and
+   prunes the Core1 stitch to `core1_stitch_files` (harness.yaml) — **fixed**
+   (`assembler.py`, `roles.py`, `config/harness.yaml`).
+3. **The plan gate, not coder exploration, was the biggest wall-clock item**
+   (291 s of 431 s = 67%): `auto` mode now uses `plan_gate: auto_approve`
+   (`config/modes.yaml`, `HARNESS_PLAN_GATE` env override) — **implemented**.
+4. **eco-wizard facts** (apply anywhere the guide mentions `EcoMain.c`): the
+   wizard scaffolds `SourceFiles/<Name>.c` containing the ACOM `EcoMain`
+   entry-point function; it scaffolds INTO `out_dir` (no nested `<Name>/`
+   dir); it can emit a stray `--app/` flag-named directory (harness tool now
+   detects + quarantines; fix the CLI at source). The wizard result contract
+   now returns the tree, the entry file, and the `run_build` project_subdir —
+   **implemented** (`eco_wizard.py`), and `config/prompts/coder.md` STEP 1.5
+   was rewritten to match reality.
+5. **Coder "13 iterations" is 13 LLM calls in ONE activation** — targets
+   framed as "turns per role" should read "LLM calls per activation".
+6. Phase 4's baseline metrics table in `monitor_optimization.py` should use
+   the corrected totals: input 774,650 / uncached ~262K / cache 66.2% / 291 s
+   gate wait — the v1.0 numbers (781K, 76.5%, 431 s agent time) conflate the
+   HITL wait with agent time.
+
+**Still open (implement next):** write_file 21.8 s latency, marketplace
+glob/grep listing cache, parallel execution of batched tool calls, wizard
+`--app` fix at CLI source, re-run KPI capture vs corrected baseline.
+
+The original phase content below is kept for reference; treat sections
+conflicting with the corrections above as superseded.
+
+---
+
 ## Phase 1: Cache Hit Rate Optimization (P0 - Immediate)
 
 ### STEP 1.1: Remove Dynamic Content from System Prompts

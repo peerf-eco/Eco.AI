@@ -4,6 +4,54 @@
 **Analysis Date:** 2026-08-30  
 **Target:** Reduce turns, tokens, and total time for ACOM component assembly
 
+## ⚠️ v1.1 Re-verification (2026-08-30) — READ FIRST
+
+The analysis below was re-verified directly against the raw traces
+(`traces/ses-8c3431c2/*.json`, one file per LLM call with per-call `usage`
+blocks) and the harness source. Several v1.0 claims were wrong:
+
+| v1.0 claim | Verified fact |
+|---|---|
+| "Turn 2 (Architect): 95.5% cache hit ✓" | **Wrong.** Turn 002: `input 39,423, cacheRead 0` — a full-price miss. |
+| "Turn 6 (coder): 99.6% cache hit" | **Wrong.** Turn 006: `input 39,655, cacheRead 0`. |
+| "13 coder iterations / activations" | **Wrong.** 13 LLM calls within ONE coder activation (`call_no` 1–13 in `meta`). The fix is fewer calls per activation. |
+| Cache misses caused by "timestamps/session IDs in prompts" | **Wrong.** No timestamps in system prompts. The real cause is `EcoAgent._build_context` re-eliding a sliding tool-result window on EVERY call, mutating early history bytes and busting the provider prefix cache. |
+| Overlooked | **~291 s of the 431 s wall time (67%)** was the blocking plan-approval gate (`plan_review_required` → `plan_decision` wait in `backend/server.py`) — the single largest latency item. |
+| Overlooked | Per-call system prompt ≈ 108 KB (~27K tokens), of which ~70–90 KB is the Eco.Core1 `SharedFiles` stitch, though plans use only 4 headers. |
+| Overlooked | eco-wizard result contract gave no paths → doubled `run_build` path, BUILD FAIL, 6 recovery calls; wizard also emits a stray `--app/` directory; entry file is `SourceFiles/<Name>.c` (contains `EcoMain`), not `EcoMain.c`. |
+| Overlooked | Tool latency dominated the agent phase: `write_file` 21.8 s, `glob` (marketplace default) 13.9 s, `read_file` 8.1 s, `list_dir` 2–5 s ×7. |
+
+**Corrected totals:** input 774,650 tokens; cache-read 512,576 (66.2%); uncached
+~262K. Cache misses concentrate at calls 002, 006, 011 (elision churn) and the
+role switches 001/005/018 (cold starts — expected once per role).
+
+### Implemented (v1.1, this repo)
+
+| Fix | Files |
+|---|---|
+| P0 plan gate: `plan_gate: auto_approve` for auto mode (env `HARNESS_PLAN_GATE` override) — eliminates the 291 s block | `config/modes.yaml`, `eco_harness/agent/config/loader.py`, `eco_harness/backend/server.py` |
+| P1 prefix-stable elision: elide once at append time, size gate (`HARNESS_ELIDE_MIN_BYTES`, default 2048), small results never elided | `eco_harness/agent/internal/eco_agent.py`, tests in `test_eco_agent.py` |
+| P2 prompt diet: curated `core1_stitch_files` stitch (−38% static prompt in sanity check) + role-last ordering for cross-role prefix reuse | `eco_harness/agent/context/assembler.py`, `eco_harness/roles.py`, `config/harness.yaml`, `loader.py` |
+| P3 wizard contract: result now lists generated tree, `SourceFiles/<Name>.c` EcoMain entry file, `run_build` project_subdir, stray `--`-dir warnings; 0-match grep/glob hint pointing at `path='.'` | `eco_harness/agent/internal/tools/eco_wizard.py`, `code_search.py` |
+| P3 prompt truth: coder STEP 1.5 rewritten for the real wizard behavior (zero exploration, `{Name}.c` entry file, plan-is-truth overwrite); architect ambiguity-defaults rule | `config/prompts/coder.md`, `config/prompts/architect.md` |
+| P4 tool durations in trace meta (`tool_durations`, `tool_seconds`) | `eco_harness/agent/internal/call_trace.py`, `eco_agent.py` |
+| P5 run KPIs in `pipeline_done` (`metrics`: calls, tokens, cache-hit, tool seconds) | `eco_harness/backend/server.py` |
+
+Regression tests: `eco_harness/agent/internal/tests/test_eco_agent.py` (prefix
+stability, size gate, durations, usage totals) and
+`test_session_8c3431c2_optimizations.py` (wizard scan, stray dirs, 0-match hint).
+Full suite: 297 passed.
+
+### Remaining (not yet implemented)
+
+- Fix `write_file` latency (21.8 s for 4 KB — profile `io.py::_write_file` + WS path).
+- Cache/optimize `glob`/`grep` over `marketplace_cache` (mtime-keyed listing cache or `marketplace_index.sqlite`).
+- Execute parallel tool calls in one assistant message concurrently.
+- Fix the eco-wizard `--app` flag-leak bug at its CLI source (harness now detects and quarantines it).
+- Update the existing `OPTIMIZATION_IMPLEMENTATION_STEPS.md` targets against corrected baselines after a re-run.
+
+---
+
 ## Executive Summary
 
 **Current Performance:**
@@ -63,44 +111,42 @@
 - Tester: 48.7% cache hit (wasted ~32,401 tokens)
 - Target: >90% cache hit rate
 
-**Root Causes:**
-1. Dynamic content injected into static system prompt sections
-2. Timestamp/session IDs in prompts
-3. Unstable prompt ordering
-4. Context window variations between turns
+**Root Causes (corrected v1.1):**
+1. `EcoAgent._build_context` re-elided a sliding tool-result window on EVERY call → early-history bytes mutated → provider prefix cache busted (calls 002, 006, 011 = ~122K full-price tokens)
+2. Per-call static prompt ≈ 108 KB, of which ~70–90 KB was the whole Eco.Core1 `SharedFiles` stitch (plans need 4 headers)
+3. Role instructions sat BEFORE the big immutable source block, so architect→coder→tester switches invalidated the entire prefix (tester cold start 30.8K)
+4. NOT timestamps/session IDs — no dynamic content was found in the static system prompts
 
-**Evidence from traces:**
+**Evidence from traces (corrected v1.1):**
 - Turn 1 (Architect): 0% cache hit (cold start - expected)
-- Turn 2 (Architect): 95.5% cache hit ✓
-- Turn 5 (Coder): Only 6.0% cache hit ⚠️ **CRITICAL**
-- Turn 11 (Coder): 0% cache hit ⚠️ **CRITICAL**
-- Turn 18 (Tester): 0% cache hit ⚠️ **CRITICAL**
+- Turn 2 (Architect): 0% cache hit ⚠️ — elision churn, NOT expected
+- Turn 5 (Coder): 6.0% cache hit ⚠️ (role switch, expected once)
+- Turn 6 (Coder): 0% cache hit ⚠️ **CRITICAL** — elision churn
+- Turn 11 (Coder): 0% cache hit ⚠️ **CRITICAL** — elision churn
+- Turn 18 (Tester): 0% cache hit (role switch, expected once)
 
 **Impact:**
 - ~77K wasted tokens per session
 - ~$0.005 wasted cost per session
 - 15-20% slower execution
 
-#### Issue #2: Excessive Coder Iterations (HIGH PRIORITY)
+#### Issue #2: Excessive Coder Calls (HIGH PRIORITY)
 **Problem:**
-- 13 coder turns vs expected 3-8 turns
-- 5-8 extra iterations = ~200 extra seconds
-- Multiple build-fix cycles indicate missing information
+- 13 coder LLM calls (ONE activation, `call_no` 1–13) vs the 5-7 the plan needed
+- Calls 2–4 (32/59/54 output tokens each) re-primed ~119K input tokens just to look at wizard output
+- One avoidable BUILD FAIL (doubled `run_build` path) + 4 recovery calls
 
-**Root Causes:**
-1. Plan lacks sufficient detail (build paths, exact includes, link flags)
-2. Coder makes 8x `list_dir` calls exploring the workspace
-3. Build errors not caught by plan validation
-4. Missing library paths / linker configuration
+**Root Causes (corrected v1.1):**
+1. eco_wizard tool result gave no paths → coder guessed the layout, doubled the `run_build` path, then spent 4 calls recovering (including a 13.9 s glob that silently searched marketplace_cache)
+2. Wizard generated a non-conforming `EcoMain` template (registered FileSystemManagement, `deg=` format) — the coder had to read + rewrite it
+3. `config/prompts/coder.md` STEP 1.5 documented wizard behavior that did not match reality (promised a stub and "the wizard does it correctly")
+4. Sliding-window elision forced full-price re-reads on calls 2 and 6
 
-**Evidence from traces:**
-- Turns 5-6: eco_wizard + list_dir (project setup)
-- Turns 7-10: Multiple list_dir + write_file (exploration)
-- Turn 12: run_build (first attempt)
-- Turn 16: run_build (second attempt)
-- Turn 17: to_tester (finally done)
-
-**Pattern:** Coder spent 6 turns (7-12) exploring and writing before first build attempt
+**Evidence from traces (corrected v1.1):**
+- Calls 5–8 (005–008): eco_wizard + 6 exploration calls to reconcile a layout the tool result should have stated
+- Call 12: run_build FAIL (doubled path `Eco.TrigTable/Eco.TrigTable/...`)
+- Calls 13–16: layout recovery (incl. a marketplace-root glob, 13.9 s, 0 matches)
+- Call 17: run_build OK → to_tester
 
 #### Issue #3: High Reasoning Token Overhead (MEDIUM PRIORITY)
 **Problem:**
@@ -629,11 +675,11 @@ def read_component_profile(name: str) -> ComponentProfile:
 | Turn | Role | Input | Output | Cache % | Tools | Notes |
 |------|------|-------|--------|---------|-------|-------|
 | 01 | architect | 37,659 | 1,740 | 0% | 6 | Cold start, component discovery |
-| 02 | architect | 39,423 | 855 | 95.5% | 1 | File exploration |
+| 02 | architect | 39,423 | 855 | 0% | 1 | ⚠️ Full-price miss — elision churn (v1.0 wrongly claimed 95.5%) |
 | 03 | architect | 39,959 | 907 | 94.7% | 2 | Deep dive into headers |
 | 04 | architect | 41,038 | 6,833 | 92.2% | 1 | Plan generation & handoff |
-| 05 | coder | 39,543 | 199 | 6.0% | 1 | ⚠️ Cache miss - project scaffold |
-| 06 | coder | 39,655 | 32 | 99.6% | 1 | Directory exploration |
+| 05 | coder | 39,543 | 199 | 6.0% | 1 | Role-switch cold start + eco_wizard scaffold |
+| 06 | coder | 39,655 | 32 | 0% | 1 | ⚠️ Full-price miss — elision churn (v1.0 wrongly claimed 99.6%) |
 | 07 | coder | 39,700 | 59 | 99.8% | 2 | More exploration |
 | 08 | coder | 39,769 | 54 | 99.8% | 2 | Still exploring |
 | 09 | coder | 41,313 | 1,916 | 95.9% | 1 | Finally writing code |
@@ -648,10 +694,16 @@ def read_component_profile(name: str) -> ComponentProfile:
 | 18 | tester | 30,787 | 214 | 0% | 1 | ⚠️ Cache miss - first test run |
 | 19 | tester | 32,334 | 826 | 95.0% | 1 | Final validation & done |
 
-### Critical Cache Misses
-- **Turn 5 (coder):** 6.0% — Handoff from architect changed prompt structure
-- **Turn 11 (coder):** 0% — System prompt regenerated mid-session
-- **Turn 18 (tester):** 0% — Tester cold start with different prompt
+### Critical Cache Misses (corrected v1.1)
+- **Turn 2 (architect):** 0% — first tool result crossed the elision window between calls 1→2; the early-history mutation broke the prefix.
+- **Turn 5 (coder):** 6.0% — role switch cold start (expected once per role; v1.1 role-last ordering + smaller stitch shrink the uncached tail).
+- **Turn 6 (coder):** 0% — eco_wizard result elided at coder call 2 (early mutation).
+- **Turn 11 (coder):** 0% — second tool result crossed the window (early mutation).
+- **Turn 18 (tester):** 0% — role switch cold start (expected once).
+
+All three mid-run misses share one root cause: `EcoAgent._build_context`
+recomputed the elided window per call. Fixed in v1.1 (append-time elision +
+size gate).
 
 ### Tool Usage Patterns
 **Architect:**

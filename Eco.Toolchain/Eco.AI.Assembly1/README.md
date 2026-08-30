@@ -110,7 +110,8 @@ docker compose -f ~/.eco-harness/docker-compose.yml exec eco-harness python -m e
 | Config file | `~/.eco-harness/.env` (or `~/.eco-harness/workspace.yaml` for UI settings) |
 
 For the packaging internals (wheel contents, manifest contract, hosted
-artifacts, CI pipeline) see `WORKING_DOCUMENTATION.md` §18.
+artifacts, CI pipeline) and the go-live checklist (§18.9) see
+`WORKING_DOCUMENTATION.md` §18.
 
 ## Quick Start (developers)
 

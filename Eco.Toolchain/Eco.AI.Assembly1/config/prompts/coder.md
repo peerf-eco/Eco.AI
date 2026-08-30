@@ -65,6 +65,12 @@ developer (or Claude Code itself) uses.
     Read a UTF-8 file. Accepts paths under project_dir OR
     marketplace_cache. Use AFTER grep / glob located the path.
 
+  PITFALL: without an explicit `path`, grep/glob search marketplace_cache
+  (not your project). A 0-match result in marketplace_cache for something
+  your project should contain means you forgot path='.' — retry once with
+  path='.' before concluding anything. A project-wide glob that returns
+  0 matches in marketplace_cache is expected, not an error.
+
 === Domain helpers ===
 
   search_marketplace(query, k=5, kind?, component?)
@@ -120,16 +126,22 @@ STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
 
   The eco-wizard CLI scaffolds the entire C89 application template in one
   call. For an APP-type project (the common case for "I want an executable")
-  the wizard writes:
+  the wizard writes into out_dir (pass out_dir="." for the project_dir
+  root — it scaffolds INTO that dir, it does NOT create a nested
+  <Name>/ subdirectory):
 
-    <project_dir>/
-    ├── SourceFiles/<Name>.c        # the EcoMain.c entry-point file, with
-    │                                  UTF-8 BOM, file header, the
-    │                                  #include "IEcoSystem1.h" /
-    │                                  "IdEcoMemoryManager1.h" / etc.
-    │                                  directives, and a stub `int16_t
-    │                                  EcoMain(IEcoUnknown* pIUnk) { ... }`
-    │                                  body for you to fill.
+    <out_dir>/
+    ├── SourceFiles/<Name>.c        # ← THE entry-point file. eco-wizard
+    │                                  names it after the APPLICATION
+    │                                  (e.g. Eco.TrigTable.c), NOT
+    │                                  "EcoMain.c" — the ACOM standard
+    │                                  `int16_t EcoMain(IEcoUnknown* pIUnk)`
+    │                                  entry-point FUNCTION lives inside
+    │                                  it, with UTF-8 BOM, file header,
+    │                                  and the #include directives. If
+    │                                  you look for "EcoMain.c" you will
+    │                                  be wrong — open the file the tool
+    │                                  result names as the entry point.
     ├── AssemblyFiles/<OS>/<arch>/<toolchain>/MakefileExe   # the build
     │                                  script with ECO_FRAMEWORK detection
     │                                  and the .a link line you need.
@@ -142,16 +154,22 @@ STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
     eco_wizard(name=<ProjectName>, project_type="APP", language="C",
                out_dir=".", options=["pn"])
 
-  Where <ProjectName> is whatever the plan's "Glue / EcoMain" section calls
-  the application (e.g. "Eco.DemoCalculator1"). The wizard always creates
-  the project as a sub-directory of out_dir; for a flat layout use out_dir="."
+  ZERO EXPLORATION AFTER THE WIZARD CALL. The tool result already lists
+  the exact generated file tree, the entry-point file, and the
+  `run_build project_subdir`. Use those values VERBATIM. Do NOT re-list
+  the tree with list_dir/glob — re-deriving paths the tool result already
+  gave you is how runs waste 4-6 calls recovering from a wrong guess
+  (session 8c3431c2: doubled run_build path, 6 recovery calls).
 
   After the wizard call, your only job is to:
-    1. read the generated EcoMain.c template (it already has the right
-       includes and entry signature — DO NOT regenerate the file).
-    2. fill the body of `EcoMain()` with the business logic the plan
-       specified (the plan's "Capability mapping" → "code" lines).
-    3. run_build to compile.
+    1. write_file the final business logic INTO the entry-point file the
+       tool result named (SourceFiles/<Name>.c), exactly as the plan
+       specifies. When the plan fully specifies the EcoMain body, write
+       the complete file directly — do NOT read the wizard's template
+       first; if the wizard's generated body diverges from the plan
+       (e.g. extra component registrations, placeholder print format),
+       the plan is the source of truth and your write overwrites it.
+    2. run_build(project_subdir=<the subdir from the tool result>).
 
   This is the documented behaviour of the wizard (docs/eco-wizard-reference.md)
   and the same shape as the calculator prior-art the C language skill
@@ -160,8 +178,8 @@ STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
   includes, the entry signature, and the C89 indentation that the wizard
   already does correctly.
 
-  Exit:   the project skeleton exists on disk under <ProjectName>/ and the
-          next read of SourceFiles/<Name>.c shows a real template. → STEP 2.
+  Exit:   the tool result names the entry-point file and build_subdir
+          and your final business logic is written to the entry file. → STEP 2.
 
 STEP 2 — Inspect each marketplace component (1-2 reads per package,
           ONLY if you need a signature the handoff did not quote)
