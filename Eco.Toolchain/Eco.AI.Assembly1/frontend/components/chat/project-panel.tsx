@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import {
   Copy,
@@ -410,6 +411,89 @@ function useDismissable(open: boolean, close: () => void) {
   return wrapperRef;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Portal-based dropdown surface. The expanded session list is wrapped in an
+// `overflow-hidden` motion.div (collapse animation) and the card list lives
+// in an `overflow-y-auto` scroller, so a plain `absolute top-full` menu is
+// clipped to a sliver when its row sits at the container bottom — the 3-dot
+// button then looks dead (click processed, menu invisible). Rendering the
+// surface in a body-level portal with fixed coordinates sidesteps every
+// ancestor clip; it flips above the anchor when there is no room below.
+// ────────────────────────────────────────────────────────────────────────────
+
+function MenuSurface({
+  anchorRef,
+  anchorRect,
+  onClose,
+  minWidth,
+  children,
+}: {
+  anchorRef: React.RefObject<HTMLElement>;
+  anchorRect: DOMRect;
+  onClose: () => void;
+  minWidth: number;
+  children: React.ReactNode;
+}) {
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState(() => ({
+    top: anchorRect.bottom + 4,
+    right: window.innerWidth - anchorRect.right,
+  }));
+
+  // Flip above the anchor when the surface would overflow the viewport.
+  useLayoutEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const height = surface.offsetHeight;
+    const below = anchorRect.bottom + 4;
+    const top =
+      below + height > window.innerHeight - 8
+        ? Math.max(8, anchorRect.top - height - 4)
+        : below;
+    setPos((prev) => (prev.top === top ? prev : { ...prev, top }));
+  }, [anchorRect]);
+
+  // Dismissal: outside mousedown (the trigger is excluded so its own click
+  // can still toggle closed), Escape, and any scroll/resize that would
+  // desync the fixed coordinates from the anchor.
+  useEffect(() => {
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (anchorRef.current?.contains(target)) return;
+      if (surfaceRef.current?.contains(target)) return;
+      onClose();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onClose);
+    window.addEventListener("scroll", onClose, true);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onClose);
+      window.removeEventListener("scroll", onClose, true);
+    };
+  }, [anchorRef, onClose]);
+
+  return createPortal(
+    <div
+      ref={surfaceRef}
+      role="menu"
+      style={{ position: "fixed", top: pos.top, right: pos.right, minWidth }}
+      className={cn(
+        "z-50 rounded-xl border border-white/10 glass-strong",
+        "shadow-[0_16px_48px_-12px_rgba(0,0,0,0.8)] p-1.5 space-y-0.5",
+      )}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
+}
+
 function ProjectCardMenu({
   project,
   active,
@@ -430,13 +514,15 @@ function ProjectCardMenu({
   onOpenLastFailed?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const close = () => setOpen(false);
-  const wrapperRef = useDismissable(open, close);
   const removeBlocked = project.sessions.some((s) => s.status === "running");
 
   return (
-    <div ref={wrapperRef} className="absolute right-1.5 top-1.5 z-10">
+    <div className="absolute right-1.5 top-1.5 z-10">
       <button
+        ref={triggerRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -444,6 +530,7 @@ function ProjectCardMenu({
         onClick={(e) => {
           e.stopPropagation();
           if (removeBlocked) return;
+          setAnchorRect(e.currentTarget.getBoundingClientRect());
           setOpen((v) => !v);
         }}
         className={cn(
@@ -458,14 +545,12 @@ function ProjectCardMenu({
       >
         <MoreVertical className="h-3.5 w-3.5" />
       </button>
-      {open && (
-        <div
-          role="menu"
-          className={cn(
-            "absolute right-0 top-full mt-1 z-50 min-w-[200px]",
-            "rounded-xl border border-white/10 glass-strong",
-            "shadow-[0_16px_48px_-12px_rgba(0,0,0,0.8)] p-1.5 space-y-0.5",
-          )}
+      {open && anchorRect && (
+        <MenuSurface
+          anchorRef={triggerRef}
+          anchorRect={anchorRect}
+          onClose={close}
+          minWidth={200}
         >
           <MenuItem
             icon={<Copy className="h-3.5 w-3.5 text-blue-300/90" />}
@@ -532,7 +617,7 @@ function ProjectCardMenu({
               onRemove();
             }}
           />
-        </div>
+        </MenuSurface>
       )}
     </div>
   );
@@ -680,8 +765,9 @@ function SessionRow({
 }) {
   const running = session.status === "running";
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
-  const menuRef = useDismissable(menuOpen, closeMenu);
   // Minimal-first-cut: prepend the `ses-` prefix to the session id so the
   // panel id and the on-disk trace dir name are visually identical
   // (sessions live in traces/ses-<id8>/ — the project panel id is the
@@ -724,14 +810,16 @@ function SessionRow({
           {relativeTime(session.updated_at)}
         </span>
       </button>
-      <div ref={menuRef} className="relative shrink-0">
+      <div className="relative shrink-0">
         <button
+          ref={menuTriggerRef}
           type="button"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           title="Session actions"
           onClick={(e) => {
             e.stopPropagation();
+            setMenuAnchor(e.currentTarget.getBoundingClientRect());
             setMenuOpen((v) => !v);
           }}
           className={cn(
@@ -743,14 +831,12 @@ function SessionRow({
         >
           <MoreVertical className="h-3.5 w-3.5" />
         </button>
-        {menuOpen && (
-          <div
-            role="menu"
-            className={cn(
-              "absolute right-0 top-full z-50 min-w-[180px]",
-              "rounded-xl border border-white/10 glass-strong",
-              "shadow-[0_16px_48px_-12px_rgba(0,0,0,0.8)] p-1.5 space-y-0.5",
-            )}
+        {menuOpen && menuAnchor && (
+          <MenuSurface
+            anchorRef={menuTriggerRef}
+            anchorRect={menuAnchor}
+            onClose={closeMenu}
+            minWidth={180}
           >
             <MenuItem
               icon={<FolderSearch className="h-3.5 w-3.5 text-blue-300/90" />}
@@ -794,7 +880,7 @@ function SessionRow({
                 />
               </>
             )}
-          </div>
+          </MenuSurface>
         )}
       </div>
     </div>
