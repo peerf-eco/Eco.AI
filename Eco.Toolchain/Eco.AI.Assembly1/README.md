@@ -6,41 +6,111 @@ role orchestration, human plan approval, and a shared event contract. Agent
 backends are replaceable: the built-in agent, Pi, Codex, and Claude Code can
 be selected per role.
 
-## Install (customers)
+## Install
 
-Two customer-grade flows, both one command. No source checkout, no wine:
-the installer always downloads native eco-cli / eco-wizard builds for the
-target OS, plus the prebuilt marketplace RAG index. Missing API keys never
+Two customer-grade flows, both one command, no source checkout, no wine.
+The installer always downloads **native** eco-cli / eco-wizard builds for
+your OS (never wine), plus the prebuilt marketplace RAG index, verified
+against the release manifest's sha256 checksums. Missing API keys never
 block install or launch — finish configuration in the in-app `/setup`
 wizard (or later in `~/.eco-harness/.env`).
 
-**Native (Windows / Linux / macOS)** — app lives in `~/.eco-harness`
-(`ECO_HOME`), Python 3.11 provided by `uv` if missing, single port:
+### Linux
 
 ```bash
-curl -fsSL https://downloads.ecoos.dev/eco-harness/install.sh | sh       # POSIX
-irm https://downloads.ecoos.dev/eco-harness/install.ps1 | iex            # PowerShell
+curl -fsSL https://downloads.ecoos.dev/eco-harness/install.sh | sh
 ```
 
-Then open http://localhost:8000 (setup wizard at `/setup`). CLI shims:
-`eco-harness` (serve/run), `eco-harness-update` (self-update),
-`eco-harness doctor` (health report).
+or download and inspect first: `curl -fsSLO <url> && sh install.sh`.
 
-**Docker** — any host with Docker; prebuilt multi-arch image from ghcr.io:
+- Requires `curl` or `wget` (everything else — including Python 3.11 — is
+  provided by `uv` automatically, per-user, no sudo).
+- Shims land in `~/.local/bin/eco-harness` and `~/.local/bin/eco-harness-update`;
+  if `~/.local/bin` is not on your `PATH`, add it:
+  `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc` (or your shell profile).
+
+### macOS
 
 ```bash
-sh install.sh --docker          # or: powershell -File install.ps1 -Docker
-# update: docker compose -f ~/.eco-harness/docker-compose.yml pull && up -d
+curl -fsSL https://downloads.ecoos.dev/eco-harness/install.sh | sh
 ```
 
-Key paths / env vars in installed mode:
+Same as Linux; downloaded binaries are Apple-Silicon/Intel native (arm64 /
+x86_64) and the installer strips the Gatekeeper quarantine attribute
+(`xattr -d com.apple.quarantine`) so first launch is not blocked. Gatekeeper
+may still warn on first run of an unsigned binary — right-click → Open, or
+System Settings → Privacy & Security → Allow.
+
+### Windows
+
+```powershell
+irm https://downloads.ecoos.dev/eco-harness/install.ps1 | iex
+```
+
+or download and run: `powershell -ExecutionPolicy Bypass -File install.ps1`.
+`uv` provides Python 3.11 if missing; the app installs to
+`%USERPROFILE%\.eco-harness` and `eco-harness.cmd` / `eco-harness-update.cmd`
+shims are added to your **user PATH** (available in new terminals).
+
+### After install (all native OSes)
+
+```bash
+eco-harness                 # serve the UI + API on http://localhost:8000
+eco-harness-update          # self-update (wheel + binaries + RAG index)
+eco-harness doctor          # one-command health report
+```
+
+Open http://localhost:8000 — the setup wizard at `/setup` walks you through
+the OpenRouter key (or **Skip — add later in `.env`**; the app runs degraded
+but starts regardless).
+
+Installed layout (`ECO_HOME`, default `~/.eco-harness`):
+
+```text
+~/.eco-harness/
+├── venv/                  # Python 3.11 venv (uv-managed)
+├── bin/                   # native eco-cli / eco-wizard builds (per-OS)
+├── data/                  # marketplace_index.sqlite + marketplace_cache/
+├── .env                   # OPENAI_API_KEY, ECO_API_TOKEN, … (chmod 600)
+├── workspace.yaml         # UI settings overrides
+├── output/                # generated projects + session registry
+└── traces/                # per-session LLM traces
+```
+
+Uninstall: delete `~/.eco-harness` (Windows: `%USERPROFILE%\.eco-harness`)
+and the shim files / user-PATH entry.
+
+### Docker (any host with Docker)
+
+```bash
+sh install.sh --docker        # or: powershell -File install.ps1 -Docker
+```
+
+Writes `~/.eco-harness/docker-compose.yml` with your absolute host paths,
+pulls the prebuilt multi-arch image (linux/amd64 + linux/arm64) from
+ghcr.io, starts it, then downloads the native binaries and RAG index into
+the mounted `~/.eco-harness` (visible to the container as `/data`).
+
+```bash
+# update:
+docker compose -f ~/.eco-harness/docker-compose.yml pull && \
+docker compose -f ~/.eco-harness/docker-compose.yml up -d
+# health:
+docker compose -f ~/.eco-harness/docker-compose.yml exec eco-harness python -m eco_harness doctor
+```
+
+### Key paths / env vars in installed mode
 
 | What | Where |
 |---|---|
-| App home (`ECO_HOME`) | `~/.eco-harness` (bin/, data/, .env, output/, traces/) |
-| User project (`ECO_PROJECT_DIR`) | picked in the UI folder browser; worktrees and generated artifacts live under it |
-| Binary lookup order | explicit → `ECO_<NAME>_PATH` → `<repo>/bin` → `$ECO_HOME/bin` → `/opt` → legacy siblings → `PATH` |
+| App home (`ECO_HOME`) | `~/.eco-harness` (`bin/`, `data/`, `.env`, `output/`, `traces/`) |
+| User project (`ECO_PROJECT_DIR`) | picked in the UI folder browser (or pre-set with `--project-dir`); worktrees and generated artifacts live under it |
+| Binary lookup order | explicit → `ECO_<NAME>_PATH` → `<repo>/bin` → `$ECO_HOME/bin` (`.exe` on Windows) → `/opt` → legacy siblings → `PATH` |
 | Prebuilt index | `~/.eco-harness/data/marketplace_index.sqlite` (refreshed by `eco-harness update`) |
+| Config file | `~/.eco-harness/.env` (or `~/.eco-harness/workspace.yaml` for UI settings) |
+
+For the packaging internals (wheel contents, manifest contract, hosted
+artifacts, CI pipeline) see `WORKING_DOCUMENTATION.md` §18.
 
 ## Quick Start (developers)
 
@@ -86,11 +156,11 @@ cp /path/to/eco-wizard bin/
 #    Or skip this and set ECO_CLI_PATH / ECO_WIZARD_PATH in .env (see step 2).
 
 # 4. Set up the host Python environment for the initialization scripts
-#    build_marketplace_index.py imports agent.rag.* (sqlite-vec, tree-sitter,
-#    httpx, openai, python-dotenv), so the agents' dependencies must be installed.
+#    build_marketplace_index.py imports eco_harness.agent.rag.* (sqlite-vec,
+#    tree-sitter, httpx, python-dotenv), so the harness deps are required.
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r agent/requirements.txt
+pip install -r eco_harness/agent/requirements.txt
 
 # 5. Export the variables the host scripts read from the shell, then run them
 #    (fetch_marketplace.py reads ECO_API_TOKEN/ECO_CLI_PATH from the shell env,
@@ -117,7 +187,7 @@ docker compose up --build
 # 1. Set up Python environment
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r agent/requirements.txt
+pip install -r eco_harness/agent/requirements.txt
 
 # 2. Set up Node.js frontend
 cd frontend
@@ -224,11 +294,11 @@ does not override already-set variables).
 | `ECO_WIZARD_TIMEOUT_S` | eco_wizard tool | `180` | Scaffold generation timeout |
 | `ECO_CLAUDE_PATH` / `ECO_CODEX_PATH` / `ECO_GROK_PATH` / `ECO_PI_PATH` | factory / ExternalCliBackend | PATH lookup | External sub-agent binaries; flags come from `config/agents/external/<name>.yaml` |
 | `ECO_MAKE_EXE` | server chat handler | `make` | Path to the make binary used by builds |
-| `MARKETPLACE_CACHE_ROOT` | paths.py consumers | `<repo>/marketplace_cache` → `/app/marketplace_cache` | Pre-pulled component cache |
-| `MARKETPLACE_INDEX_PATH` | paths.py consumers | `<repo>/marketplace_index.sqlite` → `/app/marketplace_index.sqlite` | sqlite-vec RAG index |
+| `MARKETPLACE_CACHE_ROOT` | paths.py consumers | `<repo>/marketplace_cache` → `$ECO_HOME/data/marketplace_cache` → `/app/marketplace_cache` | Pre-pulled component cache |
+| `MARKETPLACE_INDEX_PATH` | paths.py consumers | `<repo>/marketplace_index.sqlite` → `$ECO_HOME/data/marketplace_index.sqlite` → `/app/marketplace_index.sqlite` | sqlite-vec RAG index |
 | `ECO_FRAMEWORK` | paths/assembler, eco_cli pulls, index builder, eco-wizard | `<repo>/eco_framework` | Standard ACOM env var: root of the component development kits (`<Component>_DK_v.<ver>/<Component>/`). Used to source Eco.Core1 base headers into prompts, as `eco-cli pull -d` download target, and via `build_marketplace_index.py --source framework` |
-| `HARNESS_OUTPUT_ROOT` | server | `./output` | Where per-chat workspace dirs are created |
-| `HARNESS_TRACES_DIR` | server | `./traces` | Per-conversation LLM trace folders |
+| `HARNESS_OUTPUT_ROOT` | server | `<repo>/output` (dev) / `$ECO_HOME/output` (installed) | Where per-chat workspace dirs are created |
+| `HARNESS_TRACES_DIR` | server | `<repo>/traces` (dev) / `$ECO_HOME/traces` (installed) | Per-conversation LLM trace folders |
 | `HARNESS_ALLOWED_ROOTS` | server: `/api/fs/browse`, `/api/projects`, WS `project_dir` | home dir + `HARNESS_OUTPUT_ROOT` | Extra directories (os.pathsep-separated) the UI may browse, register, or target as `project_dir` |
 | `HARNESS_MAX_HOPS` | orchestrator | `8` | Max handoff hops (also `harness.yaml.max_hops`) |
 | `HARNESS_PLAN_HANDOFF_MAX_BYTES` | architect `to_coder` gate | `8192` (`harness.yaml.plan_handoff_max_bytes`) | Bytes-of-markdown cap on the architect's handoff to the coder. Plan validator BLOCKS the `to_coder` call when the plan exceeds this; raise for big multi-component apps, lower when targeting small-context models. |
@@ -241,8 +311,8 @@ does not override already-set variables).
 | `HARNESS_WARM_SEED` | server warm-retry | `0` | `1` enables warm retry seeds |
 | `HARNESS_SCAFFOLD` | server scaffold | on | `0` disables pre-seeding src/EcoMain.c + Makefile |
 | `FILE_SEARCH_BACKEND` | server `/api/fs/search` | `os_walk` | File-search backend for the `@`-mention picker: `os_walk` (zero-dependency recursive walk, default) or `fff` (opt-in `fff-search` wheel; automatically falls back to `os_walk` if the wheel is absent). The query `backend` param is only a hint. |
-| `ECO_WORKTREE_ROOT` | worktrees | repo default | Isolated git-worktree root |
-| `ECO_HARNESS_WORKSPACE_CONFIG` | config loader | `.eco-harness/workspace.yaml` | Workspace override file |
+| `ECO_WORKTREE_ROOT` / `ECO_PROJECT_DIR` | worktrees / server | repo default / unset (UI folder picker) | Isolated git-worktree root / user project dir (installed mode: user projects + worktrees live under it) |
+| `ECO_HARNESS_WORKSPACE_CONFIG` | config loader | `<repo>/.eco-harness/workspace.yaml` (dev) / `$ECO_HOME/workspace.yaml` (installed) | Workspace override file |
 | `ECO_ROLE_<ROLE>_BACKEND` / `_MODEL` / `_REASONING` / `_MAX_TOKENS` | config loader | `roles.yaml` | Per-role overrides (e.g. `ECO_ROLE_CODER_BACKEND=pi`) |
 | `DEFAULT_LANGUAGE` | config loader | `C` | Default implementation language |
 
@@ -252,7 +322,8 @@ Optional external env vars consumed indirectly by eco-cli/eco-wizard:
 3. **Optional configuration notes:**
    - `MARKETPLACE_CACHE_ROOT` / `MARKETPLACE_INDEX_PATH` are normally NOT
      needed: on a host checkout the repo-root artifacts are detected
-     automatically; in Docker the `/app` mounts are detected too.
+     automatically; in Docker the `/app` mounts are detected too; native
+     installs find them under `$ECO_HOME/data/` (seeded by the installer).
 
 ### Initialization Scripts (Run on Host Machine)
 
@@ -354,10 +425,12 @@ handles every external binary, host and container alike:
 1. Explicit config (e.g. `harness.yaml` `eco_cli_path` / `eco_wizard_path`)
 2. `ECO_CLI_PATH` / `ECO_WIZARD_PATH` / `ECO_<NAME>_PATH` environment variable
 3. `<repo>/bin/<name>` (canonical, gitignored)
-4. `/opt/<name>` (Docker bind-mount point)
-5. Legacy platform-suffixed siblings (`<repo>/eco-cli-linux/eco-cli`,
+4. `$ECO_HOME/bin/<name>` (`~/.eco-harness/bin`, `.exe` on Windows) — where
+   the native installer deposits the per-OS builds
+5. `/opt/<name>` (Docker bind-mount point)
+6. Legacy platform-suffixed siblings (`<repo>/eco-cli-linux/eco-cli`,
    `<repo>/eco-cli-windows/eco-cli.exe`) — backwards compatibility only
-6. System `PATH`
+7. System `PATH`
 
 **Environment Variable Examples:**
 ```bash
@@ -425,15 +498,15 @@ want strict single-provider pinning (availability traded for cache warmth).
 pinning a model no provider serves (e.g. `deepseek/...` under a `tencent` pin)
 makes OpenRouter 404. Each role's `per_query_tokens` budget is sent
 as `max_tokens`; a context-window-aware clamp in
-`agent/pi_ai/providers/openai_completions.py` caps it to fit the model context once
+`eco_harness/agent/pi_ai/providers/openai_completions.py` caps it to fit the model context once
 the system prompt is included, preventing HTTP 400 overflow. `harness.yaml:
 source_roots` / `max_source_bytes` (300000) now drive the curated `Eco.Core1`
 stitch (see context injection below).
 
 Live vs baked config: the **entire monorepo** is bind-mounted into the api
-container (see `docker-compose.yml`), so edits to `./agent`, `./backend`,
-`./config`, `./eco_harness`, and `./scripts` apply on uvicorn reload / next
-request (dev compose). `working_dir` targets the nested project dir.
+container (see `docker-compose.yml`), so edits to `./eco_harness`,
+`./config`, and `./scripts` apply on uvicorn reload / next request (dev
+compose). `working_dir` targets the nested project dir.
 
 Precedence is:
 
@@ -594,7 +667,8 @@ internal coder receives the tool but not a template-generation instruction
 that bypasses it. If a component is absent locally, the architect uses
 `eco-cli` to discover and pull it from the marketplace.
 
-`backend/scaffold/` remains only as an explicit compatibility fallback. It is
+`eco_harness/backend/scaffold/` (shipped as wheel data) remains only as an
+explicit compatibility fallback. It is
 not used when `eco-wizard` is available. Set `HARNESS_SCAFFOLD=1` to force the
 fallback or leave the variable unset to use the automatic compatibility rule.
 
@@ -634,7 +708,7 @@ Resolution (first non-empty wins):
 ```text
 1. .eco-harness/prompts/<role>.md    workspace override — replaces entirely
 2. config/prompts/<role>.md          editable source of truth
-3. built-in constant                 fallback in agent/internal/agents/<role>.py
+3. built-in constant                 fallback in eco_harness/agent/internal/agents/<role>.py
 ```
 
 Create `.eco-harness/prompts/coder.md` and the coder runs with YOUR text
@@ -716,7 +790,10 @@ rules, put them in exactly one place — the two cross-reference each other
 instead of duplicating.
 
 The legacy `agent/skills/` root was retired in PRD_2 Phase 2
-(`agent/skills/c.md` → `config/skills/component_author/v1.md`).
+(`agent/skills/c.md` → `config/skills/component_author/`; the file later
+became the on-demand `SKILL.md`). The root-level `agent`/`backend`
+directories are now back-compat import shims — real code lives under
+`eco_harness/`.
 
   Language skills belong in `config/skills/languages/<language>.md`. Stable
   prompt changes belong in `config/prompts/`; workspace-specific instructions
@@ -725,7 +802,7 @@ The legacy `agent/skills/` root was retired in PRD_2 Phase 2
 ## Initial context injection
 
 Every role's initial context (system prompt) is assembled once per agent
-construction by `agent/context/assembler.py::build_static_system_prompt`
+construction by `eco_harness/agent/context/assembler.py::build_static_system_prompt`
 (driven by `eco_harness/roles.py`) from multiple sources, in a fixed order:
 
 ```text
@@ -758,7 +835,7 @@ construction by `agent/context/assembler.py::build_static_system_prompt`
 ```text
 1. .eco-harness/prompts/<role>.md     workspace override, no repo changes needed
 2. config/prompts/<role>.md           editable source of truth for each role
-3. built-in constant                  fallback in agent/internal/agents/<role>.py
+3. built-in constant                  fallback in eco_harness/agent/internal/agents/<role>.py
 ```
 
 Empty or placeholder files are skipped, so they can never blank out real
@@ -921,13 +998,17 @@ UI / websocket API.
 
 ### How the working folder is chosen
 
-The harness has **no UI "open folder" picker** — the workspace
-(`project_dir`) is derived automatically per chat session:
+The workspace (`project_dir`) is chosen per chat session:
 
-- **Default:** `HARNESS_OUTPUT_ROOT` (default `./output`) + `chat-<thread8>`,
-  i.e. `./output/chat-<thread8>`. In the container this is `/app/output/...`
-  (the `./output` volume mount). A fresh sub-directory is created for each
-  WebSocket session/thread, so concurrent chats never share a tree.
+- **Explicit project:** register a folder through the UI (project panel /
+  folder browser). In installed mode this sets `ECO_PROJECT_DIR` (pre-seed
+  it at install time with `--project-dir`); the user's project — including
+  worktrees — lives under it.
+- **Default (no project registered):** `_output_root()` —
+  `HARNESS_OUTPUT_ROOT` (default `<repo>/output` on a dev checkout,
+  `$ECO_HOME/output` installed) + `proj-<thread8>`. A fresh sub-directory
+  is created for each WebSocket session/thread, so concurrent chats never
+  share a tree.
 - **Worktree (isolated):** enable **Worktree** in the UI (or `--worktree` on
   the CLI). The harness then creates a detached Git worktree outside the
   primary checkout — under `ECO_WORKTREE_ROOT` — and uses that as
@@ -948,7 +1029,7 @@ Each role's limits come from `config/roles.yaml` →
 
 | Budget | Effect |
 | --- | --- |
-| `per_query_tokens` | Sent as the model `max_tokens`; a context-window-aware clamp in `agent/pi_ai/providers/openai_completions.py` caps it so the system prompt fits (prevents HTTP 400). |
+| `per_query_tokens` | Sent as the model `max_tokens`; a context-window-aware clamp in `eco_harness/agent/pi_ai/providers/openai_completions.py` caps it so the system prompt fits (prevents HTTP 400). |
 | `per_query_usd` / `per_day_usd` | Cost ceilings for a single query / per day. |
 | `max_iters` | Hard cap on the agent's tool-call loop iterations. |
 | `max_wall_s` | Wall-clock timeout for the agent. |
@@ -968,7 +1049,7 @@ The headless entrypoint is:
 ```cmd
 python -m eco_harness run "Design a calculator component" --mode plan --language C
 python -m eco_harness run "Implement the approved plan" --mode code --language C
-python -m eco_harness serve --api
+python -m eco_harness serve            # UI + API on http://localhost:8000
 ```
 
 One-shot modes only (`plan|code|test|review`); use the UI / websocket for the
@@ -1021,17 +1102,18 @@ boundaries, not the domain core.
 
 ## Testing
 
-The regression suite lives in `eco_harness/agent/internal/tests/` and runs against the
-venv created during setup (`make setup` or `python -m venv .venv` +
-`pip install -r agent/requirements.txt`, which includes `pytest` via
-`pytest-asyncio`). Always run it through the venv so the pinned
+The regression suite lives in `eco_harness/agent/internal/tests/` and
+`eco_harness/backend/tests/` and runs against the venv created during
+setup (`make setup` or `python -m venv .venv` +
+`pip install -r eco_harness/agent/requirements.txt`, which includes
+`pytest` via `pytest-asyncio`). Always run it through the venv so the pinned
 `pytest-asyncio` / `tree-sitter` versions match what CI expects:
 
 ```bash
 source .venv/bin/activate        # On Windows: .venv\Scripts\activate
-python -m pytest agent/internal/tests -v
+python -m pytest eco_harness/agent/internal/tests eco_harness/backend/tests -v
 # Or without activating:
-.venv/bin/python -m pytest agent/internal/tests
+.venv/bin/python -m pytest eco_harness/agent/internal/tests eco_harness/backend/tests
 ```
 
 What the suite covers:
@@ -1053,8 +1135,8 @@ Live-LLM tests are marked `@pytest.mark.live` and skipped unless you pass
 `--live`. The baseline gate used before every commit is:
 
 ```bash
-python -m pytest agent/internal/tests
-python -m compileall -q agent backend eco_harness scripts
+python -m pytest eco_harness/agent/internal/tests eco_harness/backend/tests
+python -m compileall -q eco_harness scripts agent backend
 # equivalent one-liner:
 make test
 ```
@@ -1063,8 +1145,8 @@ make test
 
 ```bash
 source .venv/bin/activate
-python -m pytest agent/internal/tests
-python -m compileall -q agent backend eco_harness scripts
+python -m pytest eco_harness/agent/internal/tests eco_harness/backend/tests
+python -m compileall -q eco_harness scripts agent backend
 cd frontend
 npm run build
 ```

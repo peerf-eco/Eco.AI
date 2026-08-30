@@ -18,7 +18,7 @@ architect → coder → tester
 The graph is explicit and bounded. A role stops through a named handoff edge;
 the orchestrator never guesses an unknown edge and never permits an unlimited
 mutual-handoff loop. Both topologies are declared once, in
-`agent/internal/entry.py`: `PIPELINE_EDGES` (full architect→coder↔tester
+`eco_harness/agent/internal/entry.py`: `PIPELINE_EDGES` (full architect→coder↔tester
 graph used by scripted `build_pipeline` runs) and `EXECUTION_EDGES`
 (the post-approval coder↔tester sub-graph used by the `/ws/chat` server,
 with `coder.to_architect` terminated).
@@ -38,7 +38,7 @@ with `coder.to_architect` terminated).
 - `extensions/cli_exec.py` — safe profile-based subprocess execution
 - `capabilities.py` — Pydantic AI capability descriptions
 
-`agent/internal/` contains the active built-in agent implementation. It is not
+`eco_harness/agent/internal/` contains the active built-in agent implementation. It is not
 a versioned product generation. New modules must not add numbered agent paths
 or dead-pipeline terminology; Git history provides implementation versioning.
 
@@ -71,14 +71,14 @@ built once per agent construction. Call chain:
 ```text
 make_role_agent(role, mode, language)          eco_harness/roles.py
   ├─ make_architect()/make_coder()/…           built-in prompt constants +
-  │                                            toolset (agent/internal/agents/)
+  │                                            toolset (eco_harness/agent/internal/agents/)
   ├─ _role_prompt()                            workspace > config > built-in (§5)
   └─ _configure_context() → _static_prompt()   composition below
        ├─ _mode_prompt()                       config/prompts/modes/<mode>.md
        ├─ _language_prompt()                   config/prompts/languages/<lang>.md
-       ├─ load_custom_instructions()           agent/context/customization.py:
+       ├─ load_custom_instructions()           eco_harness/agent/context/customization.py:
        │    AGENTS.md layers + selected skills + language skill
-       └─ build_static_system_prompt()         agent/context/assembler.py
+       └─ build_static_system_prompt()         eco_harness/agent/context/assembler.py
 ```
 
 Final concatenation order is FIXED and must not be reordered:
@@ -127,7 +127,7 @@ treated as absent so a stub can never blank out real instructions):
 2. config/<roles.<role>.prompt>         normally config/prompts/<role>.md —
                                         the editable source of truth
 3. built-in constant                    CODER_SYSTEM_PROMPT etc. in
-                                        agent/internal/agents/<role>.py
+                                        eco_harness/agent/internal/agents/<role>.py
 ```
 
 Skill resolution (`load_custom_instructions` / `resolve_custom_instructions`):
@@ -146,7 +146,7 @@ block carrying at least `description:` is NOT injected as text. Its one-line
 description is appended to the prompt as an `=== ON-DEMAND SKILLS ===`
 manifest entry (name, description, source path), and the full body is fetched
 only when relevant — internal agents call the automatically-wired `read_skill`
-EcoTool (`agent/internal/tools/skill_reader.py`, whitelisted to the two skill
+EcoTool (`eco_harness/agent/internal/tools/skill_reader.py`, whitelisted to the two skill
 roots, frontmatter stripped, size-capped); external CLI backends read the
 listed source path with their own file tools. `roles.py` attaches
 `read_skill` whenever the role's merged map resolves at least one dynamic
@@ -223,16 +223,20 @@ C89, the wrappers duplicate the same declarations, and dropping them cuts the
 byte-identical block ~29% (~85 KB → ~60 KB on the shipped DK) while keeping
 the KV-cache prefix intact.
 
-Artifact locations (cache, index) resolve via `agent/internal/tools/paths.py`:
-env var → repo-root artifact if present → `/app` mount if present →
-deterministic repo-root fallback with a one-time warning. Host checkouts and
-containers therefore need no env vars (PRD_2 Phase 1 fixed the hard-coded
-`/app` defaults that broke host runs).
+Artifact locations (cache, index) resolve via
+`eco_harness/agent/internal/tools/paths.py`:
+env var → repo-root artifact if present → `<ECO_HOME>/data` (installed
+layout) if present → `/app` mount if present → deterministic repo-root
+fallback with a one-time warning. Host checkouts, containers and installed
+wheels therefore need no env vars (PRD_2 Phase 1 fixed the hard-coded
+`/app` defaults that broke host runs; the packaging work added the
+installed-mode candidates).
 
 External tool binaries (eco-cli, eco-wizard, external sub-agents) resolve via
-`agent/internal/tools/binaries.py::resolve_binary` — the single policy since
+`eco_harness/agent/internal/tools/binaries.py::resolve_binary` — the single policy since
 PRD_2 Phase 2: explicit config → `ECO_<NAME>_PATH` env → `<repo>/bin/<name>`
-(canonical, gitignored) → `/opt/<name>` (container mounts) → legacy
+(canonical, gitignored) → `$ECO_HOME/bin/<name>` (installed home,
+`<name>.exe` on Windows) → `/opt/<name>` (container mounts) → legacy
 platform-suffixed siblings → `PATH`. All former per-consumer resolvers
 (server, eco_cli, eco_wizard, factory, scripts) delegate to it.
 
@@ -328,7 +332,7 @@ profiles the UI never touched stay owned by `config/models.yaml`.
 
 Permissions are configured per ROLE with harness-level defaults — models are
 interchangeable providers and must not carry policy. Resolution per role
-(`agent/config/loader.py::_resolve_permissions`, later wins key-by-key,
+(`eco_harness/agent/config/loader.py::_resolve_permissions`, later wins key-by-key,
 unknown keys filtered so typos can neither crash nor silently alter policy):
 
 ```text
@@ -422,7 +426,7 @@ external coders/testers see the same STEP workflow and stop-tool discipline
 as internal agents. Backend events (`start`, `done`, …) are mapped onto the
 shared `EventType`; unknown types degrade to `ERROR`, and event-sink failures
 are logged and dropped — they never abort a run (regression-tested, see
-`agent/internal/tests/test_prd2_regressions.py`).
+`eco_harness/agent/internal/tests/test_prd2_regressions.py`).
 
 ## 7. Language support
 
@@ -440,7 +444,8 @@ invent those layouts.
 The generator tool exposes the generator with:
 
 - executable lookup via the shared `resolve_binary` policy
-  (`ECO_WIZARD_PATH` → `<repo>/bin/eco-wizard` → `/opt` → legacy siblings → `PATH`)
+  (`ECO_WIZARD_PATH` → `<repo>/bin/eco-wizard` → `$ECO_HOME/bin/eco-wizard`
+  → `/opt` → legacy siblings → `PATH`)
 - `eco-wizard new`
 - language, type, output, environment, and option arguments
 - bounded output
@@ -490,8 +495,11 @@ remain dynamic tail data.
 
 ## 10. UI/API contract
 
-The UI uses `NEXT_PUBLIC_API_URL` with `http://localhost:8100` as the local
-default. The server exposes:
+The UI resolves its API base from `NEXT_PUBLIC_API_URL` (set by the dev
+stack, historically `http://localhost:8100`); when the variable is unset —
+the static-export bundle served by FastAPI — it falls back to same-origin
+(`window.location.origin`), so the installed single-port flow needs no
+CORS or env var. The server exposes:
 
 - `GET /health`
 - `GET /config` — full config snapshot (platforms, roles incl. resolved
@@ -708,6 +716,10 @@ The API mount is writable because UI RAG import updates the shared SQLite
 index. Production deployments should use an index-update job or a controlled
 volume policy rather than exposing arbitrary write access.
 
+This section describes the DEV stack. Customer-facing installs (native wheel
++ uv, or the customer Docker image) and their artifact pipeline are covered
+in §18 "Packaging, release pipeline and hosted artifacts".
+
 ## 15. Security and trust
 
 - CORS defaults to local UI origins and is configurable with `CORS_ORIGINS`.
@@ -749,19 +761,19 @@ old Chroma path when changing the production harness.
 
 ### Test suite
 
-The suite lives in `agent/internal/tests/` and MUST run through the project
+The suite lives in `eco_harness/agent/internal/tests/` and MUST run through the project
 venv so the pinned `pytest-asyncio` / `tree-sitter` versions are used:
 
 ```bash
 # One-time setup:
 python -m venv .venv
-.venv/bin/pip install -r agent/requirements.txt   # includes pytest via pytest-asyncio
+.venv/bin/pip install -r eco_harness/agent/requirements.txt   # includes pytest via pytest-asyncio
 
 # Every run:
-.venv/bin/python -m pytest agent/internal/tests -v
+.venv/bin/python -m pytest eco_harness/agent/internal/tests eco_harness/backend/tests -v
 ```
 
-(Windows: `.venv\Scripts\python -m pytest agent/internal/tests`.)
+(Windows: `.venv\Scripts\python -m pytest eco_harness/agent/internal/tests eco_harness/backend/tests`.)
 `make test` is the equivalent one-liner. Live-LLM tests are marked
 `@pytest.mark.live` and skipped unless `--live` is passed; the root
 `conftest.py` registers that marker and skips them by default.
@@ -783,8 +795,8 @@ Coverage map:
 ### Baseline gate
 
 ```cmd
-.venv/bin/python -m pytest agent/internal/tests
-python -m compileall -q agent backend eco_harness scripts
+.venv/bin/python -m pytest eco_harness/agent/internal/tests eco_harness/backend/tests
+python -m compileall -q eco_harness scripts agent backend
 cd frontend
 npm run build
 ```
@@ -796,3 +808,206 @@ curl http://localhost:8100/health
 curl http://localhost:8100/config
 docker compose config
 ```
+## 18. Packaging, release pipeline and hosted artifacts
+
+This section is the developer/infra-facing contract for the installable
+package (native + Docker). Customer-facing instructions live in the README
+("Install" section); everything here is about how the artifacts are produced,
+hosted, verified, and consumed.
+
+### 18.1 What ships in the wheel
+
+The wheel (`eco_harness-<ver>-py3-none-any.whl`, built by
+`scripts/release/build_wheel.sh`) contains the entire runtime surface — the
+installed app must work out of the box with no source checkout:
+
+| In the wheel | Source | Notes |
+| --- | --- | --- |
+| `eco_harness/` Python packages | `eco_harness/**` | `agent`, `backend`, `interfaces`, `adapters`, `extensions`, `tools`, `roles`, `permissions`, `update`, `doctor` — all under the `eco_harness` namespace |
+| `eco_harness/config/**` | repo-root `config/` | mapped via `[tool.setuptools.package-dir]` (`"eco_harness.config" = "config"`): harness/roles/models/modes YAML, prompts, skills, agents rules. Read at runtime through `paths.config_dir()` |
+| `eco_harness/web_static/` | `frontend/out/` (Next.js static export) | copied by `build_wheel.sh`; served by FastAPI at `/` (SPA fallback, API routes take priority) |
+| `eco_harness/env.example` | root `env.example` | installed-mode reference template |
+| `eco_harness/backend/scaffold/*` | dev fallback templates | explicit `HARNESS_SCAFFOLD=1` fallback only |
+
+Deliberately NOT in the wheel: repo-root `agent`/`backend` import shims (dev
+checkouts only), test packages (`eco_harness/agent/internal/tests`),
+`scripts/`, `.venv`, `output/`,
+`traces/`, `marketplace_*`, `eco_framework/`. Runtime deps (fastapi,
+uvicorn, websockets, python-multipart, pydantic, PyYAML, dotenv, httpx,
+partial-json-parser, tiktoken, sqlite-vec, `tree-sitter>=0.23,<0.24`,
+`tree-sitter-c==0.21.4` — the ABI-v14/v15 pin is load-bearing, see
+`eco_harness/agent/requirements.txt`) are BASE dependencies of
+`pyproject.toml`, not extras; pytest/respx live in the `dev` extra.
+
+The prebuilt RAG index and the native `eco-cli`/`eco-wizard` binaries are
+deliberately NOT in the wheel — they are versioned, OS-specific or large
+artifacts downloaded from the manifest at install/update time.
+
+### 18.2 Build flow
+
+```text
+frontend: npm ci && npm run build  (next.config.mjs: output:"export" → frontend/out/)
+   └─ scripts/release/build_wheel.sh
+        1. copies frontend/out → eco_harness/web_static   (gitignored)
+        2. copies env.example → eco_harness/env.example   (gitignored)
+        3. python -m build --wheel --outdir dist .
+   └→ dist/eco_harness-<ver>-py3-none-any.whl
+```
+
+CI runs the same script (`.github/workflows/release.yml` at the MONOREPO
+root — GitHub only loads root-level workflows; all steps run with
+`working-directory` pointed at this subproject).
+
+### 18.3 The manifest — single version source of truth
+
+`scripts/release/build_manifest.py` walks a staging dir and emits
+`manifest.json`. Every consumer (installers, `eco-harness update`) resolves
+everything through it:
+
+```jsonc
+{
+  "schema_version": 1,
+  "updated_at": "…",
+  "wheel":   {"version": "1.0.0", "url": "<BASE>/dist/eco_harness-1.0.0-py3-none-any.whl", "sha256": "…", "size": 1905612},
+  "binaries": {
+    "eco-cli":  {"linux": {"x86_64": {"url": "<BASE>/binaries/eco-cli/linux/x86_64/eco-cli", "sha256": "…"}}, "darwin": {"x86_64": …, "arm64": …}, "windows": {"x86_64": …}},
+    "eco-wizard": {…}
+  },
+  "index": {"url": "<BASE>/index/marketplace_index.tar.gz", "sha256": "…"},
+  "image": {"repo": "ghcr.io/<owner>/<name>", "tag": "1.0.0"}
+}
+```
+
+Staging layout (before `build_manifest.py` runs):
+
+```text
+release-staging/
+├── dist/eco_harness-<ver>-py3-none-any.whl
+├── binaries/<tool>/<os>/<arch>/<artifact>   ← EcoCLI pipeline contract
+├── index/marketplace_index.tar.gz           ← prebuilt RAG index + cache
+└── install/install.sh, install.ps1          ← hosted for stable curl|sh URLs
+```
+
+Hard rule: `build_manifest.py` exits non-zero unless `binaries`, `index` and
+`wheel` are all present (`--allow-empty` is for local testing only) — an
+empty manifest would ship installs with no eco-cli and no RAG data.
+
+The `binaries/` and `index/` assets are owned by the EcoCLI pipeline
+(binaries) and the index build job (tarball of `marketplace_index.sqlite` +
+`marketplace_cache/`). They must be staged into `release-staging/` before
+the manifest job runs — via the `ECOCLI_STAGING_URL` repo variable (fetched
+by the workflow) or by dispatching this workflow from the EcoCLI pipeline
+with the artifacts merged in. There is no implicit fallback: missing assets
+fail the release.
+
+### 18.4 CI release workflow (monorepo root `.github/workflows/release.yml`)
+
+- `build` — wheel build (frontend export baked in), stages wheel + installer
+  scripts, uploads `release-assets`.
+- `publish-image` — `docker/setup-qemu-action` (arm64 emulation) +
+  buildx multi-arch (`linux/amd64`, `linux/arm64`) of `docker/Dockerfile`
+  (wheel staged into `docker/wheel/` inside the build context), pushed to
+  ghcr with `type=semver` + `latest` tags; fails fast if no tag resolves or
+  the wheel version ≠ git tag.
+- `publish-manifest` — validates `RELEASE_BASE_URL`/`RELEASE_S3_BUCKET`,
+  stages EcoCLI assets, builds + validates the manifest, `aws s3 sync`s
+  manifest, installers, binaries, index, wheel.
+
+Required repo configuration: variables `RELEASE_BASE_URL`,
+`RELEASE_S3_BUCKET`, `ECOCLI_STAGING_URL` (set when the EcoCLI pipeline
+publishes), `RELEASE_AWS_REGION`; secrets `RELEASE_AWS_ACCESS_KEY_ID`,
+`RELEASE_AWS_SECRET_ACCESS_KEY`. ghcr push uses the built-in
+`GITHUB_TOKEN` with `packages: write`. The image repo must match what the
+installers default to (`ghcr.io/<owner>/<repo>`, lowercased) — the
+installers override from `manifest.image.repo` whenever the manifest is
+reachable.
+
+### 18.5 Install flow (what the installers actually do)
+
+`scripts/install/install.sh` (POSIX) / `install.ps1` (Windows), `--docker` /
+`-Docker` variants:
+
+```text
+NATIVE
+ 1. uv (installed per-OS if missing) → uv python install 3.11
+ 2. uv venv $ECO_HOME/venv (default ~/.eco-harness)
+ 3. uv pip install --python $ECO_HOME/venv/bin/python <wheel from manifest>
+ 4. python -m eco_harness update      → native binaries → $ECO_HOME/bin
+                                      → prebuilt index  → $ECO_HOME/data
+    (sha256-verified against the manifest; macOS quarantine xattr stripped)
+ 5. seed $ECO_HOME/.env (chmod 600; keys optional — /setup completes it)
+    [--project-dir writes ECO_PROJECT_DIR into the seeded .env]
+ 6. PATH shims: ~/.local/bin/eco-harness{,-update} (POSIX);
+    $ECO_HOME/bin/eco-harness*.cmd + user-PATH (Windows)
+
+DOCKER
+ 1. resolve image repo/tag from the manifest (fall back to the built-in
+    default with a loud warning when the manifest is unreachable)
+ 2. write $ECO_HOME/docker-compose.yml (absolute host paths baked in),
+    seed .env (600), `docker compose up -d --wait`
+ 3. `docker compose exec -T eco-harness python -m eco_harness update`
+    populates the mounted /data with binaries + index
+```
+
+Missing API keys never block install or launch — the `/setup` wizard or a
+manual `.env` edit completes configuration (see the wizard endpoints in
+§10: `GET /api/setup/status`, `POST /api/setup/config`).
+
+### 18.6 Installed-mode path policy (`paths.py` is the single source)
+
+| Helper | Dev checkout | Installed wheel |
+| --- | --- | --- |
+| `is_dev_checkout()` | True (`pyproject.toml`/`config/` at `_CHECKOUT_ROOT`) — also True in the DEV container, where uvicorn runs with CWD = the mounted Assembly1 checkout | False |
+| `repo_root()` | checkout root | `$ECO_HOME` |
+| `package_root()` | `<repo>/eco_harness` | `site-packages/eco_harness` (wheel data inside) |
+| `config_dir()` | `<repo>/config` | `site-packages/eco_harness/config` (package data) |
+| `eco_home()` | `~/.eco-harness` (or `$ECO_HOME`) | same |
+| `project_dir()` | checkout root (or `$ECO_PROJECT_DIR`) | `$ECO_PROJECT_DIR`, else `$ECO_HOME` |
+| `output_root()` | `<repo>/output` (`HARNESS_OUTPUT_ROOT` first) | `$ECO_HOME/output` |
+| `traces_root()` | `<repo>/traces` (`HARNESS_TRACES_DIR` first) | `$ECO_HOME/traces` |
+| workspace.yaml | `<repo>/.eco-harness/workspace.yaml` | `$ECO_HOME/workspace.yaml` |
+
+Artifact resolution (`marketplace_index.sqlite`, `marketplace_cache`,
+`eco_framework`): env var → `<repo_root>/<artifact>` if present →
+`$ECO_HOME/data/<artifact>` if present → `/app/<artifact>` if present →
+deterministic fallback + one-time warning. Worktrees always branch the USER
+project (`paths.project_dir()`), never the harness install — `git rev-parse`
+inside `ECO_HOME` fails loudly with a WorktreeError instead.
+
+### 18.7 Self-update and health (`eco-harness update` / `doctor`)
+
+`update` (`eco_harness/update.py`), manifest-driven, idempotent:
+
+1. fetch manifest (defaults: `$ECO_MANIFEST_URL` → the S3 base URL)
+2. wheel: if `manifest.wheel.version != installed`, download → sha256
+   verify → `uv pip install --python <venv>` (pip fallback), report
+   "restart to apply"
+3. binaries: per-OS/arch target `$ECO_HOME/bin/<name>[.exe]` — safe-name
+   regex + `bin_dir` containment check, sha256 compare against the existing
+   file, chmod 0755, macOS `xattr -d com.apple.quarantine`
+4. index: tarball → sha256 → member-validated extraction
+   (`_safe_extractall`: rejects absolute/`..`/link members on every 3.11.x)
+   into `$ECO_HOME/data/`, `.index_sha256` marker skips no-op refreshes
+5. report printed; exit 1 when any step errored (never partial-silent)
+
+Docker installs update via `docker compose pull && up -d` (image carries
+the wheel); the in-container `python -m eco_harness update` path is what
+the installers use for binaries/index bootstrap.
+
+`doctor` (`eco_harness/doctor.py`) checks and reports (warnings never block
+launch): python ≥3.11, binaries resolve+executable (prints
+`describe_search_order`), RAG index loads through sqlite-vec (chunk count),
+`OPENAI_API_KEY`/`ECO_API_TOKEN` present (warn-only), static UI bundle
+present, `project-dir`/`output-root`/`data-dir` writable. Exit 1 only on
+FAIL-class findings.
+
+### 18.8 Versioning rules
+
+- `pyproject.toml` `version` is the wheel version and MUST equal the git tag
+  (`v<version>`); the workflow asserts this before publishing.
+- The manifest is the single source of truth for installers and
+  `eco-harness update` — never hardcode version/URLs in the installers when
+  a manifest entry exists (fallbacks exist only for offline resilience and
+  warn loudly).
+- The wheel version-bump is part of the release checklist: tag without a
+  bump fails CI.
