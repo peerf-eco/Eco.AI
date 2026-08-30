@@ -1,9 +1,9 @@
-from agent.context.assembler import (
+from eco_harness.agent.context.assembler import (
     build_static_system_prompt,
     build_dynamic_tail,
     stitch_source_files,
 )
-from agent.context.customization import load_custom_instructions
+from eco_harness.agent.context.customization import load_custom_instructions
 
 __all__ = [
     "build_dynamic_tail",

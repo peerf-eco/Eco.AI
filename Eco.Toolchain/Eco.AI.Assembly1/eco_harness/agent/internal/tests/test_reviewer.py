@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from agent.internal.agents.reviewer import make_reviewer
-from agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
+from eco_harness.agent.internal.agents.reviewer import make_reviewer
+from eco_harness.agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
 
 
 @pytest.fixture

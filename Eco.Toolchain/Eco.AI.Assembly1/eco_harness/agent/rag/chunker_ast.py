@@ -29,7 +29,7 @@ from __future__ import annotations
 import re
 from typing import Iterable, Optional, Tuple
 
-from agent.rag.chunker_base import Chunk, ChunkKind, Chunker
+from eco_harness.agent.rag.chunker_base import Chunk, ChunkKind, Chunker
 
 
 # Top-level node types we treat as candidate "units" inside an include-guard.

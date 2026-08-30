@@ -3,13 +3,13 @@
 import os
 from pathlib import Path
 
-from agent.config.loader import HarnessConfig, RoleSpec
-from agent.context.customization import (
+from eco_harness.agent.config.loader import HarnessConfig, RoleSpec
+from eco_harness.agent.context.customization import (
     on_demand_skills,
     resolve_custom_instructions,
 )
-from agent.context.assembler import build_static_system_prompt
-from agent.pi_ai import SimpleStreamOptions
+from eco_harness.agent.context.assembler import build_static_system_prompt
+from eco_harness.agent.pi_ai import SimpleStreamOptions
 from eco_harness.adapters.eco_agent_bridge import ExternalEcoAgent
 from eco_harness.adapters.factory import make_external_backend
 from eco_harness.permissions import apply_role_permissions
@@ -123,7 +123,7 @@ def _wire_on_demand_skill_tool(
         skill_versions=_merged_skill_versions(config, role, language),
     )
     if refs and "read_skill" not in tools:
-        from agent.internal.tools.skill_reader import make_read_skill_tool
+        from eco_harness.agent.internal.tools.skill_reader import make_read_skill_tool
 
         tools["read_skill"] = make_read_skill_tool(project_root=config.root)
 
@@ -252,7 +252,7 @@ def make_role_agent(
         )
 
     if role == "architect":
-        from agent.internal.agents.architect import make_architect
+        from eco_harness.agent.internal.agents.architect import make_architect
         agent = make_architect(
             model=model,
             cli_path=cli_path,
@@ -262,7 +262,7 @@ def make_role_agent(
             on_event=on_event,
         )
     elif role == "coder":
-        from agent.internal.agents.coder import make_coder
+        from eco_harness.agent.internal.agents.coder import make_coder
         agent = make_coder(
             model=model,
             project_dir=project_dir,
@@ -272,7 +272,7 @@ def make_role_agent(
             on_event=on_event,
         )
     elif role == "tester":
-        from agent.internal.agents.tester import make_tester
+        from eco_harness.agent.internal.agents.tester import make_tester
         agent = make_tester(
             model=model,
             project_dir=project_dir,
@@ -281,7 +281,7 @@ def make_role_agent(
             on_event=on_event,
         )
     elif role == "reviewer":
-        from agent.internal.agents.reviewer import make_reviewer
+        from eco_harness.agent.internal.agents.reviewer import make_reviewer
         agent = make_reviewer(
             model=model,
             project_dir=project_dir,

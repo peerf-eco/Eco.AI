@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.internal.tools.rag import make_search_marketplace_tool
+from eco_harness.agent.internal.tools.rag import make_search_marketplace_tool
 
 
 def _fake_result(rowid, component, file, kind, name, score, text):
@@ -96,9 +96,9 @@ def patched_tool(monkeypatch, tmp_path):
     def _fake_hybrid(_store, _embedder):
         return fake_retriever
 
-    monkeypatch.setattr("agent.rag.embedder.Embedder", _FakeEmbedder)
-    monkeypatch.setattr("agent.rag.store.RagStore", _FakeStore)
-    monkeypatch.setattr("agent.rag.retrieve.HybridRetriever", _fake_hybrid)
+    monkeypatch.setattr("eco_harness.agent.rag.embedder.Embedder", _FakeEmbedder)
+    monkeypatch.setattr("eco_harness.agent.rag.store.RagStore", _FakeStore)
+    monkeypatch.setattr("eco_harness.agent.rag.retrieve.HybridRetriever", _fake_hybrid)
 
     tool = make_search_marketplace_tool(index_path=fake_index)
     return tool, fake_retriever

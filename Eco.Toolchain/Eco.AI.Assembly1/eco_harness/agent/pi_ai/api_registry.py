@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from agent.pi_ai.types import Api, StreamFunction
+from eco_harness.agent.pi_ai.types import Api, StreamFunction
 
 
 _REGISTRY: dict[str, StreamFunction] = {}

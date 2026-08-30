@@ -21,7 +21,7 @@ middle ground between naive and AST chunking.
 """
 from __future__ import annotations
 
-from agent.rag.chunker_base import Chunk, ChunkKind, Chunker
+from eco_harness.agent.rag.chunker_base import Chunk, ChunkKind, Chunker
 
 
 def _nonws_len(s: str) -> int:

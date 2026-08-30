@@ -42,11 +42,11 @@ try:
 except ImportError:
     pass
 
-from agent.internal.tools.paths import framework_root
-from agent.rag.chunker_ast import ASTChunker
-from agent.rag.embedder import Embedder
-from agent.rag.ingest import ingest_cache
-from agent.rag.store import RagStore
+from eco_harness.agent.internal.tools.paths import framework_root
+from eco_harness.agent.rag.chunker_ast import ASTChunker
+from eco_harness.agent.rag.embedder import Embedder
+from eco_harness.agent.rag.ingest import ingest_cache
+from eco_harness.agent.rag.store import RagStore
 
 logging.basicConfig(
     level=logging.INFO,

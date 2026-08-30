@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from agent.internal.tools.binaries import resolve_binary
+from eco_harness.agent.internal.tools.binaries import resolve_binary
 from eco_harness.adapters.external_cli import ExternalCliBackend
 
 

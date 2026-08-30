@@ -10,6 +10,6 @@ Independent of langchain (the active stack uses pi_ai). Public surface:
     - retrieve.HybridRetriever
     - ingest.ingest_cache
 """
-from agent.rag.chunker_base import Chunker, Chunk, ChunkKind
+from eco_harness.agent.rag.chunker_base import Chunker, Chunk, ChunkKind
 
 __all__ = ["Chunker", "Chunk", "ChunkKind"]

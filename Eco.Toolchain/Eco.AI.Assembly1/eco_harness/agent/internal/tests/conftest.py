@@ -17,8 +17,8 @@ from typing import Any, AsyncIterator, Optional
 
 import pytest
 
-from agent.pi_ai import Model, ModelCost
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai import Model, ModelCost
+from eco_harness.agent.pi_ai.types import (
     AssistantMessage, Context, DoneEvent, SimpleStreamOptions, StartEvent,
     TextContent, TextDeltaEvent, TextEndEvent, TextStartEvent, ToolCall,
     ToolCallEndEvent, ToolCallStartEvent,

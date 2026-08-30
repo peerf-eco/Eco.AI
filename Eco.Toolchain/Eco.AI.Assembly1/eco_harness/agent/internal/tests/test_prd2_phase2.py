@@ -15,13 +15,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from agent.config.loader import (
+from eco_harness.agent.config.loader import (
     load_config,
     load_marketplace_framework_components,
 )
-from agent.internal.entry import EXECUTION_EDGES, EXECUTION_ENTRY, PIPELINE_EDGES
-from agent.internal.tools import binaries
-from agent.pi_ai import Model, ModelCost
+from eco_harness.agent.internal.entry import EXECUTION_EDGES, EXECUTION_ENTRY, PIPELINE_EDGES
+from eco_harness.agent.internal.tools import binaries
+from eco_harness.agent.pi_ai import Model, ModelCost
 from eco_harness.adapters.factory import make_external_backend
 from eco_harness.roles import make_role_agent
 
@@ -191,7 +191,7 @@ def test_execution_entry_is_coder():
 
 
 def test_build_pipeline_accepts_trace_dir(tmp_path: Path):
-    from agent.internal.entry import build_pipeline
+    from eco_harness.agent.internal.entry import build_pipeline
 
     model = Model(
         id="scripted", name="scripted", api="faux-scripted",

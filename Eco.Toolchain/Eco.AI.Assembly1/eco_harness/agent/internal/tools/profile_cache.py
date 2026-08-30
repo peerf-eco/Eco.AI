@@ -39,8 +39,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from agent.internal.eco_agent import EcoTool, ToolResult
-from agent.internal.tools import paths
+from eco_harness.agent.internal.eco_agent import EcoTool, ToolResult
+from eco_harness.agent.internal.tools import paths
 
 
 # Cache root resolved per-factory-call via paths.marketplace_cache_root()

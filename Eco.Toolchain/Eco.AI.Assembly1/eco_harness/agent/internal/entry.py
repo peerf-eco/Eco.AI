@@ -19,11 +19,11 @@ from pathlib import Path
 from typing import Callable, Optional
 import os
 
-from agent.pi_ai import Model
-from agent.internal.agents.architect import make_architect
-from agent.internal.agents.coder import make_coder
-from agent.internal.agents.tester import make_tester
-from agent.internal.orchestrator import Orchestrator
+from eco_harness.agent.pi_ai import Model
+from eco_harness.agent.internal.agents.architect import make_architect
+from eco_harness.agent.internal.agents.coder import make_coder
+from eco_harness.agent.internal.agents.tester import make_tester
+from eco_harness.agent.internal.orchestrator import Orchestrator
 
 
 # The single source of truth for the pipeline topology.

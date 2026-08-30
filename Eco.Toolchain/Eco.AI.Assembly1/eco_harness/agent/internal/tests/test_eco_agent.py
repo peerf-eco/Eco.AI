@@ -1,11 +1,11 @@
 ﻿"""EcoAgent unit tests on the pi_ai-based core (no langchain)."""
 from pydantic import BaseModel
 
-from agent.pi_ai.types import ToolResultMessage
-from agent.internal.eco_agent import (
+from eco_harness.agent.pi_ai.types import ToolResultMessage
+from eco_harness.agent.internal.eco_agent import (
     EcoAgent, EcoTool, EcoAgentEvent, EventType, ToolResult,
 )
-from agent.internal.tests.conftest import (
+from eco_harness.agent.internal.tests.conftest import (
     ai_text, ai_tool, make_scripted_model_pair,
 )
 

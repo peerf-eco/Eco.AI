@@ -51,7 +51,11 @@ SESSION_FIELDS = (
 
 
 def default_traces_root() -> Path:
-    return Path(os.getenv("HARNESS_TRACES_DIR", "traces"))
+    """Shared traces-root policy — must agree with the WS handler's write
+    path (backend.server._traces_root delegates to the same helper)."""
+    from eco_harness.agent.internal.tools.paths import traces_root
+
+    return traces_root()
 
 
 def _now_iso() -> str:

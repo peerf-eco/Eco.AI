@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.internal.tools.build import make_build_tools, _BuildArgs
+from eco_harness.agent.internal.tools.build import make_build_tools, _BuildArgs
 
 
 def _tool(tools, name):

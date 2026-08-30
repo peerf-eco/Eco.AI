@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from agent.internal.agents.architect import make_architect, ARCHITECT_SYSTEM_PROMPT
-from agent.internal.agents.coder import make_coder, CODER_SYSTEM_PROMPT
-from agent.internal.agents.tester import make_tester, TESTER_SYSTEM_PROMPT
-from agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
+from eco_harness.agent.internal.agents.architect import make_architect, ARCHITECT_SYSTEM_PROMPT
+from eco_harness.agent.internal.agents.coder import make_coder, CODER_SYSTEM_PROMPT
+from eco_harness.agent.internal.agents.tester import make_tester, TESTER_SYSTEM_PROMPT
+from eco_harness.agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
 
 
 @pytest.fixture

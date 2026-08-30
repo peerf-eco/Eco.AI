@@ -5,10 +5,10 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from agent.internal.eco_agent import EcoAgent
-from agent.internal.tools.handoff import make_handoff_tool, make_fail_tool
-from agent.internal.tools.io import make_read_tools
-from agent.internal.tools.runtime import make_runtime_tools
+from eco_harness.agent.internal.eco_agent import EcoAgent
+from eco_harness.agent.internal.tools.handoff import make_handoff_tool, make_fail_tool
+from eco_harness.agent.internal.tools.io import make_read_tools
+from eco_harness.agent.internal.tools.runtime import make_runtime_tools
 
 
 # Fallback only. The editable source of truth is config/prompts/tester.md;

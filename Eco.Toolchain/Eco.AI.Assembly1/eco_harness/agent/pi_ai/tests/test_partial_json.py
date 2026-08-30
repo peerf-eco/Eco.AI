@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.pi_ai.utils.json_parse import parse_partial, parse_strict
+from eco_harness.agent.pi_ai.utils.json_parse import parse_partial, parse_strict
 
 
 def test_parse_partial_complete_json():

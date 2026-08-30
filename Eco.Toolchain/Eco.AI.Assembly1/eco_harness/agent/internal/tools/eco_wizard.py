@@ -7,8 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from agent.internal.eco_agent import EcoTool, ToolResult
-from agent.internal.tools.binaries import resolve_binary
+from eco_harness.agent.internal.eco_agent import EcoTool, ToolResult
+from eco_harness.agent.internal.tools.binaries import resolve_binary
 
 
 class _WizardArgs(BaseModel):

@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.server import (
+from eco_harness.backend.server import (
     _context_window,
     _harness_project_ref,
     _is_harness_project_path,
@@ -31,7 +31,7 @@ def client(tmp_path, monkeypatch):
     """Server app pointed at a throwaway output root."""
     monkeypatch.setenv("HARNESS_OUTPUT_ROOT", str(tmp_path / "output"))
     monkeypatch.setenv("HARNESS_TRACES_DIR", str(tmp_path / "traces"))
-    from backend import server
+    from eco_harness.backend import server
     with TestClient(server.app) as test_client:
         yield test_client
 
@@ -215,7 +215,7 @@ class TestContextWindow:
 
 class TestRagUpdateIndex:
     def _reset_job(self):
-        from backend import server
+        from eco_harness.backend import server
         with server._rag_update_lock:
             server._rag_update_job.clear()
             server._rag_update_job.update({"state": "idle"})
@@ -230,7 +230,7 @@ class TestRagUpdateIndex:
         assert res.json()["state"] == "idle"
 
     def test_409_while_running(self, client):
-        from backend import server
+        from eco_harness.backend import server
         with server._rag_update_lock:
             server._rag_update_job.clear()
             server._rag_update_job.update({
@@ -240,7 +240,7 @@ class TestRagUpdateIndex:
         assert res.status_code == 409
 
     def test_start_runs_background_job(self, client, monkeypatch):
-        from backend import server
+        from eco_harness.backend import server
         started = threading.Event()
         release = threading.Event()
 
@@ -268,7 +268,7 @@ class TestRagUpdateIndex:
         assert state == "success"
 
     def test_runner_reports_step_failure_with_log_tail(self, tmp_path, monkeypatch):
-        from backend import server
+        from eco_harness.backend import server
         ok_script = tmp_path / "ok_step.py"
         ok_script.write_text("print('step ok')\n", encoding="utf-8")
         bad_script = tmp_path / "bad_step.py"
@@ -297,7 +297,7 @@ class TestRagUpdateIndex:
         assert job["error"] is None
 
     def test_runner_fails_on_missing_script(self, monkeypatch):
-        from backend import server
+        from eco_harness.backend import server
         monkeypatch.setattr(server, "_RAG_UPDATE_STEPS", [
             ("missing", "scripts/definitely_not_here.py"),
         ])
@@ -325,7 +325,7 @@ class TestRagToken:
         assert body["masked"].endswith("123")
 
     def test_put_sets_env_and_persists(self, client, tmp_path, monkeypatch):
-        from backend import server
+        from eco_harness.backend import server
         monkeypatch.setattr(server, "_env_file_path", lambda: tmp_path / ".env")
         monkeypatch.delenv("ECO_API_TOKEN", raising=False)
         res = client.put("/rag/token", json={"token": "tok_abc12345"})
@@ -348,7 +348,7 @@ class TestRagToken:
         assert (tmp_path / ".env").read_text() == ""
 
     def test_upsert_env_file_preserves_other_lines(self, tmp_path, monkeypatch):
-        from backend import server
+        from eco_harness.backend import server
         env_path = tmp_path / ".env"
         env_path.write_text(
             "HARNESS_CONTEXT_WINDOW=131072\nECO_API_TOKEN=old\n# comment\n",
@@ -367,7 +367,7 @@ class TestRagStatusLastUpdated:
     def test_last_updated_from_index_mtime(self, client, tmp_path, monkeypatch):
         import sqlite3
         import os
-        from backend import server
+        from eco_harness.backend import server
         index = tmp_path / "marketplace_index.sqlite"
         monkeypatch.setenv("MARKETPLACE_INDEX_PATH", str(index))
         monkeypatch.setattr(server, "_fetch_summary_path", lambda: tmp_path / "no-summary.json")

@@ -1,7 +1,7 @@
 ﻿import os
 import pytest
 from pathlib import Path
-from agent.internal.tools.common import (
+from eco_harness.agent.internal.tools.common import (
     is_valid_cid, is_valid_version, ensure_inside, resolve_inside,
 )
 

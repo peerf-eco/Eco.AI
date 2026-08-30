@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-import backend.session_export as se
+import eco_harness.backend.session_export as se
 
 
 # ── Trace fixtures ───────────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ class TestPathSafety:
         assert "secret" not in res.text and "leak" not in res.text
 
     def test_safe_id_folds_path_characters(self):
-        from backend.server import _safe_id
+        from eco_harness.backend.server import _safe_id
         for raw in ("../../etc", "..\\..\\win", "a/b/c", "", "...", "//"):
             folded = _safe_id(raw)
             assert "/" not in folded and "\\" not in folded and "." not in folded
@@ -305,7 +305,7 @@ def client(tmp_path, monkeypatch):
     """Server app pointed at a throwaway output root."""
     monkeypatch.setenv("HARNESS_OUTPUT_ROOT", str(tmp_path / "output"))
     monkeypatch.setenv("HARNESS_TRACES_DIR", str(tmp_path / "traces"))
-    from backend import server
+    from eco_harness.backend import server
     with TestClient(server.app) as test_client:
         yield test_client
 

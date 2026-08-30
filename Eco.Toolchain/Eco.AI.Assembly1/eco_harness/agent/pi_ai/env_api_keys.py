@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from agent.pi_ai.types import Provider
+from eco_harness.agent.pi_ai.types import Provider
 
 
 _KEY_MAP: dict[str, list[str]] = {

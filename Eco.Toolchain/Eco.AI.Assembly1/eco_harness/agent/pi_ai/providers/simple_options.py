@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai.types import (
     Model, OpenAICompletionsCompat, SimpleStreamOptions, ThinkingLevel,
 )
 

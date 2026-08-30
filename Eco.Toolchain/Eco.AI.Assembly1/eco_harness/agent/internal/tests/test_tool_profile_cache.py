@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.internal.tools.profile_cache import make_read_component_profile_tool
+from eco_harness.agent.internal.tools.profile_cache import make_read_component_profile_tool
 
 
 CID = "61C988E21B7041378C5BDAFBB68A3FA0"

@@ -6,48 +6,80 @@ build-backend = "setuptools.build_meta"
 name = "eco-harness"
 version = "1.0.0"
 description = "ACOM meta-harness: bounded role orchestration over EcoOS marketplace tooling"
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "Proprietary" }
+# Full runtime dependency set — mirrors eco_harness/agent/requirements.txt.
+# The wheel must work out of the box (native flow: `uv pip install eco-harness`),
+# so the server + RAG stacks are BASE deps, not extras.
+#
+# Load-bearing pin: tree-sitter-c 0.23 emits ABI v15 which tree-sitter 0.23.x
+# cannot load; 0.21.4 emits ABI v14 which is compatible (see requirements.txt).
 dependencies = [
-    "pydantic>=2",
-    "PyYAML>=6",
-]
-
-[project.optional-dependencies]
-server = [
-    "fastapi",
-    "uvicorn",
-    "python-dotenv",
-]
-rag = [
+    # API server
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "websockets>=12.0",
+    "python-multipart>=0.0.9",
+    # Core
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0.2",
+    "python-dotenv>=1.0.0",
+    # pi_ai LLM layer
+    "httpx>=0.27",
+    "partial-json-parser>=0.2",
+    "tiktoken",
+    # RAG (sqlite-vec + tree-sitter AST chunker)
     "sqlite-vec>=0.1.6",
     "tree-sitter>=0.23,<0.24",
     "tree-sitter-c==0.21.4",
-    "httpx>=0.27",
 ]
-# Full runtime dependency set (mirrors agent/requirements.txt).
-all = [
-    "eco-harness[server,rag]",
+
+[project.optional-dependencies]
+# Dev / test-only tooling. Runtime deps always come from the base list above.
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
 ]
 
 [project.scripts]
+# `eco-harness` (serve/run) exists; `update` and `doctor` are defined in
+# eco_harness/interfaces/cli.py alongside it.
 eco-harness = "eco_harness.interfaces.cli:main"
 
 [tool.setuptools]
+# Explicit list: the repo-root `agent` / `backend` back-compat shims are
+# intentionally NOT shipped — the installed surface is eco_harness.* only.
+# Test packages are excluded as well.
 packages = [
-    "agent",
-    "agent.config",
-    "agent.context",
-    "agent.internal",
-    "agent.internal.agents",
-    "agent.internal.tools",
-    "agent.pi_ai",
-    "agent.pi_ai.providers",
-    "agent.pi_ai.utils",
-    "agent.rag",
-    "backend",
     "eco_harness",
     "eco_harness.adapters",
+    "eco_harness.agent",
+    "eco_harness.agent.config",
+    "eco_harness.agent.context",
+    "eco_harness.agent.internal",
+    "eco_harness.agent.internal.agents",
+    "eco_harness.agent.internal.tools",
+    "eco_harness.agent.pi_ai",
+    "eco_harness.agent.pi_ai.providers",
+    "eco_harness.agent.pi_ai.utils",
+    "eco_harness.agent.rag",
+    "eco_harness.backend",
+    "eco_harness.config",
     "eco_harness.extensions",
     "eco_harness.interfaces",
     "eco_harness.tools",
 ]
+
+[tool.setuptools.package-dir]
+# The ACOM config defaults live at the repo root in the dev checkout (bind-
+# mounted into the dev container, referenced by every path anchor). Map them
+# into the wheel as eco_harness/config so the installed app finds them via
+# paths.config_dir().
+"eco_harness.config" = "config"
+
+[tool.setuptools.package-data]
+"eco_harness.config" = ["**/*"]
+"eco_harness" = ["env.example", "web_static/**/*"]
+"eco_harness.backend" = ["scaffold/*"]

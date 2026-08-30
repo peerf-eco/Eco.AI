@@ -154,7 +154,32 @@ class HarnessConfig(BaseModel):
 
 
 def _project_root(root: Path | None) -> Path:
-    return (root or Path(__file__).resolve().parents[2]).resolve()
+    if root is not None:
+        return Path(root).resolve()
+    from eco_harness.agent.internal.tools.paths import (
+        PACKAGE_ROOT,
+        is_dev_checkout,
+        repo_root,
+    )
+
+    # Dev checkout: config/ lives at the repo root. Installed wheel: config/
+    # ships as package data inside eco_harness/.
+    return repo_root() if is_dev_checkout() else PACKAGE_ROOT
+
+
+def _config_root(project_root: Path) -> Path:
+    """config/ dir for the given project root, falling back to the package
+    copy when the caller's root has none (installed mode with a custom
+    ECO_HOME-style root)."""
+    from eco_harness.agent.internal.tools.paths import PACKAGE_ROOT
+
+    local = project_root / "config"
+    if local.is_dir() or project_root == PACKAGE_ROOT:
+        return local
+    packaged = PACKAGE_ROOT / "config"
+    if packaged.is_dir():
+        return packaged
+    return local
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -171,7 +196,7 @@ def load_marketplace_framework_components(root: Path | None = None) -> tuple[str
     into every project_dir. Falls back to the historical hard-coded set when
     the key is absent.
     """
-    config_root = (_project_root(root) / "config") if root is not None else Path("config")
+    config_root = _config_root(_project_root(root))
     marketplace = _read_yaml(config_root / "marketplace.yaml")
     components = marketplace.get("framework_components")
     if isinstance(components, list) and all(isinstance(c, str) for c in components):
@@ -206,19 +231,25 @@ def _resolve_permissions(*layers: Any) -> PermissionSpec:
 
 def load_config(root: Path | None = None) -> HarnessConfig:
     project_root = _project_root(root)
-    config_root = project_root / "config"
+    config_root = _config_root(project_root)
     harness = _read_yaml(config_root / "harness.yaml")
     budgets = _read_yaml(config_root / "budgets.yaml")
     models = _read_yaml(config_root / "models.yaml").get("models", {})
     languages = _read_yaml(config_root / "languages.yaml").get("languages", {})
     modes = _read_yaml(config_root / "modes.yaml").get("modes", {})
     roles = _role_files(config_root)
-    workspace_path = Path(
-        os.getenv(
-            "ECO_HARNESS_WORKSPACE_CONFIG",
-            str(project_root / ".eco-harness" / "workspace.yaml"),
-        ),
-    )
+    if os.getenv("ECO_HARNESS_WORKSPACE_CONFIG"):
+        workspace_path = Path(os.environ["ECO_HARNESS_WORKSPACE_CONFIG"])
+    else:
+        # Dev checkout: workspace overrides live in <repo>/.eco-harness/.
+        # Installed wheel: the app home owns user state (no repo to write to).
+        from eco_harness.agent.internal.tools.paths import eco_home, is_dev_checkout
+
+        workspace_path = (
+            project_root / ".eco-harness" / "workspace.yaml"
+            if is_dev_checkout()
+            else eco_home() / "workspace.yaml"
+        )
     workspace = _read_yaml(workspace_path)
     merged_roles = deepcopy(roles)
     for role_name, workspace_role in workspace.get("roles", {}).items():
@@ -397,16 +428,20 @@ def load_config(root: Path | None = None) -> HarnessConfig:
                 merged_harness.get("plan_handoff_max_bytes", 8_192),
             ),
         ),
+        # Only keep source roots that EXIST: in installed mode the config
+        # defaults resolve under site-packages where they are absent, and a
+        # truthy-but-junk list would defeat the roles.py fallback to the
+        # resolved marketplace cache (losing the Eco.Core1 prompt stitch).
         source_roots=[
-            (
-                project_root / value
-                if not Path(value).is_absolute()
-                else Path(value)
-            ).resolve()
-            for value in merged_harness.get(
-                "source_roots",
-                ["source", "marketplace_cache"],
+            resolved
+            for resolved in (
+                (project_root / value if not Path(value).is_absolute() else Path(value)).resolve()
+                for value in merged_harness.get(
+                    "source_roots",
+                    ["source", "marketplace_cache"],
+                )
             )
+            if resolved.exists()
         ],
         default_language=os.getenv(
             "DEFAULT_LANGUAGE",

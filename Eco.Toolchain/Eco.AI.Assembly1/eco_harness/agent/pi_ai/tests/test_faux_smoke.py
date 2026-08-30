@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from agent.pi_ai import Context, Model, ModelCost, stream_simple, ToolCall
-from agent.pi_ai.api_registry import register_provider
-from agent.pi_ai.providers.faux import make_faux_provider
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai import Context, Model, ModelCost, stream_simple, ToolCall
+from eco_harness.agent.pi_ai.api_registry import register_provider
+from eco_harness.agent.pi_ai.providers.faux import make_faux_provider
+from eco_harness.agent.pi_ai.types import (
     DoneEvent, StartEvent, TextDeltaEvent, ThinkingDeltaEvent,
 )
 

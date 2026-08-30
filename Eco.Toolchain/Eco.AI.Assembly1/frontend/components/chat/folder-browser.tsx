@@ -20,8 +20,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { FsListing, FsEntry, FsRoots } from "./types";
+import { API_URL } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
 
 interface FolderBrowserProps {
   onClose: () => void;

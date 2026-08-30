@@ -21,14 +21,14 @@ from pathlib import Path
 
 import pytest
 
-from agent.context.assembler import (
+from eco_harness.agent.context.assembler import (
     _core1_candidates,
     _core1_sharedfiles,
     stitch_source_files,
 )
-from agent.internal.tools import paths as tool_paths
-from agent.internal.tools.eco_cli import _apply_framework_dev_target
-from agent.rag.ingest import _iter_source_files
+from eco_harness.agent.internal.tools import paths as tool_paths
+from eco_harness.agent.internal.tools.eco_cli import _apply_framework_dev_target
+from eco_harness.agent.rag.ingest import _iter_source_files
 
 
 @pytest.fixture(autouse=True)
@@ -107,12 +107,12 @@ def test_stitch_core1_excludes_hpp(tmp_path):
 
 
 def test_build_static_prompt_uses_c_only_stitch(tmp_path, monkeypatch):
-    from agent.context.assembler import build_static_system_prompt
+    from eco_harness.agent.context.assembler import build_static_system_prompt
 
     # Isolate from the host's real ECO_FRAMEWORK (if set) so the tmp layout
     # is what gets stitched.
     monkeypatch.delenv("ECO_FRAMEWORK", raising=False)
-    monkeypatch.setattr(tool_paths, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(tool_paths, "_CHECKOUT_ROOT", tmp_path)
 
     shared = tmp_path / "src_roots" / "Eco.Core1_DK_v.1.0.1.2" / "Eco.Core1" / "SharedFiles"
     shared.mkdir(parents=True)

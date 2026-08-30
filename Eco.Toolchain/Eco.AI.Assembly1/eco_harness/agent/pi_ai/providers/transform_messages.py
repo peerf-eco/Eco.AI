@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json as _json
 
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai.types import (
     AssistantMessage, ImageContent, Message, Model, OpenAICompletionsCompat,
     TextContent, ThinkingContent, ToolCall, ToolResultMessage, UserMessage,
 )

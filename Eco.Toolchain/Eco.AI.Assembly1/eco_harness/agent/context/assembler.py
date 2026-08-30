@@ -4,8 +4,12 @@ import os
 from pathlib import Path
 from typing import Iterable
 
-from agent.domain import load_acom_domain, load_tool_contract
-from agent.internal.tools.paths import framework_root
+from eco_harness.agent.domain import load_acom_domain, load_tool_contract
+from eco_harness.agent.internal.tools.paths import (
+    PACKAGE_ROOT,
+    framework_root,
+    repo_root,
+)
 
 
 _SOURCE_EXTENSIONS = frozenset(
@@ -129,9 +133,13 @@ def build_static_system_prompt(
     header_file = header_path or Path(
         os.getenv(
             "HARNESS_SYSTEM_HEADER",
-            str(Path(__file__).resolve().parents[2] / "config" / "prompts" / "acom_system_header.md"),
+            str(repo_root() / "config" / "prompts" / "acom_system_header.md"),
         ),
     )
+    if not header_file.exists():
+        packaged = PACKAGE_ROOT / "config" / "prompts" / "acom_system_header.md"
+        if packaged.exists():
+            header_file = packaged
     header = header_file.read_text(encoding="utf-8") if header_file.exists() else ""
     # Curated, constant base: stitch Eco.Core1/SharedFiles into the static
     # prompt tail. This is the always-needed ACOM foundation (core types,

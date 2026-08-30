@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from agent.internal.eco_agent import EcoAgentEvent, EcoAgentResult, EventType
+from eco_harness.agent.internal.eco_agent import EcoAgentEvent, EcoAgentResult, EventType
 from eco_harness.adapters.external_cli import ExternalCliBackend
 
 logger = logging.getLogger(__name__)

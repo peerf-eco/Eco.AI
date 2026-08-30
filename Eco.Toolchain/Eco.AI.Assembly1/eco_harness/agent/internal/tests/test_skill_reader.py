@@ -18,17 +18,17 @@ from pathlib import Path
 
 import pytest
 
-from agent.config.loader import load_config
-from agent.context.customization import (
+from eco_harness.agent.config.loader import load_config
+from eco_harness.agent.context.customization import (
     on_demand_skills,
     resolve_custom_instructions,
     split_frontmatter,
 )
-from agent.internal.tools.skill_reader import (
+from eco_harness.agent.internal.tools.skill_reader import (
     _ReadSkillArgs,
     read_skill,
 )
-from agent.pi_ai import Model, ModelCost
+from eco_harness.agent.pi_ai import Model, ModelCost
 
 
 # ── 1. Frontmatter parsing ───────────────────────────────────────────────────

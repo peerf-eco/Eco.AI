@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.internal.tools.io import (
+from eco_harness.agent.internal.tools.io import (
     make_read_tools,
     make_write_tools,
     _PathArgs,

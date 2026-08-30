@@ -18,11 +18,11 @@ from typing import Any, AsyncIterator, Optional
 
 import httpx
 
-from agent.pi_ai.api_registry import register_provider
-from agent.pi_ai.env_api_keys import get_api_key
-from agent.pi_ai.providers.simple_options import apply_reasoning
-from agent.pi_ai.providers.transform_messages import transform_messages
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai.api_registry import register_provider
+from eco_harness.agent.pi_ai.env_api_keys import get_api_key
+from eco_harness.agent.pi_ai.providers.simple_options import apply_reasoning
+from eco_harness.agent.pi_ai.providers.transform_messages import transform_messages
+from eco_harness.agent.pi_ai.types import (
     AssistantMessage, AssistantMessageEvent, Context, Cost,
     DoneEvent, ErrorEvent, Model, OpenAICompletionsCompat, SimpleStreamOptions,
     StartEvent, StreamOptions, TextContent, TextDeltaEvent, TextEndEvent,
@@ -30,8 +30,8 @@ from agent.pi_ai.types import (
     ThinkingStartEvent, Tool, ToolCall, ToolCallDeltaEvent, ToolCallEndEvent,
     ToolCallStartEvent, Usage,
 )
-from agent.pi_ai.utils.event_stream import parse_sse
-from agent.pi_ai.utils.json_parse import parse_strict
+from eco_harness.agent.pi_ai.utils.event_stream import parse_sse
+from eco_harness.agent.pi_ai.utils.json_parse import parse_strict
 
 
 # Conservative margin kept free of the context window (system overhead,

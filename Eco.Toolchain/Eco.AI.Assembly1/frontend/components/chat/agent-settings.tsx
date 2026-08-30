@@ -12,8 +12,8 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { RagSection } from "./rag-import";
 import { formatTimestamp } from "./project-panel";
+import { API_URL } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
 
 const BACKENDS = ["internal", "pi", "codex", "claude", "grok"];
 const ROLE_ORDER = ["architect", "coder", "tester", "reviewer"];

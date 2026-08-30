@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import pytest
 
-from agent.internal.eco_agent import EcoAgent
-from agent.internal.orchestrator import Orchestrator
-from agent.internal.tools.handoff import make_handoff_tool, make_fail_tool
-from agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
+from eco_harness.agent.internal.eco_agent import EcoAgent
+from eco_harness.agent.internal.orchestrator import Orchestrator
+from eco_harness.agent.internal.tools.handoff import make_handoff_tool, make_fail_tool
+from eco_harness.agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
 
 
 # ── helpers ────────────────────────────────────────────────────────────────

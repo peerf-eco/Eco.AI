@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from agent.internal.entry import (
+from eco_harness.agent.internal.entry import (
     PIPELINE_EDGES,
     PIPELINE_ENTRY,
     EXECUTION_EDGES,
     MIGRATE_EDGES,
     build_pipeline,
 )
-from agent.internal.orchestrator import Orchestrator
-from agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
+from eco_harness.agent.internal.orchestrator import Orchestrator
+from eco_harness.agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
 
 
 # ── 1. Topology shape ──────────────────────────────────────────────────────

@@ -12,8 +12,8 @@ from __future__ import annotations
 import time
 from typing import AsyncIterator, Optional
 
-from agent.pi_ai.api_registry import register_provider
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai.api_registry import register_provider
+from eco_harness.agent.pi_ai.types import (
     AssistantMessage, AssistantMessageEvent, Context, DoneEvent, Model,
     StartEvent, StreamOptions, TextContent, TextDeltaEvent, TextEndEvent,
     TextStartEvent, ThinkingContent, ThinkingDeltaEvent, ThinkingEndEvent,

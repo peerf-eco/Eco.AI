@@ -1,0 +1,141 @@
+# Release pipeline: build → publish → manifest.
+#
+# Publishes:
+#   - wheel to PyPI (pypi.org/project/eco-harness)
+#   - multi-arch container image to ghcr.io (linux/amd64 + linux/arm64)
+#   - manifest.json + assets (installer scripts, binaries, index) to S3
+#
+# The manifest is the single version source of truth consumed by the
+# installers and `eco-harness update`; binary publishing for eco-cli /
+# eco-wizard stays owned by the EcoCLI pipeline — this workflow only bundles
+# already-staged artifacts (see scripts/release/build_manifest.py).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build only, publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  AWS_REGION: ${{ vars.RELEASE_AWS_REGION }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel (frontend export + package data baked in)
+        run: bash scripts/release/build_wheel.sh
+
+      - name: Stage release assets
+        run: |
+          mkdir -p release-staging/dist release-staging/binaries release-staging/index
+          cp dist/*.whl release-staging/dist/
+          # eco-cli / eco-wizard native builds arrive from the EcoCLI pipeline
+          # (staged under release-staging/binaries/<tool>/<os>/<arch>/ by a
+          # prior job or pipeline); copy installer scripts for stable hosting.
+          mkdir -p release-staging/install
+          cp scripts/install/install.sh scripts/install/install.ps1 release-staging/install/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-staging/
+
+  publish-image:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ inputs.dry_run != true }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-staging/
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Copy wheel into image build context
+        run: |
+          mkdir -p docker/wheel
+          cp release-staging/dist/*.whl docker/wheel/
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish-manifest:
+    needs: [build, publish-image]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.dry_run != true }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-staging/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build manifest.json
+        run: |
+          VERSION="$(basename release-staging/dist/eco_harness-*.whl | head -1 | cut -d- -f2)"
+          python scripts/release/build_manifest.py \
+            --staging release-staging \
+            --base-url "${{ vars.RELEASE_BASE_URL }}" \
+            --image "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
+
+      - name: Publish to S3 (manifest + installers)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws s3 sync release-staging/ "s3://${{ vars.RELEASE_S3_BUCKET }}/" \
+            --cache-control "public, max-age=300" \
+            --exclude "*" --include "manifest.json" --include "install/*" \
+            --include "binaries/*" --include "index/*" --include "dist/*"

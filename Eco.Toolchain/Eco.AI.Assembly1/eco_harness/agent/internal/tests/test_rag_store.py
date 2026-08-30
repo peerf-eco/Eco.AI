@@ -21,8 +21,8 @@ import pytest
 
 pytest.importorskip("sqlite_vec")
 
-from agent.rag.chunker_base import Chunk, ChunkKind
-from agent.rag.store import RagStore
+from eco_harness.agent.rag.chunker_base import Chunk, ChunkKind
+from eco_harness.agent.rag.store import RagStore
 
 DIM = 8
 

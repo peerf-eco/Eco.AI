@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import TypeAdapter
 
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai.types import (
     AssistantMessage, AssistantMessageEvent, DoneEvent, Message,
     TextContent, TextDeltaEvent, ThinkingContent, ToolCall, ToolResultMessage,
     UserMessage,

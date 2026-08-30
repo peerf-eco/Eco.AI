@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-from agent.config.loader import HarnessConfig, RoleSpec, load_config
-from agent.internal.eco_agent import EventType
-from agent.internal.tools import paths as tool_paths
-from agent.pi_ai import Model, ModelCost
+from eco_harness.agent.config.loader import HarnessConfig, RoleSpec, load_config
+from eco_harness.agent.internal.eco_agent import EventType
+from eco_harness.agent.internal.tools import paths as tool_paths
+from eco_harness.agent.pi_ai import Model, ModelCost
 from eco_harness.adapters.eco_agent_bridge import ExternalEcoAgent
 from eco_harness.adapters.external_cli import ExternalCliBackend
 from eco_harness.adapters.protocol import AgentResult

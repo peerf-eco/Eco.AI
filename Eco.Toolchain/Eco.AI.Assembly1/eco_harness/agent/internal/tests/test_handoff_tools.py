@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from agent.internal.tools.handoff import (
+from eco_harness.agent.internal.tools.handoff import (
     make_handoff_tool,
     make_fail_tool,
     message_from_payload,

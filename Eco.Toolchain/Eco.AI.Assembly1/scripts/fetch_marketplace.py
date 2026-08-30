@@ -33,7 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent.internal.tools.binaries import describe_search_order, resolve_binary  # noqa: E402
+from eco_harness.agent.internal.tools.binaries import describe_search_order, resolve_binary  # noqa: E402
 
 # ── Inputs ────────────────────────────────────────────────────────────────
 # Single shared binary-resolution policy (env → <repo>/bin → /opt → legacy

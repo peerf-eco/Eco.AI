@@ -35,8 +35,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from agent.internal.eco_agent import EcoTool, ToolResult
-from agent.internal.tools import paths
+from eco_harness.agent.internal.eco_agent import EcoTool, ToolResult
+from eco_harness.agent.internal.tools import paths
 
 logger = logging.getLogger(__name__)
 
@@ -165,9 +165,9 @@ def make_search_marketplace_tool(
         # Local import so the tool module is importable even when the rag
         # subpackage's optional deps (sqlite-vec, etc.) aren't installed
         # yet — the factory still returns; failure surfaces at first call.
-        from agent.rag.embedder import Embedder, EmbedderError
-        from agent.rag.retrieve import HybridRetriever
-        from agent.rag.store import RagStore
+        from eco_harness.agent.rag.embedder import Embedder, EmbedderError
+        from eco_harness.agent.rag.retrieve import HybridRetriever
+        from eco_harness.agent.rag.store import RagStore
 
         embedder = Embedder(model=embed_model) if embed_model else Embedder()
         # Probe dimension once so the store schema check passes.
@@ -194,8 +194,8 @@ def make_search_marketplace_tool(
     def _execute(args: _SearchArgs) -> ToolResult:
         # Imports are local to preserve the module's lazy-import guarantee
         # (the tool must be importable without sqlite-vec / the embedder).
-        from agent.rag.embedder import EmbedderError
-        from agent.rag.store import IndexMismatchError
+        from eco_harness.agent.rag.embedder import EmbedderError
+        from eco_harness.agent.rag.store import IndexMismatchError
 
         try:
             retriever = _lazy_open()

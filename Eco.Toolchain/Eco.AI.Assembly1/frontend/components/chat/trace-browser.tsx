@@ -6,8 +6,8 @@ import { AlertCircle, Copy, FileJson, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SessionInfo, SessionTraceInfo } from "./types";
 import { StatusDot } from "./project-panel";
+import { API_URL } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
 
 interface TraceBrowserProps {
   // The project's sessions (most recent first) — the left rail of the modal.

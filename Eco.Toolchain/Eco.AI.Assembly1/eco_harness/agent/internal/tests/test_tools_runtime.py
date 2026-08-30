@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.internal.tools.runtime import make_runtime_tools, _RunArgs
+from eco_harness.agent.internal.tools.runtime import make_runtime_tools, _RunArgs
 
 
 def _tool(tools, name):

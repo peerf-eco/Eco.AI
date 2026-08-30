@@ -49,19 +49,18 @@ WORKDIR /app
 # after editing requirements.txt:
 #   uv pip compile requirements.txt --python-version 3.11 \
 #       --python-platform x86_64-unknown-linux-gnu -o requirements.lock
-COPY agent/requirements.lock /app/requirements.lock
+COPY eco_harness/agent/requirements.lock /app/requirements.lock
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.lock
 
 # Создание директорий для данных
 RUN mkdir -p /app/output
 
-# Копирование кода агента
-COPY agent/ /app/agent/
-COPY backend/ /app/backend/
+# Копирование кода агента (packages live under eco_harness/ since the
+# PyPI restructure; repo-root agent/ and backend/ are back-compat shims only)
+COPY eco_harness/ /app/eco_harness/
 COPY scripts/ /app/scripts/
 COPY config/ /app/config/
-COPY eco_harness/ /app/eco_harness/
 
 # Создание entrypoint скрипта
 RUN echo '#!/bin/bash\n\
@@ -94,4 +93,4 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 # old `docker compose run api shell` no longer works. Use instead:
 #   docker compose exec api bash            (container running)
 #   docker compose run api bash             (lands in working_dir, nested project)
-CMD ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "eco_harness.backend.server:app", "--host", "0.0.0.0", "--port", "8000"]

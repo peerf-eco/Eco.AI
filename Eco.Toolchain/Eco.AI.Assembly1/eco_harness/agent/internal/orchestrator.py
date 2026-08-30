@@ -17,8 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
-from agent.internal.eco_agent import EcoAgent, EcoAgentResult
-from agent.internal.tools.handoff import message_from_payload
+from eco_harness.agent.internal.eco_agent import EcoAgent, EcoAgentResult
+from eco_harness.agent.internal.tools.handoff import message_from_payload
 
 
 @dataclass(frozen=True)

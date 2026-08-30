@@ -23,15 +23,15 @@ from typing import Any, Callable, Optional, Union
 
 from pydantic import BaseModel, ValidationError
 
-from agent.pi_ai import (
+from eco_harness.agent.pi_ai import (
     AssistantMessage, Context, Model, SimpleStreamOptions,
     StreamOptions, TextContent, Tool, ToolCall, ToolResultMessage, UserMessage,
     stream_simple,
 )
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai.types import (
     DoneEvent, ErrorEvent, StreamFunction, TextDeltaEvent, ThinkingDeltaEvent,
 )
-from agent.internal.call_trace import write_call_trace
+from eco_harness.agent.internal.call_trace import write_call_trace
 
 
 # ── Data types (public, unchanged) ────────────────────────────────────────────
@@ -715,7 +715,7 @@ class EcoAgent:
         things the model can re-derive from tool results (full tool
         output text, full IID bytes).
         """
-        from agent.pi_ai.types import UserMessage
+        from eco_harness.agent.pi_ai.types import UserMessage
         chunks = []
         for m in head_msgs:
             role = getattr(m, "role", "?")

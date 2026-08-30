@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent.config.loader import load_config, load_role_config
-from agent.main import get_model
+from eco_harness.agent.config.loader import load_config, load_role_config
+from eco_harness.agent.main import get_model
 from eco_harness.roles import make_role_agent
 from eco_harness.worktrees import WorktreeInfo, create_worktree
 
@@ -107,7 +107,14 @@ def main() -> int:
     run_parser.add_argument("--worktree-name", default=None)
     run_parser.add_argument("--config-root", type=Path, default=None)
     serve_parser = subparsers.add_parser("serve")
-    serve_parser.add_argument("--api", action="store_true")
+    serve_parser.add_argument("--host", default="127.0.0.1")
+    serve_parser.add_argument("--port", type=int, default=8000)
+    update_parser = subparsers.add_parser("update")
+    update_parser.add_argument(
+        "--manifest", default=None,
+        help="override manifest URL (default: $ECO_MANIFEST_URL or the release default)",
+    )
+    subparsers.add_parser("doctor")
     args = parser.parse_args()
     if args.command == "run":
         result = HarnessRunner(args.config_root).run(
@@ -119,10 +126,26 @@ def main() -> int:
         )
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0 if result["status"] == "done" else 1
-    if args.api:
+    if args.command == "serve":
         import uvicorn
 
-        uvicorn.run("backend.server:app", host="0.0.0.0", port=8000)
+        uvicorn.run(
+            "eco_harness.backend.server:app",
+            host=args.host,
+            port=args.port,
+        )
         return 0
-    parser.error("serve currently supports --api")
+    if args.command == "update":
+        from eco_harness.update import run_update
+
+        report = run_update(args.manifest)
+        print(report.summary())
+        return 1 if report.errors else 0
+    if args.command == "doctor":
+        from eco_harness.doctor import run_doctor
+
+        checks, healthy = run_doctor()
+        for check in checks:
+            print(f"[{check.status.upper():4}] {check.name}: {check.detail}")
+        return 0 if healthy else 1
     return 2

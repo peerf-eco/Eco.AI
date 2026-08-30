@@ -25,6 +25,7 @@ import type {
   Attachment, AttachmentKind, ChatMessage, FsEntry, ProjectInfo, SessionInfo,
   TokenStat, WorkingMode,
 } from "./types";
+import { API_URL, WS_BASE } from "@/lib/api";
 
 const MAX_PASTE_BYTES = 5 * 1024 * 1024; // 5 MB cap on pasted/base64 content
 
@@ -49,8 +50,6 @@ const LANGUAGE_STORAGE_KEY = "eco_harness.language";
 const PANEL_OPEN_STORAGE_KEY = "eco_harness.panel_open";
 const ACTIVE_PROJECT_STORAGE_KEY = "eco_harness.active_project";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
-const WS_BASE = API_URL.replace(/^http/, "ws");
 // Optimization 3: cap total per-message attachment bytes. Pasted images are
 // base64 in the JSON WS frame; a few large ones can blow past uvicorn's 16 MB
 // default and silently drop the connection. Keep a safe headroom under that.

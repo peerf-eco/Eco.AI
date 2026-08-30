@@ -6,17 +6,57 @@ role orchestration, human plan approval, and a shared event contract. Agent
 backends are replaceable: the built-in agent, Pi, Codex, and Claude Code can
 be selected per role.
 
-## Quick Start
+## Install (customers)
+
+Two customer-grade flows, both one command. No source checkout, no wine:
+the installer always downloads native eco-cli / eco-wizard builds for the
+target OS, plus the prebuilt marketplace RAG index. Missing API keys never
+block install or launch — finish configuration in the in-app `/setup`
+wizard (or later in `~/.eco-harness/.env`).
+
+**Native (Windows / Linux / macOS)** — app lives in `~/.eco-harness`
+(`ECO_HOME`), Python 3.11 provided by `uv` if missing, single port:
+
+```bash
+curl -fsSL https://downloads.ecoos.dev/eco-harness/install.sh | sh       # POSIX
+irm https://downloads.ecoos.dev/eco-harness/install.ps1 | iex            # PowerShell
+```
+
+Then open http://localhost:8000 (setup wizard at `/setup`). CLI shims:
+`eco-harness` (serve/run), `eco-harness-update` (self-update),
+`eco-harness doctor` (health report).
+
+**Docker** — any host with Docker; prebuilt multi-arch image from ghcr.io:
+
+```bash
+sh install.sh --docker          # or: powershell -File install.ps1 -Docker
+# update: docker compose -f ~/.eco-harness/docker-compose.yml pull && up -d
+```
+
+Key paths / env vars in installed mode:
+
+| What | Where |
+|---|---|
+| App home (`ECO_HOME`) | `~/.eco-harness` (bin/, data/, .env, output/, traces/) |
+| User project (`ECO_PROJECT_DIR`) | picked in the UI folder browser; worktrees and generated artifacts live under it |
+| Binary lookup order | explicit → `ECO_<NAME>_PATH` → `<repo>/bin` → `$ECO_HOME/bin` → `/opt` → legacy siblings → `PATH` |
+| Prebuilt index | `~/.eco-harness/data/marketplace_index.sqlite` (refreshed by `eco-harness update`) |
+
+## Quick Start (developers)
 
 The shortest path uses the Makefile targets (`setup` → `index` →
 `preflight` → `up`); the equivalent manual steps follow below.
 
 ```bash
-make setup      # .venv + agent/requirements.txt + .env seeded from env.example
+make setup      # .venv + eco_harness/agent/requirements.txt + .env seeded from env.example
 make index      # fetch marketplace components + build the RAG index (needs tokens in .env)
 make preflight  # validate binaries, cache, index (--fix applies safe fixes)
-make up         # docker compose up --build
+make up         # docker compose up --build (dev stack, UI :3100 / API :8100)
 ```
+
+> Package note: the Python packages moved under `eco_harness/` for PyPI
+> (`eco_harness.agent`, `eco_harness.backend`). Repo-root `agent` / `backend`
+> remain as import shims; use the `eco_harness.*` names in new code.
 
 ### Option 1: Docker Compose (Recommended)
 ```bash
@@ -95,7 +135,7 @@ python scripts/fetch_marketplace.py
 python scripts/build_marketplace_index.py
 
 # 6. Start services in separate terminals:
-# Terminal 1: uvicorn backend.server:app --host 0.0.0.0 --port 8000
+# Terminal 1: uvicorn eco_harness.backend.server:app --host 127.0.0.1 --port 8000
 # Terminal 2: cd frontend && npm run dev
 ```
 
@@ -131,22 +171,25 @@ an actionable error. The harness does not silently fall back to another agent.
 
 All external tool binaries (eco-cli, eco-wizard, and the optional external
 sub-agents) are resolved by one shared policy —
-`agent/internal/tools/binaries.py::resolve_binary`:
+`eco_harness/agent/internal/tools/binaries.py::resolve_binary`:
 
-1. `ECO_CLI_PATH` / `ECO_WIZARD_PATH` / `ECO_<NAME>_PATH` environment variable
-2. `<repo>/bin/<name>` — the canonical, gitignored home (place binaries here)
-3. `/opt/<name>` — container bind-mount location (docker-compose.yml)
-4. Legacy platform-suffixed siblings (`<repo>/eco-cli-linux/eco-cli`,
+1. explicit argument (harness.yaml `eco_*_path` settings, tool args)
+2. `ECO_CLI_PATH` / `ECO_WIZARD_PATH` / `ECO_<NAME>_PATH` environment variable
+3. `<repo>/bin/<name>` — the canonical, gitignored home (place binaries here)
+4. `$ECO_HOME/bin/<name>` (default `~/.eco-harness/bin`) — where the native
+   installer deposits the downloaded per-OS builds
+5. `/opt/<name>` — container bind-mount location (docker-compose.yml)
+6. Legacy platform-suffixed siblings (`<repo>/eco-cli-linux/eco-cli`,
    `<repo>/eco-cli-windows/eco-cli.exe`) — kept for backwards compatibility
-5. System `PATH`
+7. System `PATH`
 
-Windows `.exe` binaries on Linux run through a wine wrapper configured via
-`ECO_CLI_PREFIX` / `ECO_WIZARD_PREFIX` (e.g. `wine64`).
+Native installs never need wine: the installer always downloads the
+target-OS build into `$ECO_HOME/bin`. `ECO_CLI_PREFIX` / `ECO_WIZARD_PREFIX`
+wine wrappers remain available only as a legacy override.
 
-**When to use the env vars:** custom executable locations, forcing the Windows
-binary, or pinning a specific version. For normal setups just drop the
-binaries into `<repo>/bin/` or leave them in Docker mount points — no config
-needed.
+**When to use the env vars:** custom executable locations or pinning a
+specific version. For normal setups just drop the binaries into `<repo>/bin/`
+(dev) or let the installer fill `$ECO_HOME/bin/` (native) — no config needed.
 
 ## Setup Details
 
@@ -305,7 +348,7 @@ Repository configuration is under `config/`:
 
 ### Path Resolution System
 
-One shared resolver (`agent/internal/tools/binaries.py::resolve_binary`)
+One shared resolver (`eco_harness/agent/internal/tools/binaries.py::resolve_binary`)
 handles every external binary, host and container alike:
 
 1. Explicit config (e.g. `harness.yaml` `eco_cli_path` / `eco_wizard_path`)
@@ -769,7 +812,7 @@ role(s) run and whether the automatic plan→implement→verify pipeline is enga
 - `review` — read-only ACOM style/correctness reviewer.
 
 In `auto` / `migrate` the architect emits `plan_review_required` and the server
-waits for your `plan_decision` before the coder runs (`backend/server.py`).
+waits for your `plan_decision` before the coder runs (`eco_harness/backend/server.py`).
 `plan` / `code` / `test` / `review` load exactly one role with its profile and
 never auto-trigger the cross-role pipeline, so you can switch roles freely from
 the mode menu. Each mode selects its own system prompt and capability set from
@@ -912,7 +955,7 @@ Each role's limits come from `config/roles.yaml` →
 
 Global guards: `HARNESS_MAX_HOPS` (default `8`) bounds orchestrator
 handoffs. `AGENT_MAX_ITERATIONS` (env) applies only to scripted
-`build_pipeline` runs (`agent/internal/entry.py`); the production
+`build_pipeline` runs (`eco_harness/agent/internal/entry.py`); the production
 `/ws/chat` pipeline uses each role's `budgets.max_iters` from
 `config/roles.yaml`. File-tool results are also
 size-capped (`read` 32 KB default / 200 KB max, `read_file` 256 KB, `grep` 100
@@ -978,7 +1021,7 @@ boundaries, not the domain core.
 
 ## Testing
 
-The regression suite lives in `agent/internal/tests/` and runs against the
+The regression suite lives in `eco_harness/agent/internal/tests/` and runs against the
 venv created during setup (`make setup` or `python -m venv .venv` +
 `pip install -r agent/requirements.txt`, which includes `pytest` via
 `pytest-asyncio`). Always run it through the venv so the pinned

@@ -10,8 +10,8 @@ import httpx
 import pytest
 import respx
 
-from agent.pi_ai import Context, Model, ModelCost, stream_simple
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai import Context, Model, ModelCost, stream_simple
+from eco_harness.agent.pi_ai.types import (
     DoneEvent, ErrorEvent, OpenAICompletionsCompat, TextDeltaEvent,
     ThinkingDeltaEvent, ToolCallDeltaEvent,
 )

@@ -15,11 +15,12 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Production build. NOTE: docker-compose currently overrides CMD with
-# `npm run dev` (hot-reload) and bind-mounts ./frontend over /app, so for the
-# dev stack this build is unused. For a production run, remove that override
-# and the source bind-mount so this built image is what actually serves.
+# Static export build (`output: 'export'` in next.config.mjs). The export in
+# ./out is what the customer wheel ships (eco_harness/web_static, served by
+# FastAPI). NOTE: `next start` cannot serve a static export — the dev stack
+# overrides CMD with `npm run dev` (bind-mounted source); a standalone run of
+# this image serves ./out via `serve`.
 RUN npm run build
 
 EXPOSE 3000
-CMD ["npm", "start"]
+CMD ["npx", "-y", "serve", "-s", "out", "-l", "3000"]

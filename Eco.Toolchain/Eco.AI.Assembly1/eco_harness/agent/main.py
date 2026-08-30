@@ -26,8 +26,8 @@ def get_model(profile=None, *, role: str | None = None, providers: dict | None =
     accept any bearer token). Anything else (and the historical default)
     routes to OpenRouter via ``OPENROUTER_URL`` / ``OPENAI_API_KEY``.
     """
-    from agent.pi_ai import Model, ModelCost, OpenAICompletionsCompat, OpenRouterRouting
-    from agent.pi_ai.env_api_keys import get_api_key as _get_api_key
+    from eco_harness.agent.pi_ai import Model, ModelCost, OpenAICompletionsCompat, OpenRouterRouting
+    from eco_harness.agent.pi_ai.env_api_keys import get_api_key as _get_api_key
 
     provider_name = getattr(profile, "provider", None) or "openrouter"
     entry = (providers or {}).get(provider_name)
@@ -97,7 +97,7 @@ def get_model(profile=None, *, role: str | None = None, providers: dict | None =
     # which otherwise overflows the context and yields HTTP 400).
     context_window = 262_144
     try:
-        from agent.pi_ai.models import known_models
+        from eco_harness.agent.pi_ai.models import known_models
         for _m in known_models():
             if _m.id == model_id:
                 context_window = _m.contextWindow or context_window

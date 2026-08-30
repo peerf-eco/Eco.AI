@@ -14,7 +14,7 @@ style — the same convention cAST uses.
 """
 from __future__ import annotations
 
-from agent.rag.chunker_base import Chunk, ChunkKind, Chunker
+from eco_harness.agent.rag.chunker_base import Chunk, ChunkKind, Chunker
 
 
 def _split_by_nonws(text: str, target_chars: int, overlap_chars: int) -> list[tuple[int, int]]:

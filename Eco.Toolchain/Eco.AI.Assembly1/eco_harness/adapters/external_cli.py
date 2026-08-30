@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from agent.internal.tools.binaries import resolve_binary
+from eco_harness.agent.internal.tools.binaries import resolve_binary
 from eco_harness.adapters.protocol import AgentResult, EventSink
 
 

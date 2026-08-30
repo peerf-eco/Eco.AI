@@ -9,8 +9,8 @@ from __future__ import annotations
 import time as _t
 from typing import AsyncIterator, Optional
 
-from agent.pi_ai.api_registry import get_provider, known_apis
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai.api_registry import get_provider, known_apis
+from eco_harness.agent.pi_ai.types import (
     AssistantMessage, AssistantMessageEvent, Context, DoneEvent, ErrorEvent,
     Model, SimpleStreamOptions, StartEvent,
 )

@@ -1,5 +1,5 @@
 ﻿from pydantic import BaseModel
-from agent.internal.eco_agent import (
+from eco_harness.agent.internal.eco_agent import (
     ToolResult, EcoTool, EventType, EcoAgentEvent, EcoAgentResult,
 )
 
@@ -53,8 +53,8 @@ def test_eco_agent_result_has_status_and_stop_payload():
 # ── _usage_data: pi_ai Usage -> USAGE event payload ─────────────────────────
 
 def test_usage_data_from_pydantic_usage():
-    from agent.pi_ai.types import Usage
-    from agent.internal.eco_agent import _usage_data
+    from eco_harness.agent.pi_ai.types import Usage
+    from eco_harness.agent.internal.eco_agent import _usage_data
 
     class _Resp:
         usage = Usage(input=100, output=20, cacheRead=50, cacheWrite=10, totalTokens=180)
@@ -66,8 +66,8 @@ def test_usage_data_from_pydantic_usage():
 
 
 def test_usage_data_falls_back_to_input_plus_output():
-    from agent.pi_ai.types import Usage
-    from agent.internal.eco_agent import _usage_data
+    from eco_harness.agent.pi_ai.types import Usage
+    from eco_harness.agent.internal.eco_agent import _usage_data
 
     class _Resp:
         usage = Usage(input=7, output=3, totalTokens=0)
@@ -75,7 +75,7 @@ def test_usage_data_falls_back_to_input_plus_output():
 
 
 def test_usage_data_missing_usage_is_empty():
-    from agent.internal.eco_agent import _usage_data
+    from eco_harness.agent.internal.eco_agent import _usage_data
 
     class _Resp:
         usage = None
@@ -83,8 +83,8 @@ def test_usage_data_missing_usage_is_empty():
 
 
 def test_usage_data_all_zero_usage_is_empty():
-    from agent.pi_ai.types import Usage
-    from agent.internal.eco_agent import _usage_data
+    from eco_harness.agent.pi_ai.types import Usage
+    from eco_harness.agent.internal.eco_agent import _usage_data
 
     class _Resp:
         usage = Usage()

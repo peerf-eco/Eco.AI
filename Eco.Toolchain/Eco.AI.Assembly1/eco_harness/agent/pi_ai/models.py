@@ -10,7 +10,7 @@ get_model() - Model is a public pydantic class.
 """
 from __future__ import annotations
 
-from agent.pi_ai.types import (
+from eco_harness.agent.pi_ai.types import (
     Model, ModelCost, OpenAICompletionsCompat, Provider,
 )
 

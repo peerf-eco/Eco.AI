@@ -24,11 +24,13 @@ Resolution order
      tools; external backends use ``ECO_<BACKEND>_PATH``)
   3. ``<repo>/bin/<name>`` — the canonical, gitignored home for vendored
      binaries on a host checkout
-  4. ``/opt/<name>`` — container bind-mount location (docker-compose.yml)
-  5. platform-suffixed legacy siblings next to the repo root:
+  4. ``$ECO_HOME/bin/<name>`` (default ``~/.eco-harness/bin``) — where the
+     native installer deposits the downloaded builds
+  5. ``/opt/<name>`` — container bind-mount location (docker-compose.yml)
+  6. platform-suffixed legacy siblings next to the repo root:
      ``<repo>/<name>-linux/<name>`` then ``<repo>/<name>-windows/<name>.exe``
      (kept for backwards compatibility with the old layout)
-  6. system ``PATH`` (``<name>``, then ``<name>.exe``)
+  7. system ``PATH`` (``<name>``, then ``<name>.exe``)
 
 Returns ``None`` when nothing is found; callers are expected to raise or
 return an actionable error message naming the tried locations.
@@ -39,9 +41,10 @@ import logging
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
-from agent.internal.tools.paths import repo_root
+from eco_harness.agent.internal.tools.paths import eco_home, repo_root
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +87,14 @@ def resolve_binary(
     # Canonical gitignored home: <repo>/bin/<name>.
     candidates.append(root / "bin" / name)
 
+    # Installed-app home: $ECO_HOME/bin/<name> (~/.eco-harness/bin) — where
+    # the native installer deposits the downloaded eco-cli / eco-wizard
+    # builds (named <name>.exe on Windows, matching update._refresh_binaries).
+    # Checked ahead of /opt so an installed home wins over a stale container
+    # mount.
+    installed_suffix = ".exe" if sys.platform.startswith("win") else ""
+    candidates.append(eco_home() / "bin" / f"{name}{installed_suffix}")
+
     # Container bind-mount locations (docker-compose.yml mounts the ELF
     # directly at /opt/<name>).
     candidates.append(Path("/opt") / name)
@@ -111,6 +122,7 @@ def describe_search_order(name: str) -> str:
     """Human-readable search order for actionable 'not found' errors."""
     return (
         f"{name} lookup order: "
-        f"ECO_{_slug(name)}_PATH env → <repo>/bin/{name} → /opt/{name} → "
+        f"ECO_{_slug(name)}_PATH env → <repo>/bin/{name} → "
+        f"$ECO_HOME/bin/{name} (~/.eco-harness/bin) → /opt/{name} → "
         f"<repo>/{name}-linux/{name} → <repo>/{name}-windows/{name}.exe → PATH"
     )

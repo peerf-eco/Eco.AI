@@ -17,8 +17,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from agent.internal.eco_agent import EcoTool, ToolResult
-from agent.internal.tools.common import ensure_inside
+from eco_harness.agent.internal.eco_agent import EcoTool, ToolResult
+from eco_harness.agent.internal.tools.common import ensure_inside
 
 
 _RUN_TIMEOUT_S = 30

@@ -7,15 +7,15 @@ import time as _time
 from pathlib import Path
 from typing import Optional
 
-from agent.internal.eco_agent import EcoAgent
-from agent.internal.tools.handoff import make_handoff_tool, make_fail_tool
-from agent.internal.tools.io import make_read_tools, make_architect_spec_write_tool
-from agent.internal.tools.code_search import make_code_search_tools
-from agent.internal.tools.eco_cli import make_eco_cli_tool
-from agent.internal.tools.profile_cache import make_read_component_profile_tool
-from agent.internal.tools.rag import make_search_marketplace_tool
-from agent.internal.tools.plan_validator import validate_closed_plan, plan_block_reason
-from agent.internal.tools import paths
+from eco_harness.agent.internal.eco_agent import EcoAgent
+from eco_harness.agent.internal.tools.handoff import make_handoff_tool, make_fail_tool
+from eco_harness.agent.internal.tools.io import make_read_tools, make_architect_spec_write_tool
+from eco_harness.agent.internal.tools.code_search import make_code_search_tools
+from eco_harness.agent.internal.tools.eco_cli import make_eco_cli_tool
+from eco_harness.agent.internal.tools.profile_cache import make_read_component_profile_tool
+from eco_harness.agent.internal.tools.rag import make_search_marketplace_tool
+from eco_harness.agent.internal.tools.plan_validator import validate_closed_plan, plan_block_reason
+from eco_harness.agent.internal.tools import paths
 
 
 # Fallback only. The editable source of truth is config/prompts/architect.md;

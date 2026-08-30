@@ -29,9 +29,9 @@ import time
 from pathlib import Path
 from typing import Iterable, Optional
 
-from agent.rag.chunker_base import Chunk, Chunker
-from agent.rag.embedder import Embedder
-from agent.rag.store import RagStore
+from eco_harness.agent.rag.chunker_base import Chunk, Chunker
+from eco_harness.agent.rag.embedder import Embedder
+from eco_harness.agent.rag.store import RagStore
 
 logger = logging.getLogger(__name__)
 

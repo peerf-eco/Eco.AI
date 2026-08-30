@@ -4,10 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from agent.internal.eco_agent import EcoAgent
-from agent.internal.tools.code_search import make_code_search_tools
-from agent.internal.tools.handoff import make_fail_tool, make_handoff_tool
-from agent.internal.tools.io import make_read_tools
+from eco_harness.agent.internal.eco_agent import EcoAgent
+from eco_harness.agent.internal.tools.code_search import make_code_search_tools
+from eco_harness.agent.internal.tools.handoff import make_fail_tool, make_handoff_tool
+from eco_harness.agent.internal.tools.io import make_read_tools
 
 
 # Fallback only. The editable source of truth is config/prompts/reviewer.md;

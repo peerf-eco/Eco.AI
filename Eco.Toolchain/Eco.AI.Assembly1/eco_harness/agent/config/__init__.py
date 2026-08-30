@@ -1,4 +1,4 @@
-from agent.config.loader import (
+from eco_harness.agent.config.loader import (
     BudgetSpec,
     HarnessConfig,
     ModelProfile,

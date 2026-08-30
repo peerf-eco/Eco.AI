@@ -33,7 +33,7 @@ from typing import Iterable, Optional
 
 import sqlite_vec
 
-from agent.rag.chunker_base import Chunk, ChunkKind
+from eco_harness.agent.rag.chunker_base import Chunk, ChunkKind
 
 logger = logging.getLogger(__name__)
 

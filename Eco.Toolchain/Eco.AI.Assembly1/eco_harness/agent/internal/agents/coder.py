@@ -5,13 +5,13 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from agent.internal.eco_agent import EcoAgent
-from agent.internal.tools.code_search import make_code_search_tools
-from agent.internal.tools.handoff import make_handoff_tool, make_fail_tool
-from agent.internal.tools.io import make_read_tools, make_write_tools
-from agent.internal.tools.build import make_build_tools
-from agent.internal.tools.rag import make_search_marketplace_tool
-from agent.internal.tools.eco_wizard import make_eco_wizard_tool
+from eco_harness.agent.internal.eco_agent import EcoAgent
+from eco_harness.agent.internal.tools.code_search import make_code_search_tools
+from eco_harness.agent.internal.tools.handoff import make_handoff_tool, make_fail_tool
+from eco_harness.agent.internal.tools.io import make_read_tools, make_write_tools
+from eco_harness.agent.internal.tools.build import make_build_tools
+from eco_harness.agent.internal.tools.rag import make_search_marketplace_tool
+from eco_harness.agent.internal.tools.eco_wizard import make_eco_wizard_tool
 # Fallback only. The editable source of truth is config/prompts/coder.md;
 # eco_harness.roles._role_prompt resolves workspace > config/prompts > this.
 CODER_SYSTEM_PROMPT = """\

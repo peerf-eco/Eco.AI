@@ -31,8 +31,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from agent.config.loader import HarnessConfig, PermissionSpec, RoleSpec
-from agent.internal.eco_agent import EcoTool, ToolResult
+from eco_harness.agent.config.loader import HarnessConfig, PermissionSpec, RoleSpec
+from eco_harness.agent.internal.eco_agent import EcoTool, ToolResult
 
 # Permission group → concrete tool names. Keep in sync with the settings UI.
 TOOL_GROUPS: dict[str, frozenset[str]] = {

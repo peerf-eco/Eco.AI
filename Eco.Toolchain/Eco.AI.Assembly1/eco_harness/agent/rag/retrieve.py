@@ -15,8 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from agent.rag.embedder import Embedder
-from agent.rag.store import RagStore
+from eco_harness.agent.rag.embedder import Embedder
+from eco_harness.agent.rag.store import RagStore
 
 
 @dataclass

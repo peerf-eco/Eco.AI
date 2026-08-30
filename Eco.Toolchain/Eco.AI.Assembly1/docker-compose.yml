@@ -73,7 +73,7 @@ services:
       - ../../../../Dist/eco-wizard/eco-wizard:/opt/eco-wizard:ro
     ports:
       - "127.0.0.1:8100:8000"
-    command: ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["uvicorn", "eco_harness.backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 10s

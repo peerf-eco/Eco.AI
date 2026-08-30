@@ -14,9 +14,10 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Add project root to PYTHONPATH for agent imports
+# Add the repo root (dev checkout) to PYTHONPATH for direct `python server.py`
+# runs; package imports work without it under uvicorn from the repo root.
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from typing import List, Dict, Any, AsyncGenerator
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
@@ -25,13 +26,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from agent.config.loader import (
+from eco_harness.agent.config.loader import (
     load_config,
     load_marketplace_framework_components,
     load_role_config,
 )
-from agent.internal.tools import binaries, paths
-from backend.session_export import (
+from eco_harness.agent.internal.tools import binaries, paths
+from eco_harness.backend.session_export import (
     build_project_export,
     default_traces_root,
     iter_project_jsonl,
@@ -45,13 +46,16 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
+# Installed mode: also load the app-home .env ($ECO_HOME/.env). Precedence is
+# .env < process env — dotenv never overrides variables that are already set.
+load_dotenv(paths.eco_home() / ".env")
 
 logger = logging.getLogger(__name__)
 
 # RAG init status
 
 app = FastAPI(title="EcoOS Agent API")
-HARNESS_CONFIG = load_config(Path(__file__).resolve().parent.parent)
+HARNESS_CONFIG = load_config()
 
 _configured_origins = [
     origin.strip()
@@ -70,9 +74,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount output files
-os.makedirs("output", exist_ok=True)
-app.mount("/files", StaticFiles(directory="output"), name="files")
+def _output_root() -> Path:
+    """Shared output-root policy (see paths.output_root)."""
+    return paths.output_root()
+
+
+_output_dir = _output_root()
+os.makedirs(_output_dir, exist_ok=True)
+app.mount("/files", StaticFiles(directory=str(_output_dir)), name="files")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -100,10 +109,6 @@ ACTIVE_SESSIONS: dict[str, "WebSocket"] = {}
 # registry entry only — sessions, traces, and folders are never touched.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _output_root() -> Path:
-    return Path(os.getenv("HARNESS_OUTPUT_ROOT", "./output")).resolve()
-
-
 def _context_window() -> int:
     """Configured model context window (tokens) for the session context-load
     gauge. Override with HARNESS_CONTEXT_WINDOW; the default is a safe 128k."""
@@ -111,6 +116,11 @@ def _context_window() -> int:
         return max(1024, int(os.getenv("HARNESS_CONTEXT_WINDOW", "131072")))
     except (TypeError, ValueError):
         return 131072
+
+
+def _traces_root() -> Path:
+    """Shared traces-root policy (see paths.traces_root)."""
+    return paths.traces_root()
 
 
 def _registry_path() -> Path:
@@ -849,7 +859,7 @@ def _session_trace_dir(session: dict) -> Path:
     """
     raw = session.get("thread_id") or session.get("id") or ""
     short = raw[:8] if raw else "unknown"
-    return Path(os.getenv("HARNESS_TRACES_DIR", "traces")) / f"ses-{short}"
+    return _traces_root() / f"ses-{short}"
 
 
 def _session_trace_dirs(session: dict) -> list[Path]:
@@ -863,7 +873,7 @@ def _session_trace_dirs(session: dict) -> list[Path]:
     """
     raw = session.get("thread_id") or session.get("id") or ""
     short = raw[:8] if raw else "unknown"
-    root = Path(os.getenv("HARNESS_TRACES_DIR", "traces"))
+    root = _traces_root()
     candidates = [root / f"ses-{short}", root / f"chat-{short}"]
     return [c for c in candidates if c.is_dir()]
 
@@ -873,7 +883,7 @@ def _session_trace_dir(session: dict) -> Path:
     that scans both new and legacy dirs, use ``_session_trace_dirs``."""
     raw = session.get("thread_id") or session.get("id") or ""
     short = raw[:8] if raw else "unknown"
-    return Path(os.getenv("HARNESS_TRACES_DIR", "traces")) / f"ses-{short}"
+    return _traces_root() / f"ses-{short}"
 
 
 def _session_trace_meta(session: dict) -> dict:
@@ -937,7 +947,7 @@ async def session_messages(session_id: str):
     if session is None:
         raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
 
-    from backend.session_export import session_turns, default_traces_root
+    from eco_harness.backend.session_export import session_turns, default_traces_root
 
     turns = session_turns(session, default_traces_root())
     messages: list[dict] = []
@@ -1381,7 +1391,7 @@ def _validate_workspace_sections(provided: dict[str, Any]) -> None:
     loader uses, so a bad payload is answered with a 400 at save time instead
     of a crashed harness at next restart.
     """
-    from agent.config.loader import LanguageSpec, ModelProfile, PermissionSpec, ProviderProfile, RoleSpec
+    from eco_harness.agent.config.loader import LanguageSpec, ModelProfile, PermissionSpec, ProviderProfile, RoleSpec
     from pydantic import ValidationError
 
     try:
@@ -1452,7 +1462,7 @@ async def update_workspace_config(request: WorkspaceConfigRequest):
     # broken in-memory state behind.
     try:
         HARNESS_CONFIG = await asyncio.to_thread(
-            load_config, Path(__file__).resolve().parent.parent,
+            load_config,
         )
     except Exception as error:
         logger.exception("workspace config reload failed after save")
@@ -1501,10 +1511,7 @@ async def import_rag_documents(
 
 @app.get("/rag/export")
 async def export_rag_index():
-    index_path = Path(os.getenv(
-        "MARKETPLACE_INDEX_PATH",
-        str(Path(__file__).resolve().parent.parent / "marketplace_index.sqlite"),
-    ))
+    index_path = _marketplace_index_path()
     if not index_path.is_file():
         raise HTTPException(status_code=404, detail="Marketplace RAG index is unavailable")
     return FileResponse(
@@ -1515,18 +1522,13 @@ async def export_rag_index():
 
 
 def _marketplace_index_path() -> Path:
-    return Path(os.getenv(
-        "MARKETPLACE_INDEX_PATH",
-        str(Path(__file__).resolve().parent.parent / "marketplace_index.sqlite"),
-    ))
+    return paths.marketplace_index_path()
 
 
 def _fetch_summary_path() -> Path:
     """marketplace_cache/_fetch_summary.json — written by
     scripts/fetch_marketplace.py on every marketplace pull."""
-    return Path(__file__).resolve().parent.parent / (
-        "marketplace_cache/_fetch_summary.json"
-    )
+    return paths.marketplace_cache_root() / "_fetch_summary.json"
 
 
 @app.get("/rag/status")
@@ -1625,7 +1627,7 @@ def _rag_update_append_log(line: str) -> None:
 
 
 def _run_rag_update() -> None:
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = paths.repo_root()
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     index_path = _marketplace_index_path()
     try:
@@ -1713,7 +1715,10 @@ class RagTokenUpdate(BaseModel):
 
 
 def _env_file_path() -> Path:
-    return Path(__file__).resolve().parent.parent / ".env"
+    """Dev checkout: <repo>/.env. Installed wheel: $ECO_HOME/.env."""
+    if paths.is_dev_checkout():
+        return paths.repo_root() / ".env"
+    return paths.eco_home() / ".env"
 
 
 def _mask_token(token: str) -> str | None:
@@ -1735,6 +1740,12 @@ def _upsert_env_file(key: str, value: str | None) -> None:
         lines.append(f"{key}={value}")
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    # Secrets (API keys, tokens) live in this file — keep it user-only even
+    # if it was created world-readable by an older run.
+    try:
+        env_path.chmod(0o600)
+    except OSError:
+        pass
 
 
 @app.get("/rag/token")
@@ -1764,6 +1775,107 @@ async def set_rag_token(payload: RagTokenUpdate):
             ),
         ) from error
     return {"configured": bool(token), "masked": _mask_token(token)}
+
+
+# ── First-run setup wizard (/setup) ──────────────────────────────────────────
+# The wizard is purely opt-in convenience: missing keys NEVER block install or
+# app launch (the harness degrades to preflight-style warnings instead). It
+# validates the OpenRouter key with a live minimal call, writes the chosen
+# values into the .env the server loads (repo .env on a dev checkout,
+# $ECO_HOME/.env installed), and mirrors them into the running process env.
+# Precedence stays: .env < process env — existing env vars always win.
+
+class SetupConfigRequest(BaseModel):
+    openrouter_key: str = ""
+    eco_token: str = ""
+    llm_model: str | None = None
+    embeddings_model: str | None = None
+
+
+@app.get("/api/setup/status")
+async def setup_status():
+    """What the wizard needs, what is configured, where config is stored."""
+    return {
+        "configured": bool(os.getenv("OPENAI_API_KEY", "")),
+        "items": {
+            "openrouter_key": {
+                "label": "OpenRouter API key",
+                "required": True,
+                "configured": bool(os.getenv("OPENAI_API_KEY", "")),
+                "masked": _mask_token(os.getenv("OPENAI_API_KEY", "")),
+            },
+            "eco_token": {
+                "label": "EcoOS marketplace token",
+                "required": False,
+                "configured": bool(os.getenv("ECO_API_TOKEN", "")),
+                "masked": _mask_token(os.getenv("ECO_API_TOKEN", "")),
+            },
+            "llm_model": {
+                "label": "LLM model",
+                "required": False,
+                "configured": bool(os.getenv("LLM_MODEL", "")),
+                "masked": None,
+            },
+        },
+        "env_file": str(_env_file_path()),
+        "skippable": True,
+    }
+
+
+async def _validate_openrouter_key(key: str, base_url: str) -> None:
+    """Live minimal OpenRouter call — rejects typos at setup time."""
+    import httpx
+
+    url = base_url.rstrip("/") + "/key"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                url, headers={"Authorization": f"Bearer {key}"},
+            )
+    except httpx.HTTPError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach OpenRouter ({base_url}): {error}",
+        ) from error
+    if response.status_code == 401:
+        raise HTTPException(
+            status_code=400, detail="OpenRouter rejected this key (401).",
+        )
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=400,
+            detail=f"OpenRouter key check failed (HTTP {response.status_code}).",
+        )
+
+
+@app.post("/api/setup/config")
+async def setup_config(payload: SetupConfigRequest):
+    """Validate + persist wizard values. Skippable by design: an empty body
+    simply reports current status."""
+    updated: list[str] = []
+    key = payload.openrouter_key.strip()
+    if key:
+        base_url = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1")
+        await _validate_openrouter_key(key, base_url)
+        os.environ["OPENAI_API_KEY"] = key
+        await asyncio.to_thread(_upsert_env_file, "OPENAI_API_KEY", key)
+        updated.append("OPENAI_API_KEY")
+    token = payload.eco_token.strip()
+    if token:
+        os.environ["ECO_API_TOKEN"] = token
+        await asyncio.to_thread(_upsert_env_file, "ECO_API_TOKEN", token)
+        updated.append("ECO_API_TOKEN")
+    if payload.llm_model and payload.llm_model.strip():
+        os.environ["LLM_MODEL"] = payload.llm_model.strip()
+        await asyncio.to_thread(_upsert_env_file, "LLM_MODEL", payload.llm_model.strip())
+        updated.append("LLM_MODEL")
+    if payload.embeddings_model and payload.embeddings_model.strip():
+        os.environ["EMBEDDINGS_MODEL"] = payload.embeddings_model.strip()
+        await asyncio.to_thread(
+            _upsert_env_file, "EMBEDDINGS_MODEL", payload.embeddings_model.strip(),
+        )
+        updated.append("EMBEDDINGS_MODEL")
+    return {"status": "ok", "updated": updated}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1829,7 +1941,7 @@ def _build_chat_model(config) -> Any:
     Returns None when no cheap profile is configured, so callers can skip the
     gate and always run the pipeline.
     """
-    from agent.main import get_model
+    from eco_harness.agent.main import get_model
     profile = config.models.get("cheap_fast")
     if profile is None:
         return None
@@ -1874,8 +1986,8 @@ async def _classify_intent(user_req: str, model) -> bool:
     answer. We fail SAFE toward running the pipeline: only an explicit CHAT (and
     no CODE) is treated as a question; ambiguity / empty / error → CODE.
     """
-    from agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
-    from agent.pi_ai.stream import complete
+    from eco_harness.agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
+    from eco_harness.agent.pi_ai.stream import complete
     ctx = Context(
         systemPrompt=_CHAT_GATE_SYS,
         messages=[UserMessage(content=user_req, timestamp=0)],
@@ -1907,9 +2019,9 @@ async def _chat_reply(
     pipeline calls) so plain-chat turns show up in session exports. The file's
     ``NNN`` sequence is assigned by ``write_call_trace`` from the on-disk file
     count; ``call_no`` is recorded in the trace metadata for correlation."""
-    from agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
-    from agent.pi_ai.stream import complete
-    from agent.internal.call_trace import write_call_trace
+    from eco_harness.agent.pi_ai.types import Context, UserMessage, SimpleStreamOptions
+    from eco_harness.agent.pi_ai.stream import complete
+    from eco_harness.agent.internal.call_trace import write_call_trace
     user_msg = user_req
     if attached_ctx:
         user_msg = attached_ctx + user_msg
@@ -2464,9 +2576,7 @@ _FRAMEWORK_SUBDIRS = ("SharedFiles", "BuildFiles/Linux/x86_64/StaticRelease")
 
 
 def _framework_components() -> tuple[str, ...]:
-    return load_marketplace_framework_components(
-        Path(__file__).resolve().parent.parent,
-    )
+    return load_marketplace_framework_components()
 
 
 def _prepull_framework(project_dir: Path, cache_root: Path) -> list[str]:
@@ -2569,7 +2679,7 @@ async def chat_endpoint(websocket: WebSocket):
     # A malformed workspace.yaml falls back to the last known good config.
     try:
         connection_config = await asyncio.to_thread(
-            load_config, Path(__file__).resolve().parent.parent,
+            load_config,
         )
     except Exception:
         logger.exception("config reload at WS connect failed; using last known good")
@@ -2577,7 +2687,7 @@ async def chat_endpoint(websocket: WebSocket):
     await websocket.accept()
 
     # Lazy imports — keep startup light even if the role layer churns.
-    from agent.internal.orchestrator import Orchestrator
+    from eco_harness.agent.internal.orchestrator import Orchestrator
 
     # The harness uses pi_ai.Model directly (no langchain). This is the path where
     # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
@@ -2645,22 +2755,11 @@ async def chat_endpoint(websocket: WebSocket):
         # relative `read`/`glob` calls saw an inconsistent tree, and the run
         # failed without writing any source file.
         #
-        # Fix: anchor the default to the *repository* root (the directory
-        # holding the server file), not to the server's CWD. `Path(__file__).resolve().parent`
-        # is the backend/ directory; its parent is the repository root.
-        # Repo-root-anchored defaults make the path independent of the
-        # process's CWD regardless of how the server was launched.
-        repo_root = Path(__file__).resolve().parent.parent
-        env_root = os.getenv("HARNESS_OUTPUT_ROOT")
-        if env_root:
-            base = Path(env_root)
-            if not base.is_absolute():
-                base = (repo_root / base).resolve()
-            else:
-                base = base.resolve()
-        else:
-            base = (repo_root / "output").resolve()
-        return base / f"proj-{thread_id[:8]}"
+        # Fix: anchor the default to the shared _output_root() policy —
+        # HARNESS_OUTPUT_ROOT (CWD-relative values resolve against the dev
+        # repo root), <repo>/output on a dev checkout, <ECO_HOME>/output in
+        # installed mode. Always absolute, never CWD-dependent.
+        return _output_root() / f"proj-{thread_id[:8]}"
 
     project_dir = _default_project_dir()
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -2690,16 +2789,7 @@ async def chat_endpoint(websocket: WebSocket):
     # repository root so the path is independent of the server's CWD — the
     # same bug that nested output/chat-* under output/chat-*/* would also
     # have nested traces/ under traces/chat-9257ff60/--app/.../traces/chat-*.
-    repo_root = Path(__file__).resolve().parent.parent
-    env_traces = os.getenv("HARNESS_TRACES_DIR")
-    if env_traces:
-        traces_base = Path(env_traces)
-        if not traces_base.is_absolute():
-            traces_base = (repo_root / traces_base).resolve()
-        else:
-            traces_base = traces_base.resolve()
-    else:
-        traces_base = (repo_root / "traces").resolve()
+    traces_base = _traces_root()
     trace_dir = traces_base / f"ses-{thread_id[:8]}"
     trace_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2929,7 +3019,11 @@ async def chat_endpoint(websocket: WebSocket):
             if payload.get("use_worktree") and not use_worktree:
                 try:
                     worktree = create_worktree(
-                        connection_config.root,
+                        # Worktrees branch the USER's project, not the harness
+                        # install: in installed mode config.root is ECO_HOME
+                        # (not a git repo), so anchor on ECO_PROJECT_DIR — the
+                        # folder the UI picker registered for this session.
+                        paths.project_dir(),
                         thread_id,
                         name=payload.get("worktree_name"),
                         root=connection_config.worktree_root,
@@ -2979,7 +3073,7 @@ async def chat_endpoint(websocket: WebSocket):
                 _, role_spec, role_profile = load_role_config(
                     one_shot_role, connection_config.root,
                 )
-                from agent.main import get_model as _get_model
+                from eco_harness.agent.main import get_model as _get_model
                 role_backend = role_spec.backend.removesuffix("_cli")
                 one_shot = make_role_agent(
                     one_shot_role,
@@ -3077,7 +3171,7 @@ async def chat_endpoint(websocket: WebSocket):
                 _, architect_spec, architect_profile = load_role_config(
                     "architect", connection_config.root,
                 )
-                from agent.main import get_model as _get_model
+                from eco_harness.agent.main import get_model as _get_model
                 architect_backend = architect_spec.backend.removesuffix("_cli")
                 planner = make_role_agent(
                     "architect",
@@ -3297,7 +3391,7 @@ async def chat_endpoint(websocket: WebSocket):
             # coder.to_architect is terminated — we don't restart the planner
             # from inside the sub-orchestrator (user already approved the plan;
             # if coder thinks the plan is wrong, it should fail honestly).
-            from agent.internal.entry import (
+            from eco_harness.agent.internal.entry import (
                 EXECUTION_EDGES,
                 EXECUTION_ENTRY,
                 MIGRATE_EDGES,
@@ -3501,6 +3595,58 @@ async def chat_endpoint(websocket: WebSocket):
         # close an already-dead socket.
         if ACTIVE_SESSIONS.get(thread_id) is websocket:
             ACTIVE_SESSIONS.pop(thread_id, None)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STATIC UI — the Next.js static export shipped inside the wheel
+# (eco_harness/web_static, built in CI). Mounted LAST so every API / WS route
+# above keeps priority; unknown paths fall back to index.html (SPA-style
+# client-side routing), except API-shaped paths which stay 404.
+#
+# In the dev stack the UI runs via `next dev` on its own port and this mount
+# is skipped (no built out/ present) — nothing changes for developers.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_API_PREFIXES = ("/api/", "/rag", "/ws/", "/files/", "/config", "/health")
+
+
+class _SPAFallbackStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 404 and not scope.get(
+            "path", ""
+        ).startswith(_API_PREFIXES):
+            # Next.js static export emits flat `<route>.html` files, so
+            # /setup must resolve to setup.html before the index fallback.
+            html_response = await super().get_response(f"{path}.html", scope)
+            if html_response.status_code != 404:
+                return html_response
+            return await super().get_response("index.html", scope)
+        return response
+
+
+def _web_static_dir() -> Path | None:
+    """First existing static-UI build: wheel package data → dev export out/."""
+    candidates = [
+        paths.package_root() / "web_static",
+        paths.repo_root() / "frontend" / "out",
+    ]
+    for candidate in candidates:
+        if (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+_web_static = _web_static_dir()
+if _web_static is not None:
+    app.mount(
+        "/",
+        _SPAFallbackStaticFiles(directory=str(_web_static), html=True),
+        name="ui",
+    )
+    logger.info("serving static UI from %s", _web_static)
+else:
+    logger.info("no static UI build found — API-only mode")
 
 
 if __name__ == "__main__":
