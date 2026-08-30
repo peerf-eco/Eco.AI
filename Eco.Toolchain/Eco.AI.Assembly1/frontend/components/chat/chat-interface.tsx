@@ -631,13 +631,39 @@ export function ChatInterface() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
-  // When a run settles, refresh the panel so the finished session shows up
-  // under its project without a manual page reload.
+  // Panel follows the run lifecycle in both directions:
+  //  • run start — the backend registers the session the moment a request
+  //    passes validation (_record_session_start), so refetch immediately and
+  //    once more shortly after to beat the registration race; the new ses-
+  //    card then appears under its project while the pipeline is still
+  //    running, not only after it finishes.
+  //  • run end — the terminal status replaces the running card.
   const wasProcessing = useRef(false);
   useEffect(() => {
+    if (!wasProcessing.current && isProcessing) {
+      void refreshProjects();
+      const t = setTimeout(() => void refreshProjects(), 600);
+      return () => clearTimeout(t);
+    }
     if (wasProcessing.current && !isProcessing) void refreshProjects();
     wasProcessing.current = isProcessing;
   }, [isProcessing, refreshProjects]);
+
+  // Refresh whenever the socket (re)connects: a missed pipeline_done (back-
+  // ground tab, WS drop, server restart) otherwise leaves the panel with a
+  // stale "running" card that keeps the project's 3-dot menu disabled
+  // (removeBlocked) until a manual reload.
+  useEffect(() => {
+    if (isConnected) void refreshProjects();
+  }, [isConnected, refreshProjects]);
+
+  // Light periodic refresh catches registry changes made outside this page —
+  // an abort from another tab, or a session that ended while no transition
+  // above fired. GET /api/projects is report-only and sub-millisecond warm.
+  useEffect(() => {
+    const timer = setInterval(() => void refreshProjects(), 60_000);
+    return () => clearInterval(timer);
+  }, [refreshProjects]);
 
   const onSend = () => {
     if (!input.trim() || !isConnected || isProcessing) return;

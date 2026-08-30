@@ -515,10 +515,15 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     };
 
     ws.onclose = () => {
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-        setIsConnected(false);
-      }
+      // Only the CURRENT socket may drive reconnect bookkeeping. An orphaned
+      // socket (StrictMode/dev double-mount, one replaced by connectThread or
+      // New Session) must die quietly: if its close also scheduled a
+      // reconnect, every orphan kept its own backoff loop alive forever —
+      // observed as paired /ws/chat reconnects against a stale thread_id
+      // plus uvicorn accept-state crashes on the server.
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
+      setIsConnected(false);
       if (!intentionalClose.current) {
         const delay = Math.min(500 * Math.pow(2, reconnectAttempt.current), 15000);
         reconnectAttempt.current += 1;
