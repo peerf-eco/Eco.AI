@@ -1,14 +1,67 @@
-# Release pipeline: build → publish → manifest.
+# Release pipeline: build → publish-image ─┐
+#                          └─ publish-manifest (independent)
 #
 # Publishes:
-#   - wheel to PyPI (pypi.org/project/eco-harness)
 #   - multi-arch container image to ghcr.io (linux/amd64 + linux/arm64)
-#   - manifest.json + assets (installer scripts, binaries, index) to S3
+#   - wheel + manifest.json + installer scripts + binaries + RAG index to S3
+#     served at https://downloads.ecoos.dev/eco-harness/
 #
-# The manifest is the single version source of truth consumed by the
-# installers and `eco-harness update`; binary publishing for eco-cli /
-# eco-wizard stays owned by the EcoCLI pipeline — this workflow only bundles
-# already-staged artifacts (see scripts/release/build_manifest.py).
+# ── Triggers ────────────────────────────────────────────────────────────────
+#   push v* tag  →  full publish (dry_run=false implicitly)
+#   workflow_dispatch (manual)  →  dry_run=true by default; set to false to publish
+#
+# ── Why binaries and RAG index use permanent storage, not GHA artifacts ──────
+#   GHA artifacts are ephemeral (expire after retention period) and tied to a
+#   specific run-id — you cannot upload to a completed run, and you cannot
+#   reference them across unrelated workflow runs without knowing the run-id.
+#   eco-cli / eco-wizard use GitHub Releases (permanent, versioned, addressable
+#   by tag name). The RAG index uses S3 (same bucket as the release output,
+#   permanent, overwritten only when explicitly rebuilt). Both are fetched by
+#   the build job at release time with no manual coordination needed.
+#
+# ── Binary staging (eco-cli / eco-wizard) ───────────────────────────────────
+#   Fetched automatically from GitHub Releases at build time.
+#   Set ECO_CLI_RELEASE_REPO / ECO_WIZARD_RELEASE_REPO repo variables to the
+#   source repos (default: peerf-eco/eco-cli, peerf-eco/eco-wizard).
+#   Set ECO_CLI_VERSION / ECO_WIZARD_VERSION to pin a version (default: latest).
+#   To update after a new eco-cli release:
+#     Option A — pin: gh variable set ECO_CLI_VERSION --body "v2.1.0"
+#                     then push a v* tag or run workflow_dispatch -f dry_run=false
+#     Option B — always latest: just push a v* tag (ECO_CLI_VERSION unset)
+#     Option C — one-off: gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0
+#
+# ── RAG index ───────────────────────────────────────────────────────────────
+#   Stored permanently in S3 as a .zip (cross-platform; no tar required on Windows).
+#   Default path: s3://<RELEASE_S3_BUCKET>/index/marketplace_index.zip
+#   Override with repo variable RAG_INDEX_S3_URI.
+#   Build and upload once; every subsequent release fetches it automatically.
+#   Rebuild only when the marketplace snapshot changes:
+#
+#     source .venv/bin/activate          # Windows: .venv\Scripts\activate
+#     python scripts/build_marketplace_index.py
+#     zip -r marketplace_index.zip marketplace_index.sqlite marketplace_cache/
+#     aws s3 cp marketplace_index.zip \
+#       s3://<RELEASE_S3_BUCKET>/index/marketplace_index.zip
+#
+# ── AWS authentication ───────────────────────────────────────────────────────
+#   Preferred — OIDC (no stored long-lived secrets):
+#     1. IAM → Identity providers → Add: OpenID Connect
+#        URL: https://token.actions.githubusercontent.com  Audience: sts.amazonaws.com
+#     2. Create IAM role, trust condition:
+#        token.actions.githubusercontent.com:sub = repo:<org>/<repo>:ref:refs/tags/v*
+#     3. Attach policy: s3:PutObject + s3:GetObject + s3:ListBucket
+#        on arn:aws:s3:::<RELEASE_S3_BUCKET> and arn:aws:s3:::<RELEASE_S3_BUCKET>/*
+#     4. Set repo variable RELEASE_AWS_ROLE_ARN to the role ARN.
+#   Fallback — static keys:
+#     Set secrets RELEASE_AWS_ACCESS_KEY_ID + RELEASE_AWS_SECRET_ACCESS_KEY.
+#
+# ── publish-image vs publish-manifest ───────────────────────────────────────
+#   Both jobs depend only on `build` and run in parallel.
+#   publish-manifest does NOT wait for publish-image so a manifest-only update
+#   (new binary versions, new RAG index) never triggers an image rebuild.
+#   Docker BuildKit (cache-from: type=gha) rebuilds only layers whose inputs
+#   changed. manifest.json is NOT in the Docker build context — manifest-only
+#   releases are always cache hits on the image side.
 name: release
 
 on:
@@ -17,18 +70,29 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Build only, publish nothing"
+        description: "Build only, publish nothing (default: true for safety)"
         type: boolean
         default: true
+      eco_cli_version:
+        description: "eco-cli version to bundle (e.g. v1.2.3; leave blank for latest)"
+        type: string
+        default: ""
+      eco_wizard_version:
+        description: "eco-wizard version to bundle (e.g. v1.2.3; leave blank for latest)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
   packages: write
+  id-token: write   # required for OIDC AWS authentication
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   AWS_REGION: ${{ vars.RELEASE_AWS_REGION }}
+  ECO_CLI_REPO: ${{ vars.ECO_CLI_RELEASE_REPO || 'peerf-eco/eco-cli' }}
+  ECO_WIZARD_REPO: ${{ vars.ECO_WIZARD_RELEASE_REPO || 'peerf-eco/eco-wizard' }}
 
 jobs:
   build:
@@ -49,15 +113,168 @@ jobs:
       - name: Build wheel (frontend export + package data baked in)
         run: bash scripts/release/build_wheel.sh
 
-      - name: Stage release assets
+      - name: Stage wheel and installer scripts
         run: |
           mkdir -p release-staging/dist release-staging/binaries release-staging/index
           cp dist/*.whl release-staging/dist/
-          # eco-cli / eco-wizard native builds arrive from the EcoCLI pipeline
-          # (staged under release-staging/binaries/<tool>/<os>/<arch>/ by a
-          # prior job or pipeline); copy installer scripts for stable hosting.
           mkdir -p release-staging/install
           cp scripts/install/install.sh scripts/install/install.ps1 release-staging/install/
+
+      # ── Fetch eco-cli / eco-wizard from GitHub Releases ──────────────────
+      # GitHub Releases are permanent and addressable by tag — no run-id needed.
+      # Version resolution: dispatch input → ECO_CLI_VERSION var → latest release.
+      # ── Binary fetch helper ───────────────────────────────────────────────
+      # Release assets are .zip archives containing the executable and any
+      # required dynamic libraries (e.g. libaws-crt-jni.so for eco-cli).
+      # The workflow extracts every file from the zip into the platform dir;
+      # build_manifest.py picks the first file alphabetically as the primary
+      # executable entry — name your executable so it sorts first (e.g.
+      # eco-cli before libaws-crt-jni.so).
+      # update.py::_refresh_binaries downloads only the primary executable
+      # listed in the manifest; dynamic libraries must be bundled separately
+      # or the zip must be the manifest artifact (see update.py note).
+      #
+      # Expected zip asset names per platform:
+      #   eco-cli-linux-amd64.zip, eco-cli-linux-arm64.zip,
+      #   eco-cli-darwin-amd64.zip, eco-cli-darwin-arm64.zip,
+      #   eco-cli-windows-amd64.zip
+      #   eco-wizard-linux-amd64.zip, eco-wizard-linux-arm64.zip, ...
+      - name: Fetch eco-cli binaries from GitHub Releases
+        id: fetch-eco-cli
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLI_VERSION: ${{ inputs.eco_cli_version || vars.ECO_CLI_VERSION }}
+        run: |
+          REPO="${ECO_CLI_REPO}"
+          VERSION="${CLI_VERSION:-}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null || true)
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "::warning::Could not resolve eco-cli version from $REPO — binaries will be absent. Set ECO_CLI_VERSION repo variable or ensure the release repo is accessible."
+            echo "fetched=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Fetching eco-cli $VERSION from $REPO"
+          # Keys: <os>/<arch>  Values: zip asset name in the GitHub Release
+          declare -A ASSETS=(
+            ["linux/amd64"]="eco-cli-linux-amd64.zip"
+            ["linux/arm64"]="eco-cli-linux-arm64.zip"
+            ["darwin/amd64"]="eco-cli-darwin-amd64.zip"
+            ["darwin/arm64"]="eco-cli-darwin-arm64.zip"
+            ["windows/amd64"]="eco-cli-windows-amd64.zip"
+          )
+          FETCHED=0
+          for PLATFORM in "${!ASSETS[@]}"; do
+            ASSET="${ASSETS[$PLATFORM]}"
+            OS=$(echo "$PLATFORM" | cut -d/ -f1)
+            ARCH=$(echo "$PLATFORM" | cut -d/ -f2)
+            DEST="release-staging/binaries/eco-cli/$OS/$ARCH"
+            mkdir -p "$DEST"
+            TMP_ZIP=$(mktemp --suffix=.zip)
+            if gh release download "$VERSION" --repo "$REPO" \
+                --pattern "$ASSET" --output "$TMP_ZIP" 2>/dev/null; then
+              # Extract all files from the zip flat into the platform dir.
+              # eco-cli zip contains: eco-cli (or eco-cli.exe), libaws-crt-jni.so, SKILL.md, ...
+              unzip -o -j "$TMP_ZIP" -d "$DEST"
+              chmod +x "$DEST"/* 2>/dev/null || true
+              # Keep the zip in staging so S3 hosts it for update.py downloads.
+              cp "$TMP_ZIP" "$DEST/$ASSET"
+              # Write version marker so build_manifest.py records it.
+              echo "$VERSION" > "$DEST/.version"
+              echo "  extracted $(ls $DEST | grep -v '^\.version$' | tr '\n' ' ')"
+              FETCHED=$((FETCHED + 1))
+            else
+              echo "::warning::eco-cli asset '$ASSET' not found in $REPO@$VERSION — skipping $PLATFORM"
+            fi
+            rm -f "$TMP_ZIP"
+          done
+          echo "fetched=$FETCHED" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          [ "$FETCHED" -gt 0 ] || echo "::warning::No eco-cli assets fetched — manifest binaries section will be empty."
+
+      - name: Fetch eco-wizard binaries from GitHub Releases
+        id: fetch-eco-wizard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WIZARD_VERSION: ${{ inputs.eco_wizard_version || vars.ECO_WIZARD_VERSION }}
+        run: |
+          REPO="${ECO_WIZARD_REPO}"
+          VERSION="${WIZARD_VERSION:-}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null || true)
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "::warning::Could not resolve eco-wizard version from $REPO — binaries will be absent."
+            echo "fetched=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Fetching eco-wizard $VERSION from $REPO"
+          declare -A ASSETS=(
+            ["linux/amd64"]="eco-wizard-linux-amd64.zip"
+            ["linux/arm64"]="eco-wizard-linux-arm64.zip"
+            ["darwin/amd64"]="eco-wizard-darwin-amd64.zip"
+            ["darwin/arm64"]="eco-wizard-darwin-arm64.zip"
+            ["windows/amd64"]="eco-wizard-windows-amd64.zip"
+          )
+          FETCHED=0
+          for PLATFORM in "${!ASSETS[@]}"; do
+            ASSET="${ASSETS[$PLATFORM]}"
+            OS=$(echo "$PLATFORM" | cut -d/ -f1)
+            ARCH=$(echo "$PLATFORM" | cut -d/ -f2)
+            DEST="release-staging/binaries/eco-wizard/$OS/$ARCH"
+            mkdir -p "$DEST"
+            TMP_ZIP=$(mktemp --suffix=.zip)
+            if gh release download "$VERSION" --repo "$REPO" \
+                --pattern "$ASSET" --output "$TMP_ZIP" 2>/dev/null; then
+              unzip -o -j "$TMP_ZIP" -d "$DEST"
+              chmod +x "$DEST"/* 2>/dev/null || true
+              cp "$TMP_ZIP" "$DEST/$ASSET"
+              echo "$VERSION" > "$DEST/.version"
+              echo "  extracted $(ls $DEST | grep -v '^\.version$' | tr '\n' ' ')"
+              FETCHED=$((FETCHED + 1))
+            else
+              echo "::warning::eco-wizard asset '$ASSET' not found in $REPO@$VERSION — skipping $PLATFORM"
+            fi
+            rm -f "$TMP_ZIP"
+          done
+          echo "fetched=$FETCHED" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # ── RAG index from S3 ─────────────────────────────────────────────────
+      # Stored permanently in S3 as a .zip (cross-platform, no tar required).
+      # Upload once after building locally (see workflow header comment).
+      # Every release fetches the current zip; rebuild and re-upload only
+      # when the marketplace snapshot changes.
+      - name: Configure AWS credentials for RAG index download (OIDC)
+        if: ${{ vars.RELEASE_AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials for RAG index download (static keys fallback)
+        if: ${{ vars.RELEASE_AWS_ROLE_ARN == '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.RELEASE_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.RELEASE_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download RAG index from S3
+        id: download-index
+        run: |
+          INDEX_URI="${{ vars.RAG_INDEX_S3_URI || format('s3://{0}/index/marketplace_index.zip', vars.RELEASE_S3_BUCKET) }}"
+          mkdir -p release-staging/index
+          if aws s3 cp "$INDEX_URI" release-staging/index/marketplace_index.zip; then
+            echo "fetched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::RAG index not found at $INDEX_URI." \
+                 "Build and upload it once: python scripts/build_marketplace_index.py &&" \
+                 "zip -r marketplace_index.zip marketplace_index.sqlite marketplace_cache/ &&" \
+                 "aws s3 cp marketplace_index.zip $INDEX_URI"
+            echo "fetched=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -67,9 +284,10 @@ jobs:
   publish-image:
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ inputs.dry_run != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: release-assets
@@ -96,6 +314,9 @@ jobs:
           mkdir -p docker/wheel
           cp release-staging/dist/*.whl docker/wheel/
 
+      # BuildKit rebuilds only layers whose inputs changed.
+      # manifest.json is NOT in the Docker build context — manifest-only
+      # releases (new binaries, new RAG index) are always full cache hits here.
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -108,11 +329,15 @@ jobs:
           cache-to: type=gha,mode=max
 
   publish-manifest:
-    needs: [build, publish-image]
+    # Independent of publish-image: runs in parallel after build.
+    # A manifest-only update (new eco-cli version, new RAG index) never
+    # waits for or triggers an image rebuild.
+    needs: build
     runs-on: ubuntu-latest
-    if: ${{ inputs.dry_run != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: release-assets
@@ -122,20 +347,47 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Resolve image tag for manifest
+        id: image-tag
+        run: |
+          WHL=$(ls release-staging/dist/eco_harness-*.whl 2>/dev/null | head -1)
+          if [ -z "$WHL" ]; then
+            echo "::error::No wheel found in release-staging/dist/ — build job failed."
+            exit 1
+          fi
+          VERSION=$(basename "$WHL" | cut -d- -f2)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Build manifest.json
         run: |
-          VERSION="$(basename release-staging/dist/eco_harness-*.whl | head -1 | cut -d- -f2)"
           python scripts/release/build_manifest.py \
             --staging release-staging \
             --base-url "${{ vars.RELEASE_BASE_URL }}" \
-            --image "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
+            --image "${{ steps.image-tag.outputs.image }}"
 
-      - name: Publish to S3 (manifest + installers)
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AWS_SECRET_ACCESS_KEY }}
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ vars.RELEASE_AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials (static keys fallback)
+        if: ${{ vars.RELEASE_AWS_ROLE_ARN == '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.RELEASE_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.RELEASE_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Publish to S3
         run: |
           aws s3 sync release-staging/ "s3://${{ vars.RELEASE_S3_BUCKET }}/" \
             --cache-control "public, max-age=300" \
-            --exclude "*" --include "manifest.json" --include "install/*" \
-            --include "binaries/*" --include "index/*" --include "dist/*"
+            --exclude "*" \
+            --include "manifest.json" \
+            --include "install/*" \
+            --include "binaries/*" \
+            --include "index/*" \
+            --include "dist/*"

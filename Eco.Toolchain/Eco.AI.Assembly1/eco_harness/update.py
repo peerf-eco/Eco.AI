@@ -17,8 +17,8 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.request import urlopen
@@ -98,56 +98,92 @@ def _refresh_binaries(manifest: dict, report: UpdateReport) -> None:
         entry = (platforms.get(system) or {}).get(arch)
         if not entry:
             continue
-        # Manifest keys become file paths — never let a hostile manifest
-        # traverse out of bin_dir (absolute paths, "..", separators).
         if not _SAFE_NAME_RE.fullmatch(name):
             report.errors.append(f"{name}: unsafe manifest key, skipped")
             continue
-        suffix = ".exe" if system == "windows" else ""
-        target = bin_dir / f"{name}{suffix}"
         try:
-            if not target.resolve().is_relative_to(bin_dir.resolve()):
-                raise RuntimeError("resolved target escapes ECO_HOME/bin")
-            if target.is_file() and _sha256(target) == entry.get("sha256"):
+            # Version-based skip: if the installed version marker matches the
+            # manifest version, all files from the previous zip are already
+            # in place — skip the download entirely.
+            manifest_version = entry.get("version")
+            version_marker = bin_dir / f".{name}.version"
+            if (
+                manifest_version
+                and version_marker.is_file()
+                and version_marker.read_text(encoding="utf-8").strip() == manifest_version
+            ):
                 continue
-            _download(entry["url"], target)
-            if _sha256(target) != entry.get("sha256"):
-                raise RuntimeError("sha256 mismatch after download")
-            if suffix != ".exe":
-                target.chmod(0o755)
-                if system == "darwin":
-                    # Gatekeeper stopgap: strip the quarantine attribute the
-                    # browser adds to downloaded files. Proper signing is the
-                    # EcoCLI pipeline's job.
-                    subprocess.run(
-                        ["xattr", "-d", "com.apple.quarantine", str(target)],
-                        check=False, capture_output=True,
-                    )
-            report.binaries.append(f"{name} → {target}")
-        except Exception as error:  # noqa: BLE001 - report, keep going
+
+            bin_dir.mkdir(parents=True, exist_ok=True)
+
+            zip_url = entry.get("zip_url")
+            zip_sha = entry.get("zip_sha256")
+            if zip_url and zip_sha:
+                # Download the full zip and extract all files flat into bin_dir.
+                # This handles eco-cli's bundle: eco-cli + libaws-crt-jni.so + SKILL.md
+                with tempfile.TemporaryDirectory(prefix=f"eco-{name}-") as tmp:
+                    zip_path = Path(tmp) / f"{name}.zip"
+                    _download(zip_url, zip_path)
+                    if _sha256(zip_path) != zip_sha:
+                        raise RuntimeError("zip sha256 mismatch after download")
+                    with zipfile.ZipFile(zip_path, "r") as zf:
+                        for member in zf.namelist():
+                            # Flat extraction into bin_dir — skip any directory entries
+                            # and validate names before writing.
+                            if member.endswith("/"):
+                                continue
+                            member_name = Path(member).name
+                            if not _SAFE_NAME_RE.fullmatch(member_name):
+                                raise RuntimeError(f"unsafe zip member name: {member_name}")
+                            dest = bin_dir / member_name
+                            if not dest.resolve().is_relative_to(bin_dir.resolve()):
+                                raise RuntimeError(f"zip member escapes bin_dir: {member_name}")
+                            dest.write_bytes(zf.read(member))
+                            if system != "windows" and not member_name.endswith(
+                                (".so", ".dylib", ".md", ".txt")
+                            ):
+                                dest.chmod(0o755)
+                            if system == "darwin" and dest.stat().st_mode & 0o111:
+                                subprocess.run(
+                                    ["xattr", "-d", "com.apple.quarantine", str(dest)],
+                                    check=False, capture_output=True,
+                                )
+            else:
+                # Fallback: manifest has no zip — download primary executable only.
+                suffix = ".exe" if system == "windows" else ""
+                target = bin_dir / f"{name}{suffix}"
+                if not target.resolve().is_relative_to(bin_dir.resolve()):
+                    raise RuntimeError("resolved target escapes ECO_HOME/bin")
+                if target.is_file() and _sha256(target) == entry.get("sha256"):
+                    continue
+                _download(entry["url"], target)
+                if _sha256(target) != entry.get("sha256"):
+                    raise RuntimeError("sha256 mismatch after download")
+                if suffix != ".exe":
+                    target.chmod(0o755)
+                    if system == "darwin":
+                        subprocess.run(
+                            ["xattr", "-d", "com.apple.quarantine", str(target)],
+                            check=False, capture_output=True,
+                        )
+
+            if manifest_version:
+                version_marker.write_text(manifest_version, encoding="utf-8")
+            report.binaries.append(f"{name} {manifest_version or '?'} → {bin_dir}")
+        except Exception as error:  # noqa: BLE001
             report.errors.append(f"{name}: {error}")
 
 
-def _safe_extractall(archive: tarfile.TarFile, destination: Path) -> None:
-    """Extract a tarball rejecting absolute paths, ``..`` components, and
-    links pointing outside ``destination`` — on every 3.11.x.
-
-    ``TarFile.extractall(filter="data")`` (PEP 706) would do this too, but
-    the keyword only exists from 3.11.4, so we validate members explicitly
-    instead of depending on the patch release.
-    """
+def _safe_extractall_zip(archive: zipfile.ZipFile, destination: Path) -> None:
+    """Extract a zip rejecting absolute paths and ``..`` components."""
     dest_root = destination.resolve()
-    for member in archive.getmembers():
-        target = (dest_root / member.name).resolve()
-        if member.name.startswith(("/", "\\")) or ".." in Path(member.name).parts:
-            raise RuntimeError(f"unsafe tar member: {member.name}")
-        if not (
-            target == dest_root or dest_root in target.parents
-        ):
-            raise RuntimeError(f"tar member escapes destination: {member.name}")
-        if member.issym() or member.islnk():
-            raise RuntimeError(f"link members not supported: {member.name}")
-    archive.extractall(path=destination, members=archive.getmembers())
+    for member in archive.namelist():
+        target = (dest_root / member).resolve()
+        if member.startswith(("/", "\\")) or ".." in Path(member).parts:
+            raise RuntimeError(f"unsafe zip member: {member}")
+        if not (target == dest_root or dest_root in target.parents):
+            raise RuntimeError(f"zip member escapes destination: {member}")
+    archive.extractall(path=destination)
 
 
 def _refresh_index(manifest: dict, report: UpdateReport) -> None:
@@ -162,18 +198,14 @@ def _refresh_index(manifest: dict, report: UpdateReport) -> None:
     ):
         return
     with tempfile.TemporaryDirectory(prefix="eco-harness-index-") as tmp:
-        tarball = Path(tmp) / "index.tar.gz"
+        archive_path = Path(tmp) / "index.zip"
         try:
-            _download(index["url"], tarball)
-            if _sha256(tarball) != index.get("sha256"):
+            _download(index["url"], archive_path)
+            if _sha256(archive_path) != index.get("sha256"):
                 raise RuntimeError("sha256 mismatch after download")
             data_dir.mkdir(parents=True, exist_ok=True)
-            with tarfile.open(tarball, "r:gz") as archive:
-                # Member validation happens in _safe_extractall (works on
-                # every 3.11.x); the sha256 check alone only proves the
-                # tarball matches the manifest, it is not a trust statement
-                # about the archive contents.
-                _safe_extractall(archive, data_dir)
+            with zipfile.ZipFile(archive_path, "r") as archive:
+                _safe_extractall_zip(archive, data_dir)
             marker.write_text(index["sha256"], encoding="utf-8")
             report.index = f"updated ({index['sha256'][:12]})"
         except Exception as error:  # noqa: BLE001

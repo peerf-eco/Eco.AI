@@ -7,7 +7,10 @@ Manifest consumers:
 
 Inputs (release staging dir, default ./release-staging):
   binaries/<tool>/<os>/<arch>/<artifact>   native eco-cli / eco-wizard builds
-  index/marketplace_index.tar.gz           prebuilt RAG index + cache tarball
+                                           (extracted from per-platform .zip releases;
+                                           multiple files per dir are supported —
+                                           first alphabetically is the manifest entry)
+  index/marketplace_index.zip             prebuilt RAG index + cache zip
   dist/eco_harness-<ver>-py3-none-any.whl  wheel
   --image <repo:tag>                       published container image
   --base-url <url>                         public download root (S3/CDN)
@@ -63,25 +66,50 @@ def main() -> int:
         "image": None,
     }
 
+    # Binary version markers: release.yml writes <tool>/<os>/<arch>/.version
+    # containing the GitHub Release tag fetched (e.g. "v2.1.0"). The manifest
+    # records it so update.py can skip the zip download when unchanged.
+    # The zip itself is also staged alongside the extracted files so S3 hosts
+    # it for update.py to download on native installs.
     binaries_dir = staging / "binaries"
     if binaries_dir.is_dir():
         for tool_dir in sorted(p for p in binaries_dir.iterdir() if p.is_dir()):
             tool_entry: dict = {}
             for os_dir in sorted(p for p in tool_dir.iterdir() if p.is_dir()):
                 for arch_dir in sorted(p for p in os_dir.iterdir() if p.is_dir()):
-                    artifacts = sorted(arch_dir.iterdir())
+                    # Collect files, skip the hidden .version marker
+                    artifacts = sorted(
+                        p for p in arch_dir.iterdir()
+                        if p.is_file() and p.name != ".version"
+                    )
                     if not artifacts:
                         continue
-                    tool_entry.setdefault(os_dir.name, {})[arch_dir.name] = entry(
-                        artifacts[0], args.base_url,
-                        artifacts[0].relative_to(staging),
+                    # The .zip is the download unit for update.py; the primary
+                    # executable is the first non-zip file alphabetically.
+                    zip_files = [p for p in artifacts if p.suffix == ".zip"]
+                    exe_files = [p for p in artifacts if p.suffix != ".zip"]
+                    if not exe_files:
+                        continue
+                    primary = exe_files[0]
+                    platform_entry = entry(
+                        primary, args.base_url, primary.relative_to(staging),
                     )
+                    if zip_files:
+                        z = zip_files[0]
+                        platform_entry["zip_url"] = (
+                            f"{args.base_url.rstrip('/')}/{z.relative_to(staging).as_posix()}"
+                        )
+                        platform_entry["zip_sha256"] = sha256(z)
+                    version_file = arch_dir / ".version"
+                    if version_file.is_file():
+                        platform_entry["version"] = version_file.read_text(encoding="utf-8").strip()
+                    tool_entry.setdefault(os_dir.name, {})[arch_dir.name] = platform_entry
             manifest["binaries"][tool_dir.name] = tool_entry
 
-    index_tarball = staging / "index" / "marketplace_index.tar.gz"
-    if index_tarball.is_file():
+    index_zip = staging / "index" / "marketplace_index.zip"
+    if index_zip.is_file():
         manifest["index"] = entry(
-            index_tarball, args.base_url, index_tarball.relative_to(staging),
+            index_zip, args.base_url, index_zip.relative_to(staging),
         )
 
     wheels = sorted((staging / "dist").glob("eco_harness-*.whl")) if (
@@ -111,8 +139,8 @@ def main() -> int:
             )
         if not manifest["index"]:
             problems.append(
-                "index section is empty — stage the prebuilt RAG tarball at "
-                "<staging>/index/marketplace_index.tar.gz before building "
+                "index section is empty — stage the prebuilt RAG zip at "
+                "<staging>/index/marketplace_index.zip before building "
                 "the manifest",
             )
         if not manifest["wheel"]:

@@ -1139,3 +1139,247 @@ order = execution order.
 - [ ] **C8. Size/cost check:** final image is slim (`python:3.11-slim` +
       git/curl/gosu only) and the binaries/index stay OUT of the image
       (downloaded into the mounted `/data`).
+
+## 19. Release workflow — developer operations guide
+
+This section covers the day-to-day operations for the release pipeline
+introduced/revised in the current session. The canonical workflow file is
+`.github/workflows/release.yml`.
+
+### 19.1 What a GitHub Actions run-id is
+
+A **run-id** is a unique integer assigned by GitHub each time a workflow run
+starts. It is NOT a permanent value — every push, every manual trigger, every
+re-run produces a new run-id. You cannot know it before the run starts.
+
+```bash
+# List recent runs and their IDs:
+gh run list --workflow release.yml --limit 10
+
+# Example output:
+# STATUS  TITLE       WORKFLOW  EVENT             ID            ELAPSED  AGE
+# ✓       v1.2.0      release   push              12345678901   3m12s    1h
+# ✓       dry run     release   workflow_dispatch  12345678800   1m44s    3h
+
+# Watch a run in real time:
+gh run watch 12345678901
+
+# View logs:
+gh run view 12345678901 --log
+```
+
+`gh run upload` only works while a run is **in progress** (waiting at a
+`continue-on-error` step or a job that hasn't started yet). You cannot
+upload artifacts to a completed run. The correct pattern for the RAG index
+is a dedicated workflow that builds and uploads the artifact before the
+release run needs it — see §19.3.
+
+### 19.2 Binary staging — automatic fetch from GitHub Releases
+
+The `build` job in `release.yml` fetches eco-cli and eco-wizard binaries
+directly from GitHub Releases. No manual file placement is needed.
+
+**Version resolution order (per tool):**
+
+```text
+1. workflow_dispatch input  eco_cli_version / eco_wizard_version  (one-off override)
+2. repo variable            ECO_CLI_VERSION / ECO_WIZARD_VERSION   (pinned version)
+3. latest release           gh release view --repo <ECO_CLI_RELEASE_REPO>
+```
+
+**Expected zip asset names per platform** in the EcoCLI GitHub Release:
+
+```text
+eco-cli-linux-amd64.zip       # contains: eco-cli, libaws-crt-jni.so, ...
+eco-cli-linux-arm64.zip
+eco-cli-darwin-amd64.zip
+eco-cli-darwin-arm64.zip
+eco-cli-windows-amd64.zip     # contains: eco-cli.exe, *.dll, ...
+eco-wizard-linux-amd64.zip
+eco-wizard-linux-arm64.zip
+eco-wizard-darwin-amd64.zip
+eco-wizard-darwin-arm64.zip
+eco-wizard-windows-amd64.zip
+```
+
+The workflow extracts every file from each zip flat into
+`release-staging/binaries/<tool>/<os>/<arch>/` (no subdirectory nesting).
+This means the executable AND any dynamic libraries (e.g. `libaws-crt-jni.so`
+for eco-cli) land in the same directory. `build_manifest.py` picks the first
+file alphabetically as the manifest entry for that platform — name your
+executable so it sorts before any libraries (e.g. `eco-cli` sorts before
+`libaws-crt-jni.so`). `update.py::_refresh_binaries` downloads only that
+primary file; the dynamic libraries are bundled inside the zip that S3 hosts
+and are available to the Docker container via the bind-mount.
+
+**To update the installation package after a new eco-cli release:**
+
+```bash
+# Option A — pin the new version, then release normally:
+gh variable set ECO_CLI_VERSION --body "v2.1.0"
+git tag v1.5.0 && git push origin v1.5.0
+
+# Option B — always track latest (leave ECO_CLI_VERSION unset), just tag:
+git tag v1.5.0 && git push origin v1.5.0
+
+# Option C — one-off manual run, no new harness tag needed:
+gh workflow run release.yml \
+  -f dry_run=false \
+  -f eco_cli_version=v2.1.0 \
+  -f eco_wizard_version=v1.8.0
+```
+
+### 19.3 RAG index — building and uploading to S3
+
+The RAG index is stored permanently in S3 as a `.zip`. Use the dedicated
+script `scripts/push_marketplace_index.py` — it is separate from the basic
+marketplace scripts (`fetch_marketplace.py`, `build_marketplace_index.py`)
+which are used frequently without needing an S3 upload.
+
+```bash
+# Build the index first (needs OPENAI_API_KEY and ECO_API_TOKEN in .env):
+python scripts/build_marketplace_index.py
+
+# Upload index + cache to S3 (reads RELEASE_S3_BUCKET from .env or env):
+python scripts/push_marketplace_index.py
+
+# Index only (skip marketplace_cache/, smaller upload):
+python scripts/push_marketplace_index.py --index-only
+
+# Dry run — builds the zip locally, no upload:
+python scripts/push_marketplace_index.py --dry-run
+
+# Explicit bucket / prefix override:
+python scripts/push_marketplace_index.py --bucket my-bucket --prefix index/
+```
+
+The script uses `boto3` if installed, falls back to the `aws` CLI. The zip
+extracts flat: `marketplace_index.sqlite` and `marketplace_cache/` at the
+root, which is what `eco_harness.update._refresh_index` expects when it
+extracts into `$ECO_HOME/data/`.
+
+Rebuild and re-upload only when the marketplace snapshot changes. Every
+subsequent release fetches the current zip from S3 automatically.
+
+### 19.4 Binary versioning and update behavior
+
+The manifest now records `version`, `zip_url`, and `zip_sha256` per binary
+platform entry (written by `build_manifest.py` from the `.version` marker
+and the `.zip` file the workflow keeps in staging).
+
+`eco_harness.update._refresh_binaries` uses this for version-based skipping:
+
+```text
+manifest binary entry:
+  url:         primary executable URL (for display / fallback)
+  sha256:      primary executable sha256
+  zip_url:     full zip URL (eco-cli + libaws-crt-jni.so + SKILL.md + ...)
+  zip_sha256:  zip sha256
+  version:     GitHub Release tag (e.g. "v2.1.0")
+```
+
+Update logic per tool (eco-cli, eco-wizard):
+1. Read `$ECO_HOME/bin/.<name>.version` marker
+2. If marker == `manifest.version` → **skip** (all files already in place)
+3. Otherwise: download zip, verify sha256, extract all files flat into
+   `$ECO_HOME/bin/`, chmod +x executables, strip macOS quarantine,
+   write new version marker
+
+This means:
+- **Only Python harness updated** (new wheel, same binary versions) →
+  binaries are skipped entirely, update is fast
+- **eco-cli updated** (new zip version in manifest) → full zip downloaded,
+  all bundled files replaced (`eco-cli`, `libaws-crt-jni.so`, `SKILL.md`)
+- **eco-wizard updated independently** → only eco-wizard zip downloaded
+
+**Docker:** images are rebuilt with the new wheel baked in (`docker compose
+pull` updates the Python harness). The binaries live in the mounted
+`$ECO_HOME/bin/` volume, not in the image. `python -m eco_harness update`
+runs inside the container at startup and applies the same version-skip logic
+— so if only the wheel changed, binaries are not re-downloaded in the
+container either.
+
+### 19.4 Workflow triggers
+
+| Event | dry_run | What happens |
+|---|---|---|
+| `git push origin v1.2.3` | false (implicit) | full build + publish-image + publish-manifest |
+| `gh workflow run release.yml` | true (default) | build only, nothing published — safe to test |
+| `gh workflow run release.yml -f dry_run=false` | false | full publish without a new tag |
+| `gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0` | false | full publish, pin specific eco-cli version |
+
+The workflow does NOT trigger on branch pushes. Only `v*` tags trigger
+automatic publishing.
+
+### 19.5 publish-image vs publish-manifest — independence and caching
+
+Both `publish-image` and `publish-manifest` depend only on the `build` job
+and run in parallel. `publish-manifest` does NOT wait for `publish-image`.
+
+**Docker layer cache behavior** (`cache-from: type=gha`):
+
+- `manifest.json` is never in the Docker build context → manifest-only
+  updates (new eco-cli version, new RAG index) are always full cache hits
+  on the image side — the image is re-tagged without rebuilding any layer.
+- The wheel changes (new Python code) → layers from the `COPY wheel` step
+  onward are rebuilt; earlier layers (OS packages, Python install) are
+  cache hits.
+- `Dockerfile` changes → full rebuild from the changed instruction onward.
+
+This means you can publish a new eco-cli version or a refreshed RAG index
+without triggering any Docker build work.
+
+### 19.6 AWS authentication
+
+**Preferred — OIDC (no stored long-lived secrets):**
+
+One-time AWS setup:
+1. IAM → Identity providers → Add provider → OpenID Connect
+   - URL: `https://token.actions.githubusercontent.com`
+   - Audience: `sts.amazonaws.com`
+2. Create IAM role. Trust policy condition:
+   `token.actions.githubusercontent.com:sub` =
+   `repo:<org>/<repo>:ref:refs/tags/v*`
+3. Attach inline policy:
+   ```json
+   {
+     "Effect": "Allow",
+     "Action": ["s3:PutObject", "s3:GetObject", "s3:ListBucket"],
+     "Resource": [
+       "arn:aws:s3:::<RELEASE_S3_BUCKET>",
+       "arn:aws:s3:::<RELEASE_S3_BUCKET>/*"
+     ]
+   }
+   ```
+4. Set repo variable `RELEASE_AWS_ROLE_ARN` to the role ARN.
+
+The workflow uses OIDC when `RELEASE_AWS_ROLE_ARN` is set, and falls back
+to static key secrets (`RELEASE_AWS_ACCESS_KEY_ID` +
+`RELEASE_AWS_SECRET_ACCESS_KEY`) when it is not.
+
+### 19.7 Required GitHub repository configuration
+
+**Variables** (Settings → Secrets and variables → Actions → Variables):
+
+| Variable | Purpose | Example |
+|---|---|---|
+| `RELEASE_BASE_URL` | Public URL prefix for manifest download URLs | `https://downloads.ecoos.dev/eco-harness` |
+| `RELEASE_S3_BUCKET` | S3 bucket name | `eco-harness-releases` |
+| `RELEASE_AWS_REGION` | S3 bucket region | `us-east-1` |
+| `RELEASE_AWS_ROLE_ARN` | OIDC role ARN (blank → use static keys) | `arn:aws:iam::123456789:role/eco-release` |
+| `ECO_CLI_RELEASE_REPO` | GitHub repo for eco-cli releases | `peerf-eco/eco-cli` |
+| `ECO_WIZARD_RELEASE_REPO` | GitHub repo for eco-wizard releases | `peerf-eco/eco-wizard` |
+| `ECO_CLI_VERSION` | Pinned eco-cli version (blank → latest) | `v2.1.0` |
+| `ECO_WIZARD_VERSION` | Pinned eco-wizard version (blank → latest) | `v1.8.0` |
+| `RAG_INDEX_S3_URI` | Override default RAG index S3 path (blank → `s3://<bucket>/index/marketplace_index.tar.gz`) | `s3://my-bucket/index/marketplace_index.tar.gz` |
+
+**Secrets** (Settings → Secrets and variables → Actions → Secrets):
+
+| Secret | When needed |
+|---|---|
+| `RELEASE_AWS_ACCESS_KEY_ID` | Only when `RELEASE_AWS_ROLE_ARN` is not set |
+| `RELEASE_AWS_SECRET_ACCESS_KEY` | Only when `RELEASE_AWS_ROLE_ARN` is not set |
+
+`GITHUB_TOKEN` is provided automatically by GitHub — no configuration needed.
+It is used for ghcr.io image push (`packages: write`) and for `gh release
+download` to fetch eco-cli/eco-wizard assets from GitHub Releases.
