@@ -1,0 +1,124 @@
+﻿"""Pipeline entry point — assemble the three-agent pipeline and run it.
+
+Topology (declared edges):
+
+  architect ──to_coder──→ coder ──to_tester──→ tester ──done──→ END
+       │                    │                      │
+       │                    │                      └─to_coder──→ coder (backward retry)
+       │                    │
+       │                    └─to_architect──→ architect (escalation: plan was wrong)
+       │
+       └─fail──→ END (any agent can fail honestly at any time)
+
+Loop guard: max_hops=8 by default — enough for 2-3 coder/tester retry
+cycles, hard ceiling on mutual-handoff infinite loops.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Callable, Optional
+import os
+
+from eco_harness.agent.pi_ai import Model
+from eco_harness.agent.internal.agents.architect import make_architect
+from eco_harness.agent.internal.agents.coder import make_coder
+from eco_harness.agent.internal.agents.tester import make_tester
+from eco_harness.agent.internal.orchestrator import Orchestrator
+
+
+# The single source of truth for the pipeline topology.
+PIPELINE_EDGES: dict[str, dict[str, Optional[str]]] = {
+    "architect": {"to_coder":     "coder",     "fail": None},
+    "coder":     {"to_tester":    "tester",    "to_architect": "architect", "fail": None},
+    "tester":    {"to_coder":     "coder",     "done":         None,        "fail": None},
+}
+
+# Post-approval execution topology shared with the /ws/chat sub-orchestrator:
+# identical to PIPELINE_EDGES except coder.to_architect is terminated — the
+# user already approved the plan, so the coder must fail honestly instead of
+# restarting the planner. Declared here (not inline in server.py) so both
+# topologies stay in one place.
+EXECUTION_EDGES: dict[str, dict[str, Optional[str]]] = {
+    "coder":  {"to_tester": "tester", "to_architect": None, "fail": None},
+    "tester": {"to_coder":  "coder",  "done":         None, "fail": None},
+}
+
+# Migrate-mode post-approval topology: coder → REVIEWER → tester.
+# The reviewer is a read-only ACOM code reviewer inserted between the coder
+# and the runtime tester, so every migrated/created component gets an explicit
+# contract + correctness + deploy-safety review before verification. It keeps
+# the coder's `to_tester` handoff name unchanged — the edge simply targets the
+# reviewer instead of the tester, so the coder prompt needs no per-mode branch.
+# Backward edges:
+#   reviewer.to_coder → coder   — critical findings sent back for a fix cycle
+#   tester.to_coder   → coder   — failing artifact loops back through the coder
+#                                    (which re-enters the reviewer after the fix)
+# The reviewer is deliberately cheap + read-only and receives only the coder's
+# compact handoff card as its seed, so it adds a review pass without bloating
+# the coder's or tester's context.
+MIGRATE_EDGES: dict[str, dict[str, Optional[str]]] = {
+    "coder":    {"to_tester": "reviewer", "to_architect": None, "fail": None},
+    "reviewer": {"to_tester": "tester",   "to_coder": "coder",  "fail": None},
+    "tester":   {"to_coder":  "coder",    "done":         None,  "fail": None},
+}
+
+PIPELINE_ENTRY = "architect"
+EXECUTION_ENTRY = "coder"
+
+
+def build_pipeline(
+    *,
+    model: Model,
+    cli_path: Optional[Path],
+    project_dir: Path,
+    make_exe: Path,
+    max_hops: int = 8,
+    on_event: Optional[Callable] = None,
+    trace_dir: Optional[Path] = None,
+) -> Orchestrator:
+    """Build a ready-to-run pipeline orchestrator with all three agents wired up.
+
+    Every agent gets the same pi_ai `model`. To use different models per
+    agent (e.g. cheaper for architect, sharper for coder), call the
+    make_*-factories directly and assemble the orchestrator yourself.
+
+    `on_event` (if provided) is called with `{"agent": str, "event": EcoAgentEvent}`
+    so handlers can disambiguate events from architect/coder/tester
+    without inspecting tool-name patterns.
+
+    `trace_dir` (if provided) is where per-role LLM request/response traces
+    are persisted — same convention as the /ws/chat server topology.
+    """
+    def _make_wrapped(agent_name: str):
+        if on_event is None:
+            return None
+        def wrapped(ev):
+            on_event({"agent": agent_name, "event": ev})
+        return wrapped
+
+    configured_max_iters = int(os.getenv("AGENT_MAX_ITERATIONS", "0")) or None
+    architect = make_architect(
+        model=model, cli_path=cli_path, project_dir=project_dir,
+        max_iters=configured_max_iters,
+        trace_dir=trace_dir,
+        on_event=_make_wrapped("architect"),
+    )
+    coder = make_coder(
+        model=model, project_dir=project_dir, make_exe=make_exe,
+        max_iters=configured_max_iters,
+        trace_dir=trace_dir,
+        on_event=_make_wrapped("coder"),
+    )
+    tester = make_tester(
+        model=model, project_dir=project_dir,
+        max_iters=configured_max_iters,
+        trace_dir=trace_dir,
+        on_event=_make_wrapped("tester"),
+    )
+    return Orchestrator(
+        agents={"architect": architect, "coder": coder, "tester": tester},
+        edges=PIPELINE_EDGES,
+        entry=PIPELINE_ENTRY,
+        max_hops=max_hops,
+    )
+

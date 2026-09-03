@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Download every component listed on the EcoOS Marketplace UI into a local cache.
 
-Why a dedicated script instead of `eco find -p`:
-    The CLI's `find -p` listing returns only 8 of the ~33 components visible
-    in the web Marketplace — verified empirically 2026-05-23. Looking up by
-    name (`find -p -n <Name>`) returns the full profile for any component,
+Why a dedicated script instead of `eco find -n`:
+    Looking up by
+    name (`find -n <Name>`) returns the full profile for any component,
     so we walk a hard-coded name list (taken from the UI) and pull each one.
 
 Output layout (matches eco-cli's own pull behaviour):
@@ -14,7 +13,7 @@ Output layout (matches eco-cli's own pull behaviour):
         DesignFiles/...
       ecoPackage.json              # accumulates as eco-cli appends
       .eco/                        # eco-cli bookkeeping
-      _profiles/<name>.json        # raw `find -p -n` profile we parsed
+      _profiles/<name>.json        # raw `find -n` profile we parsed
       _fetch_summary.json          # one-line outcome per component
 
 Re-run is idempotent: components already extracted are skipped (presence of
@@ -27,17 +26,23 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from eco_harness.agent.internal.tools.binaries import describe_search_order, resolve_binary  # noqa: E402
+
 # ── Inputs ────────────────────────────────────────────────────────────────
-ECO_CLI = Path(os.environ.get(
-    "ECO_CLI_BIN",
-    "H:/ai-hse-diploma-agent/eco.sli/eco-cli.exe",
-))
+# Single shared binary-resolution policy (env → <repo>/bin → /opt → legacy
+# platform-suffixed siblings → PATH).
+ECO_CLI = resolve_binary("eco-cli")
+
 CACHE_DIR = Path(os.environ.get(
     "MARKETPLACE_CACHE",
-    "H:/ai-hse-diploma-agent/Eco.Toolchain/Eco.AI.Assembly1/marketplace_cache",
+    str(PROJECT_ROOT / "marketplace_cache"),
 ))
 TOKEN = os.environ.get("ECO_API_TOKEN") or ""
 
@@ -130,8 +135,12 @@ def main() -> int:
     if not TOKEN:
         print("ERROR: ECO_API_TOKEN env var not set.", file=sys.stderr)
         return 2
-    if not ECO_CLI.exists():
-        print(f"ERROR: eco-cli binary not found at {ECO_CLI}", file=sys.stderr)
+    if ECO_CLI is None or not ECO_CLI.exists():
+        print(
+            "ERROR: eco-cli binary not found. "
+            + describe_search_order("eco-cli"),
+            file=sys.stderr,
+        )
         return 2
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -151,9 +160,9 @@ def main() -> int:
             summary.append(record)
             continue
 
-        # 1) Resolve uguid + latest DEVKIT fileId via `find -p -n <name>`.
+        # 1) Resolve uguid + latest DEVKIT fileId via `find -n <name>`.
         print(f"[{i:2}/{len(COMPONENTS)}] {name}: resolving...", end=" ", flush=True)
-        find = _run("find", "-p", "-n", name)
+        find = _run("find", "-n", name)
         if find.returncode != 0:
             print(f"FIND-FAIL rc={find.returncode}")
             record.update(status="find_fail",
@@ -209,7 +218,7 @@ def main() -> int:
     summary_path.write_text(
         json.dumps(
             {
-                "generated": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "generated": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
                 "cli": str(ECO_CLI),
                 "cache_dir": str(CACHE_DIR),
                 "total": len(COMPONENTS),

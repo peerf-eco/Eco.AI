@@ -2,48 +2,98 @@
 
 ### Identifier taxonomy
 
+I. Binary identifier representation (UGUID): the byte format
+`{0x01, Length, {Data}}`, its length codes, and the required
+`/* Name IID = {GUID} */` comment are LANGUAGE-SPECIFIC — follow the active
+language skill (for C: `config/skills/languages/C.md`). Everything below is
+language-agnostic.
+
 A single component has multiple ID forms and they are not interchangeable:
 
 - Marketplace CID: 32 uppercase hexadecimal characters without dashes. Use this for `eco-cli find -c` and `eco-cli pull -c`.
 - Hyphenated GUID: 8-4-4-4-12 form for display and documentation only.
-- `ecoPackage` `uguid`: 32 lowercase hexadecimal characters in dependency JSON.
-- C struct `UGUID`: brace-initialized header-internal representation.
-- `IID_*` and `uguid(...)`: interface identifiers, never component CIDs.
+- `ecoPackage` `cid`: 32 UPPERCASE hexadecimal characters in dependency JSON.
+- `UGUID`: the brace-initialized struct representation of the numeric identifier; the exact source-level form is defined per language skill.
+- `IID_*`: interface identifiers, never component CIDs.
 - Package name: stable `Eco.AI.Engine1`-style name without a version suffix.
 - Folder suffix: SDK/package metadata, never part of the component name.
 
-Source-of-truth priority is:
+II. Source-of-truth priority is:
 
 1. `eco-cli` find/pull output
 2. downloaded `SharedFiles/Id*.h` CID macros
 3. `ecoPackage.json`
-4. `DesignFiles/*.fodt` only as documentation; ignore placeholder marketplace metadata and interface `uguid(...)` values.
+4. `DesignFiles/*.fodt` only should be used as documentation and when rag search tool is not available; ignore placeholder marketplace metadata and interface IID values. These UGUID formated numbers from design files are not authoritative.
 
-### Framework packages
+### Framework packages (MANDATORY base + minimum stack)
 
-Include framework packages according to actual component requirements:
+`Eco.Core1` is the MANDATORY base of EVERY project (not just buildable
+components). It provides `IEcoBase1.h`, `IEcoUnknown`, `IEcoComponentFactory`,
+`IEcoSystem1.h`, and `ErrEcoCodes.h` — the core ACOM types and macros that
+replace standard C primitives.
 
-- `Eco.Core1`: `IEcoBase1.h`, `IEcoUnknown`, `IEcoComponentFactory`, `IEcoSystem1.h`, and `ErrEcoCodes.h`. Include it whenever the plan produces a buildable C component.
-- `Eco.InterfaceBus1`: interface bus services.
-- `Eco.MemoryManger1`: memory manager services. Preserve the SDK spelling `Manger`.
-- `Eco.FileSystemManagement1`: filesystem services.
-- `Eco.System1`: system information and command-argument services only when required.
+Every buildable component or application MUST also include the minimum required
+stack (these are REQUIRED, not optional — do not omit them, and do not add them
+"by rote" either; they are the baseline the contract depends on):
 
-The interface bus, memory manager, and filesystem packages are typical for a normal bus-registered ACOM component, but must not be added by rote.
+- `Eco.InterfaceBus1`: interface bus services (component discovery / registration).
+- `Eco.MemoryManager1`: memory manager services (core allocation).
+- `Eco.FileSystemManagement1`: filesystem services — include when the component
+  performs file I/O.
+- `Eco.System1`: the system LIBRARY (not an ACOM component — no CID; its
+  binary is a GID-named static lib) that provides the real platform `main()`
+  which calls the application's `EcoMain` entry, plus system services
+  (`IEcoSystemInformation1`, `IEcoCommandArguments1`). The library is
+  actually a unikernel: it ships a minimal ACOM microkernel that has the
+  Interface Bus built-in as its main, passive code path. The Interface
+  Bus itself has no compute process of its own and therefore cannot register itself — it is a passive piece of
+  microkernel that other components register into. So
+  `Eco.System1` likewise does NOT register itself on the bus; the
+  application code (and the `EcoMain` glue) is what
+  `RegisterComponent`'s the actually-running ACOM components on top of
+  the unikernel's built-in bus. APPLICATIONS statically link the
+  platform-specific `Eco.System1` library; plain components and static libraries
+  never have an entry point and never link it. The unikernel is never
+  pulled with `eco_cli` with CID (only by marketplace id first found by Name) and never `RegisterComponent`-ed — it is just
+  linked, and the target OS resolves its `main()` symbol.
 
-### ACOM C conventions
+Include ONLY the `SharedFiles/` subfolder of each framework/dependency package
+(the public API). Never read or compile another package's `HeaderFiles/` or
+`SourceFiles/`.
 
-- Use EcoOS types such as `int16_t`, `voidptr_t`, `char_t`, and `byte_t`; do not substitute raw `int` or `char` where SDK types apply.
-- Allocate through `IEcoMemoryAllocator1` and `m_pIMem`; never use `malloc` or `free`.
-- Validate `me` and output pointers at the beginning of every method.
-- Return `ERR_ECO_SUCCESES`, `ERR_ECO_POINTER`, and `ERR_ECO_NOINTERFACE` as appropriate.
-- Every vtable method uses `ECOCALLMETHOD`.
-- The first interface method argument is a typed self pointer named `me`.
-- Interface methods return `int16_t`; outputs use `/* out */` pointers.
-- Reference counting is manual through `QueryInterface`, `AddRef`, and `Release`.
-- When `m_cRef` reaches zero, release resources through the component's delete path and allocator.
-- Preserve exact EcoOS spellings, including `MemoryManger1`.
-- Math C89 methods are lowercase: `pow`, `sqrt`, `sin`, and `cos`.
+### Component & project conventions (generic ACOM)
+
+These hold for every language and every role; language-specific detail lives in
+the per-language skill.
+
+- **Naming**: `[PROJECT_NAME]` is CamelCase; `[UPPER_PROJECT_NAME]` is
+  UPPER_CASE. If a name does not already start with the `Eco` prefix, add it
+  automatically (e.g. `Math` → `EcoMath`).
+- **Component generation order**: describe interfaces in `.idl` first; create
+  exactly one factory implementing `IEcoComponentFactory`; a single component
+  may implement N interfaces via one or multiple VTbls; default to a
+  stand-alone component.
+- **Application lifecycle**: System → Bus → Component → Release (the same order
+  as the bootstrap flow above).
+- **`Eco.System1` library variants**: for each target platform the marketplace
+  ships two prebuilt library builds — `StaticRelease` (bundles all system ACOM
+  components: InterfaceBus, MemoryManager, FileSystemManager, …) and
+  `DynamicRelease` (a small loader for InterfaceBus + MemoryManager + optional
+  FileSystemManager). **Default to `StaticRelease` for applications.** The C
+  skill references this when stating the link step.
+- **Standard project directories**: `AssemblyFiles`, `BuildFiles`,
+  `DependenciesFiles`, `DesignFiles`, `HeaderFiles`, `SharedFiles`,
+  `SourceFiles`, `UnitTestFiles`. For cross-platform work, create one subfolder
+  per platform under `AssemblyFiles` (`Android`, `EcoOS`, `iOS`, `Linux`, `Mac`,
+  `Windows`), and a per-toolchain folder under each.
+
+### Coding conventions are per-language
+
+Language-specific coding conventions (type discipline, allocation calls,
+vtable shapes, error codes, header/function documentation, template
+processing) are defined ONCE per language in
+`config/skills/languages/<lang>.md` and injected with the role instructions.
+This domain block deliberately does not restate them.
 
 ### Project layout
 
@@ -59,16 +109,25 @@ BuildFiles/...
 
 Do not manually author generated `BuildFiles` content.
 
-For an application consuming marketplace components, the entry point is normally `SourceFiles/EcoMain.c`. The runtime flow is:
+For an application consuming marketplace components, the entry point is the
+application's OWN `EcoMain(pIUnk)` function (developer-written glue, normally
+`SourceFiles/EcoMain.c`; exact signature per language skill). It is NOT a
+marketplace component and has no CID/IID/factory. The bootstrap flow is:
 
 ```text
-IEcoSystem1 initialize
-→ IEcoInterfaceBus1 register components
-→ GetPtr(CID) factory
-→ CreateObject(IID)
-→ use
+EcoMain(IEcoUnknown* pIUnk)
+→ pIUnk->QueryInterface(&GID_IEcoSystem) → IEcoSystem1   (from Eco.Core1)
+→ pISys->QueryInterface(&IID_IEcoInterfaceBus1) → IEcoInterfaceBus1
+→ pIBus->RegisterComponent(&CID_X, (IEcoUnknown*)GetIEcoComponentFactoryPtr_<CID_X>)
+→ pIBus->QueryComponent(&CID_X, 0, &IID_IX, (void**)&pIX)
+→ use pIX (e.g. IEcoMathC89::pow / ::sqrt)
 → Release in reverse order
 ```
+
+`IEcoSystem1` lives in `Eco.Core1` and is obtained from the `pIUnk` passed to
+`EcoMain` — never from the marketplace. `Eco.System1` is a different artifact:
+the statically linked system LIBRARY that owns the platform `main()` and calls
+into `EcoMain`.
 
 Every successful `QueryInterface` and `CreateObject` must have a matching `Release`.
 

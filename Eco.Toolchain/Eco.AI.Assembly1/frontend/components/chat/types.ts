@@ -18,6 +18,7 @@ export type HarnessPhase =
   | "coding"
   | "building"
   | "testing"
+  | "review"
   | "failed_escalated"
   | "done";
 
@@ -28,11 +29,10 @@ export type PipelineNode =
   | "coder"
   | "builder"
   | "tester"
+  | "reviewer"
   | "escalate";
 
-// 5 stages visible in the top stepper. "failed_escalated" is not a stage,
-// it surfaces as an Escalation block inside the message stream.
-export const STEPPER_PHASES: HarnessPhase[] = ["planning", "setup", "coding", "building", "testing"];
+// Stepper steps are dynamic per working mode — see stepperStepsForMode().
 
 export const PHASE_LABEL: Record<HarnessPhase, string> = {
   planning: "Planning",
@@ -41,9 +41,78 @@ export const PHASE_LABEL: Record<HarnessPhase, string> = {
   coding: "Coding",
   building: "Building",
   testing: "Testing",
+  review: "Review",
   failed_escalated: "Escalated",
   done: "Done",
 };
+
+// One stepper step: a pipeline phase (or the terminal "done" marker) + label.
+export interface StepperStep {
+  phase: HarnessPhase;
+  label: string;
+}
+
+// Token accounting for one pipeline phase / the whole session.
+export interface TokenStat {
+  input: number;
+  output: number;
+  total: number;
+}
+
+// Tokens consumed per pipeline phase (usage events bucketed server-side).
+export type PhaseTokenMap = Partial<Record<HarnessPhase, TokenStat>>;
+
+// Steps shown in the top progress bar, per working mode:
+// - auto / migrate run the full plan→implement→verify pipeline;
+// - single-phase modes (plan / code / test / review) run exactly one agent,
+//   so the bar collapses to "1 — <step name>" and "2 — End".
+export function stepperStepsForMode(mode: WorkingMode): StepperStep[] {
+  switch (mode) {
+    case "plan":
+      return [
+        { phase: "planning", label: "Plan" },
+        { phase: "done", label: "End" },
+      ];
+    case "code":
+      return [
+        { phase: "coding", label: "Code" },
+        { phase: "done", label: "End" },
+      ];
+    case "test":
+      return [
+        { phase: "testing", label: "Test" },
+        { phase: "done", label: "End" },
+      ];
+    case "review":
+      return [
+        { phase: "review", label: "Review" },
+        { phase: "done", label: "End" },
+      ];
+    case "migrate":
+    case "auto":
+    default:
+      return [
+        { phase: "planning", label: "Planning" },
+        { phase: "coding", label: "Coding" },
+        { phase: "testing", label: "Testing" },
+        { phase: "done", label: "End" },
+      ];
+  }
+}
+
+// First phase a mode's pipeline enters — used to highlight the bar as soon
+// as the user sends a request (before the first phase_change arrives).
+export function initialPhaseForMode(mode: WorkingMode | undefined): HarnessPhase {
+  switch (mode) {
+    case "code": return "coding";
+    case "test": return "testing";
+    case "review": return "review";
+    case "plan":
+    case "migrate":
+    case "auto":
+    default: return "planning";
+  }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Plan / component DTOs (from planner.submit_plan stop tool)
@@ -98,18 +167,32 @@ export interface ToolCallBlock extends BlockBase {
   output?: string;        // populated on tool_call_end if details has stringifiable shape
   durationMs?: number;
   startedAt: number;      // performance.now() / Date.now()
+  // True when the call was rejected by a hardcoded policy gate (subcommand
+  // whitelist, path allowlist, tool gate) rather than failing organically.
+  blockedByPolicy?: boolean;
+  denialReason?: string;
 }
 
 // Streaming thinking/reasoning text from the LLM. One block per ReAct
-// iteration (a new tool_call_start finalises the current one). Both vendor
-// reasoning channels (additional_kwargs.reasoning_content) and visible
-// content tokens stream into this block so the user sees the model "work"
-// regardless of whether the underlying model is in thinking mode.
+// iteration (a new tool_call_start finalises the current one). Only vendor
+// reasoning channels (thinking_delta) stream into this block so it stays
+// purely "how the model reasoned" — visible answers go to AnswerBlock.
 export interface ThinkingBlock extends BlockBase {
   type: "thinking";
   node: PipelineNode;
   content: string;
   isActive: boolean;        // false → block collapses, caret hides
+  startedAt: number;
+}
+
+// The model's visible answer (text_delta): always expanded, normal prose
+// styling, never collapsed into a reasoning caret block. Finalised like
+// thinking on tool/phase boundaries but the UI keeps it open regardless.
+export interface AnswerBlock extends BlockBase {
+  type: "answer";
+  node: PipelineNode;
+  content: string;
+  isActive: boolean;        // controls the live caret only — never collapses
   startedAt: number;
 }
 
@@ -159,6 +242,7 @@ export type Block =
   | NodeDoneBlock
   | ToolCallBlock
   | ThinkingBlock
+  | AnswerBlock
   | FailBlock
   | PlanReviewBlock
   | EscalationBlock
@@ -171,12 +255,31 @@ export type Block =
 
 export type MessageRole = "user" | "assistant";
 
+// ────────────────────────────────────────────────────────────────────────────
+// Attachments — session-scoped files the user pins to every message.
+// ────────────────────────────────────────────────────────────────────────────
+
+export type AttachmentKind = "text" | "image";
+
+export interface Attachment {
+  id: string;                 // crypto.randomUUID()
+  name: string;              // display name / file name
+  path?: string;             // absolute path (mention / picker); absent for paste
+  kind: AttachmentKind;
+  mime?: string;
+  size?: number;
+  content?: string;          // pasted payload (base64 data URL for images, or text)
+  previewUrl?: string;       // object URL for image thumbnail in chip
+  source: "mention" | "picker" | "paste" | "drop";
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
   // User messages use this; assistant messages aggregate blocks.
   text?: string;
   blocks: Block[];
+  attachments?: Attachment[];
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -191,6 +294,12 @@ export interface HeartbeatEvent extends ServerEventBase {
   type: "heartbeat";
   protocol?: string;
   thread_id?: string;
+}
+
+export interface WorktreeCreatedEvent extends ServerEventBase {
+  type: "worktree_created";
+  path: string;
+  name: string;
 }
 
 export interface PhaseChangeEvent extends ServerEventBase {
@@ -252,6 +361,8 @@ export interface NodeEventEvent extends ServerEventBase {
     args?: Record<string, unknown>;
     // tool_call_end
     is_error?: boolean;
+    // Policy denial marker / failure preview forwarded inside details by the
+    // agent loop (denied: subcommand-whitelist or path-gate rejection).
     details?: Record<string, unknown> | null;
     // iteration
     i?: number;
@@ -284,6 +395,26 @@ export interface PipelineDoneEvent extends ServerEventBase {
   tester_report_md: string;
 }
 
+// Per-LLM-call token accounting, bucketed by the pipeline phase that was
+// running when the call completed. Drives the phase stepper counters.
+// context_used / context_window drive the header context-load gauge
+// (UI_PRD I-6): context_used is the prompt side of THIS call (input +
+// cache buckets), NOT a session sum — each usage event replaces it.
+export interface UsageEvent extends ServerEventBase {
+  type: "usage";
+  node: PipelineNode;
+  phase: HarnessPhase;
+  usage: {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+    total: number;
+    context_used?: number;
+    context_window?: number;
+  };
+}
+
 export interface ErrorEvent extends ServerEventBase {
   type: "error";
   content: string;
@@ -291,6 +422,7 @@ export interface ErrorEvent extends ServerEventBase {
 
 export type ServerEvent =
   | HeartbeatEvent
+  | WorktreeCreatedEvent
   | PhaseChangeEvent
   | NodeDoneEvent
   | NodeEventEvent
@@ -299,6 +431,7 @@ export type ServerEvent =
   | PlanReviewRequiredEvent
   | EscalationRequiredEvent
   | PipelineDoneEvent
+  | UsageEvent
   | ErrorEvent;
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -318,10 +451,18 @@ export interface UserRequestMessage {
   language?: string;
   mode?: WorkingMode;
   use_worktree?: boolean;
-  worktree_name?: string;
+  // Session-scoped user attachments (see Attachment). Sent on every request.
+  attached_files?: Array<{
+    name: string;
+    path?: string;
+    kind: AttachmentKind;
+    mime?: string;
+    size?: number;
+    content?: string;   // for paste-only attachments (no path)
+  }>;
 }
 
-export type WorkingMode = "create" | "migrate" | "test" | "review";
+export type WorkingMode = "auto" | "plan" | "code" | "migrate" | "test" | "review";
 
 export interface PlanDecisionMessage {
   type: "plan_decision";
@@ -344,3 +485,80 @@ export type ClientMessage =
   | PlanDecisionMessage
   | EscalationDecisionMessage
   | AbortMessage;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Projects panel DTOs (GET/POST /api/projects, GET /api/fs/browse)
+// ────────────────────────────────────────────────────────────────────────────
+
+export type SessionStatus = "running" | "success" | "failed" | "aborted" | "idle";
+
+export interface SessionInfo {
+  id: string;
+  thread_id: string;
+  project_path: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  status: SessionStatus;
+  // Optional trace-bookkeeping fields (returned by /api/sessions/{id}/trace
+  // and surfaced on /api/sessions/{id}/messages since the ses- prefix
+  // minimal-first-cut). All optional so older payloads keep parsing.
+  trace_dir?: string;
+  trace_last_file?: string | null;
+  trace_last_error?: string | null;
+  trace_call_count?: number;
+}
+
+export interface ProjectInfo {
+  id: string;
+  path: string;
+  name: string;
+  added_at: string;
+  auto?: boolean;
+  sessions: SessionInfo[];
+  // Badge data from GET /api/projects (UI_PRD I-8) — optional so older
+  // backend payloads keep parsing.
+  session_count?: number;
+  trace_count?: number;
+}
+
+export interface FsEntry {
+  name: string;
+  path: string;
+  type: "dir" | "file";
+  size?: number;
+}
+
+export interface FsListing {
+  path: string;
+  parent: string | null;
+  entries: FsEntry[];
+}
+
+// GET /api/fs/roots — locations the server-side picker is allowed to browse.
+export interface FsRoots {
+  home: string;
+  output_root?: string;
+  roots: string[];
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Trace Browser (GET /api/sessions/{id}/trace) — UI_PRD I-12
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface TraceFileInfo {
+  path: string;
+  name: string;
+  size: number;
+  error: string;
+  label: string;
+  ts: string;
+}
+
+export interface SessionTraceInfo {
+  trace_dir: string;
+  trace_last_file: string | null;
+  trace_last_error: string | null;
+  trace_call_count: number;
+  files: TraceFileInfo[];
+}

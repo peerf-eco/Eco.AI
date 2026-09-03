@@ -1,0 +1,180 @@
+﻿"""Tests for entry.py — topology declaration and pipeline assembly."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from eco_harness.agent.internal.entry import (
+    PIPELINE_EDGES,
+    PIPELINE_ENTRY,
+    EXECUTION_EDGES,
+    MIGRATE_EDGES,
+    build_pipeline,
+)
+from eco_harness.agent.internal.orchestrator import Orchestrator
+from eco_harness.agent.internal.tests.conftest import make_scripted_model_pair, ai_tool
+
+
+# ── 1. Topology shape ──────────────────────────────────────────────────────
+def test_topology_entry_is_architect():
+    assert PIPELINE_ENTRY == "architect"
+    assert PIPELINE_ENTRY in PIPELINE_EDGES
+
+
+def test_topology_has_three_agents():
+    assert set(PIPELINE_EDGES.keys()) == {"architect", "coder", "tester"}
+
+
+def test_topology_forward_path_architect_coder_tester_done():
+    """The happy path must traverse architect → coder → tester → done."""
+    assert PIPELINE_EDGES["architect"]["to_coder"] == "coder"
+    assert PIPELINE_EDGES["coder"]["to_tester"] == "tester"
+    assert PIPELINE_EDGES["tester"]["done"] is None  # terminal
+
+
+def test_topology_has_backward_edges():
+    """Backward handoffs are what let the pipeline self-correct without
+    bouncing all the way back to a separate retry-router."""
+    # Tester can send the artifact back to coder for fixes.
+    assert PIPELINE_EDGES["tester"]["to_coder"] == "coder"
+    # Coder can escalate plan-level problems back to architect.
+    assert PIPELINE_EDGES["coder"]["to_architect"] == "architect"
+
+
+def test_topology_every_agent_can_fail_terminally():
+    """Honest-failure stop is available from every node."""
+    for agent in ("architect", "coder", "tester"):
+        assert "fail" in PIPELINE_EDGES[agent]
+        assert PIPELINE_EDGES[agent]["fail"] is None
+
+
+def test_topology_only_tester_can_declare_done():
+    """`done` is the success terminal — only the tester (which evaluates the
+    artifact against acceptance criteria) is authorised to call it."""
+    assert "done" in PIPELINE_EDGES["tester"]
+    assert "done" not in PIPELINE_EDGES["architect"]
+    assert "done" not in PIPELINE_EDGES["coder"]
+
+
+# ── 2. Assembly: build_pipeline returns a valid Orchestrator ───────────
+@pytest.fixture
+def model():
+    m, _stream_fn = make_scripted_model_pair([ai_tool("fail", {"reason": "smoke"}, "c0")])
+    return m
+
+
+def test_build_pipeline_returns_orchestrator(model, project_dir, tmp_path):
+    orch = build_pipeline(
+        model=model,
+        cli_path=tmp_path / "eco-cli.exe",
+        project_dir=project_dir,
+        make_exe=tmp_path / "make",
+    )
+    assert isinstance(orch, Orchestrator)
+    assert orch.entry == "architect"
+    assert orch.max_hops == 8
+    assert set(orch.agents.keys()) == {"architect", "coder", "tester"}
+
+
+def test_build_pipeline_passes_through_max_hops(model, project_dir, tmp_path):
+    orch = build_pipeline(
+        model=model,
+        cli_path=tmp_path / "eco-cli.exe",
+        project_dir=project_dir,
+        make_exe=tmp_path / "make",
+        max_hops=3,
+    )
+    assert orch.max_hops == 3
+
+
+def test_build_pipeline_works_without_cli_path(model, project_dir, tmp_path):
+    """cli_path can be None — marketplace tools will return is_error, but
+    the pipeline still assembles cleanly. Tested separately because of
+    the Optional[Path] type."""
+    orch = build_pipeline(
+        model=model,
+        cli_path=None,
+        project_dir=project_dir,
+        make_exe=tmp_path / "make",
+    )
+    assert isinstance(orch, Orchestrator)
+
+
+# ── 3. Topology + agents are wired correctly: every declared edge name
+#       matches one of the corresponding agent's stop_tools.
+def test_every_topology_edge_matches_an_agent_stop_tool(model, project_dir, tmp_path):
+    orch = build_pipeline(
+        model=model,
+        cli_path=tmp_path / "eco-cli.exe",
+        project_dir=project_dir,
+        make_exe=tmp_path / "make",
+    )
+    for agent_name, edges in PIPELINE_EDGES.items():
+        agent = orch.agents[agent_name]
+        for edge_name in edges:
+            assert edge_name in agent.stop_tools, (
+                f"Topology declares edge {edge_name!r} for agent {agent_name!r}, "
+                f"but the agent's stop_tools are {sorted(agent.stop_tools)}. "
+                "Topology and agent factory are out of sync."
+            )
+
+
+def test_no_agent_stop_tool_is_an_unknown_topology_edge(model, project_dir, tmp_path):
+    """Inverse: every stop-tool the agent might call must have a topology
+    entry. Otherwise the orchestrator would surface `unknown_edge` for a
+    legitimate-but-undeclared handoff — a silent contract bug."""
+    orch = build_pipeline(
+        model=model,
+        cli_path=tmp_path / "eco-cli.exe",
+        project_dir=project_dir,
+        make_exe=tmp_path / "make",
+    )
+    for agent_name, agent in orch.agents.items():
+        declared = set(PIPELINE_EDGES[agent_name].keys())
+        for stop_name in agent.stop_tools:
+            assert stop_name in declared, (
+                f"Agent {agent_name!r} has stop-tool {stop_name!r} but topology "
+                f"declares only {sorted(declared)}. Add the edge to PIPELINE_EDGES or "
+                "remove the stop-tool from the agent factory."
+            )
+
+
+# ── MIGRATE_EDGES: coder → reviewer → tester ────────────────────────────────
+def test_migrate_topology_has_three_agents():
+    assert set(MIGRATE_EDGES.keys()) == {"coder", "reviewer", "tester"}
+
+
+def test_migrate_topology_inserts_reviewer_between_coder_and_tester():
+    # The coder's forward edge no longer targets the tester directly — it
+    # targets the reviewer, which then forwards to the tester.
+    assert MIGRATE_EDGES["coder"]["to_tester"] == "reviewer"
+    assert MIGRATE_EDGES["reviewer"]["to_tester"] == "tester"
+
+
+def test_migrate_topology_reviewer_can_send_critical_findings_to_coder():
+    # Backward edge: reviewer escalates blocking defects back for a fix cycle.
+    assert MIGRATE_EDGES["reviewer"]["to_coder"] == "coder"
+
+
+def test_migrate_topology_every_agent_can_fail_terminally():
+    for agent in ("coder", "reviewer", "tester"):
+        assert "fail" in MIGRATE_EDGES[agent]
+        assert MIGRATE_EDGES[agent]["fail"] is None
+
+
+def test_migrate_topology_only_tester_can_declare_done():
+    # `done` is still the success terminal, owned solely by the tester.
+    assert "done" in MIGRATE_EDGES["tester"]
+    assert "done" not in MIGRATE_EDGES["coder"]
+    assert "done" not in MIGRATE_EDGES["reviewer"]
+
+
+def test_migrate_topology_reviewer_has_no_write_tools_needed():
+    # The reviewer only ever hands off or fails — it never builds/runs/edits.
+    # Validate the edge names are all valid handoff/terminal tokens.
+    valid = lambda e: (e in {"done", "fail"}) or e.startswith("to_")
+    for agent, edges in MIGRATE_EDGES.items():
+        for e in edges:
+            assert valid(e), f"non-conforming edge name: {e!r}"
+

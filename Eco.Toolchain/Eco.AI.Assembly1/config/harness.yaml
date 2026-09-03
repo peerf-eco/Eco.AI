@@ -3,10 +3,26 @@ default_platform:
   os: Linux
   arch: x86_64
 source_max_bytes: 300000
-dynamic_tail_items: 5
+dynamic_tail_items: 12
 max_hops: 8
 eco_wizard_path: null
 eco_cli_path: null
 source_roots:
-  - source
+  - eco_framework
   - marketplace_cache
+# Eco.Core1/SharedFiles headers stitched into the static system prompt.
+# Only these four are needed by plans/coders (core types, System1, error
+# codes, depend.h); stitching the whole SharedFiles tree cost ~15-20K
+# surplus tokens on every LLM call of every role (session 8c3431c2).
+# Empty/absent list restores the old whole-tree stitch.
+core1_stitch_files:
+  - IEcoBase1.h
+  - IEcoSystem1.h
+  - ErrEcoCodes.h
+  - depend.h
+# Architect -> coder handoff size cap (bytes of markdown). Keep this
+# under ~1/30 of the provider context limit so the coder's own
+# tool-output history still has room. 8 KB matches the rule-of-thumb
+# used in the chat-1ca5b8f4 Celsius->Fahrenheit post-mortem; can be
+# overridden at runtime via HARNESS_PLAN_HANDOFF_MAX_BYTES.
+plan_handoff_max_bytes: 8192

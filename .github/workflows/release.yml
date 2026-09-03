@@ -1,0 +1,206 @@
+# Release pipeline: build → publish → manifest.
+#
+# NOTE: this file MUST live at the monorepo root (.github/workflows/) —
+# GitHub Actions only loads workflows from the repository root, and this
+# repository is the monorepo (Eco.Toolchain/Eco.AI.Assembly1 is a subdir).
+# All build steps therefore run with working-directory set to Assembly1.
+#
+# Publishes:
+#   - wheel to PyPI (pypi.org/project/eco-harness)
+#   - multi-arch container image to ghcr.io (linux/amd64 + linux/arm64)
+#   - manifest.json + assets (installer scripts, binaries, index) to S3
+#
+# The manifest is the single version source of truth consumed by the
+# installers and `eco-harness update`; binary publishing for eco-cli /
+# eco-wizard stays owned by the EcoCLI pipeline — this workflow only bundles
+# already-staged artifacts (see scripts/release/build_manifest.py).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build only, publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  ASSEMBLY_DIR: Eco.Toolchain/Eco.AI.Assembly1
+  AWS_REGION: ${{ vars.RELEASE_AWS_REGION }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.ASSEMBLY_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ env.ASSEMBLY_DIR }}/frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel (frontend export + package data baked in)
+        run: bash scripts/release/build_wheel.sh
+
+      - name: Stage release assets
+        run: |
+          mkdir -p release-staging/dist release-staging/binaries release-staging/index
+          cp dist/*.whl release-staging/dist/
+          # eco-cli / eco-wizard native builds arrive from the EcoCLI pipeline
+          # (staged under release-staging/binaries/<tool>/<os>/<arch>/ by a
+          # prior job or pipeline); copy installer scripts for stable hosting.
+          mkdir -p release-staging/install
+          cp scripts/install/install.sh scripts/install/install.ps1 release-staging/install/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: ${{ env.ASSEMBLY_DIR }}/release-staging/
+
+  publish-image:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ inputs.dry_run != true }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: ${{ env.ASSEMBLY_DIR }}/release-staging/
+
+      - uses: docker/setup-buildx-action@v3
+
+      # arm64 RUN steps (apt-get, pip) need binfmt emulation on GH runners.
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Fail on empty tag resolution
+        run: |
+          if [ -z "${{ steps.meta.outputs.tags }}" ]; then
+            echo "::error::No image tags resolved — push a v* tag (workflow_dispatch runs are dry-run only)"
+            exit 1
+          fi
+
+      - name: Verify tag consistency (wheel version vs git tag)
+        run: |
+          WHEEL_VERSION="$(basename ${{ env.ASSEMBLY_DIR }}/release-staging/dist/eco_harness-*.whl | head -1 | cut -d- -f2)"
+          GIT_TAG="${GITHUB_REF_NAME#v}"
+          if [ "${{ inputs.dry_run }}" != "true" ] && [ -n "$GIT_TAG" ] && [ "$WHEEL_VERSION" != "$GIT_TAG" ]; then
+            echo "::error::pyproject version ($WHEEL_VERSION) != git tag ($GITHUB_REF_NAME) — bump the wheel before tagging"
+            exit 1
+          fi
+          echo "WHEEL_VERSION=$WHEEL_VERSION" >> "$GITHUB_ENV"
+
+      - name: Copy wheel into image build context
+        run: |
+          mkdir -p ${{ env.ASSEMBLY_DIR }}/docker/wheel
+          cp release-staging/dist/*.whl ${{ env.ASSEMBLY_DIR }}/docker/wheel/
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.ASSEMBLY_DIR }}
+          file: ${{ env.ASSEMBLY_DIR }}/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish-manifest:
+    needs: [build, publish-image]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.dry_run != true }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: ${{ env.ASSEMBLY_DIR }}/release-staging/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check required repository variables
+        run: |
+          if [ -z "${{ vars.RELEASE_BASE_URL }}" ] || [ -z "${{ vars.RELEASE_S3_BUCKET }}" ]; then
+            echo "::error::RELEASE_BASE_URL and RELEASE_S3_BUCKET repo variables must be set"
+            exit 1
+          fi
+
+      # EcoCLI pipeline contract: the eco-cli / eco-wizard native builds and
+      # the prebuilt RAG index tarball must be staged BEFORE this job runs —
+      # either committed into the artifact by an EcoCLI-triggered workflow
+      # (dispatch this workflow from it with the assets merged into
+      # release-staging/), or fetched here from the EcoCLI release URL.
+      - name: Stage EcoCLI binaries + prebuilt index
+        working-directory: ${{ env.ASSEMBLY_DIR }}
+        run: |
+          mkdir -p release-staging/binaries release-staging/index
+          if [ -n "${{ vars.ECOCLI_STAGING_URL }}" ]; then
+            curl -fsSL "${{ vars.ECOCLI_STAGING_URL }}" -o ecocli-assets.tar.gz
+            tar -xzf ecocli-assets.tar.gz -C release-staging/
+            rm -f ecocli-assets.tar.gz
+          fi
+          if [ -z "$(find release-staging/binaries -type f 2>/dev/null | head -1)" ]; then
+            echo "::error::No eco-cli/eco-wizard builds staged under release-staging/binaries/ — set ECOCLI_STAGING_URL or merge the EcoCLI pipeline artifacts first"
+            exit 1
+          fi
+          if [ ! -f release-staging/index/marketplace_index.tar.gz ]; then
+            echo "::error::No prebuilt RAG index staged at release-staging/index/marketplace_index.tar.gz — build it (scripts/build_marketplace_index.py + tar) and stage it first"
+            exit 1
+          fi
+
+      - name: Build manifest.json
+        working-directory: ${{ env.ASSEMBLY_DIR }}
+        run: |
+          VERSION="$(basename release-staging/dist/eco_harness-*.whl | head -1 | cut -d- -f2)"
+          # No --allow-empty: the manifest build fails unless binaries and
+          # index are present (a published empty manifest ships installs
+          # without eco-cli or RAG data).
+          python scripts/release/build_manifest.py \
+            --staging release-staging \
+            --base-url "${{ vars.RELEASE_BASE_URL }}" \
+            --image "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
+
+      - name: Publish to S3 (manifest + installers)
+        working-directory: ${{ env.ASSEMBLY_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws s3 sync release-staging/ "s3://${{ vars.RELEASE_S3_BUCKET }}/" \
+            --cache-control "public, max-age=300" \
+            --exclude "*" --include "manifest.json" --include "install/*" \
+            --include "binaries/*" --include "index/*" --include "dist/*"

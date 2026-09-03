@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronRight, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { ChevronRight, CheckCircle2, XCircle, Loader2, ShieldAlert } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { ToolCallBlock as ToolCallBlockType } from "./types";
@@ -26,6 +26,7 @@ export function ToolCallBlock({ block }: ToolCallBlockProps) {
 
   const borderTone =
     block.status === "running" ? "border-blue-500/25" :
+    block.blockedByPolicy      ? "border-yellow-500/40" :
     block.status === "ok"      ? "border-emerald-500/20" :
                                  "border-red-500/25";
 
@@ -53,6 +54,12 @@ export function ToolCallBlock({ block }: ToolCallBlockProps) {
         <StatusIcon className={cn("h-3.5 w-3.5", statusTone, block.status === "running" && "animate-spin")} />
         <span className="font-mono text-foreground/85">{block.toolName}</span>
         <span className="text-muted-foreground/60 truncate flex-1 text-left">{argsPreview}</span>
+        {block.blockedByPolicy && (
+          <span className="flex items-center gap-1 rounded px-1.5 py-0.5 bg-yellow-500/10 border border-yellow-500/30 text-[10px] font-medium uppercase tracking-wide text-yellow-300">
+            <ShieldAlert className="h-3 w-3" />
+            Blocked by policy
+          </span>
+        )}
         {block.durationMs !== undefined && (
           <span className="text-[10px] text-muted-foreground/60 font-mono">
             {Math.round(block.durationMs)}ms
@@ -61,6 +68,12 @@ export function ToolCallBlock({ block }: ToolCallBlockProps) {
       </button>
       {open && (
         <div className="px-3 pb-3 pt-1 text-[11px] space-y-2">
+          {block.blockedByPolicy && (
+            <div className="rounded border border-yellow-500/30 bg-yellow-500/[0.06] px-2 py-1.5 text-yellow-200">
+              <span className="font-medium">Blocked by policy: </span>
+              {block.denialReason || "this action is not allowlisted for the agent."}
+            </div>
+          )}
           <div>
             <span className="text-muted-foreground/60 uppercase tracking-wide">Args</span>
             <pre className="mt-1 px-2 py-1.5 rounded bg-black/40 font-mono leading-relaxed whitespace-pre-wrap max-h-40 overflow-auto text-foreground/85">

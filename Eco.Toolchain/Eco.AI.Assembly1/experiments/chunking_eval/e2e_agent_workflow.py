@@ -3,7 +3,7 @@
 
 What it does
 ------------
-Pretends to be the V7 architect agent given a real diploma task:
+Pretends to be the architect agent given a real diploma task:
 
     "Build a calculator component using pow and sqrt from EcoOS Math.C89.
      It must register on the InterfaceBus and use Core1 framework."
@@ -45,16 +45,15 @@ try:
 except ImportError:
     pass
 
+from agent.internal.tools.binaries import resolve_binary
 from agent.rag.embedder import Embedder
 from agent.rag.retrieve import HybridRetriever
 from agent.rag.store import RagStore
 
 # Demo project — a fresh dir we pretend the agent owns.
 DEMO_PROJECT = PROJECT_ROOT / "e2e_demo_project"
-ECO_CLI = Path(os.environ.get(
-    "ECO_CLI_BIN",
-    str(PROJECT_ROOT.parent.parent / "eco.sli" / "eco-cli.exe"),
-))
+# Shared binary-resolution policy (env → <repo>/bin → /opt → legacy siblings → PATH).
+ECO_CLI = resolve_binary("eco-cli", repo=PROJECT_ROOT)
 INDEX = PROJECT_ROOT / "experiments" / "chunking_eval" / "artifacts" / "ast.sqlite"
 
 
@@ -84,8 +83,11 @@ def search(retr: HybridRetriever, query: str, k: int = 5, **kw) -> list:
 def main() -> int:
     if not INDEX.exists():
         sys.exit(f"index not found: {INDEX}")
-    if not ECO_CLI.exists():
-        sys.exit(f"eco-cli not found: {ECO_CLI}")
+    if ECO_CLI is None:
+        sys.exit(
+            "eco-cli binary not found — set ECO_CLI_PATH, place it in "
+            "<repo>/bin/, or install it on PATH (see README: Executable Resolution)."
+        )
     if not os.getenv("ECO_API_TOKEN"):
         sys.exit("ECO_API_TOKEN not set in env")
 

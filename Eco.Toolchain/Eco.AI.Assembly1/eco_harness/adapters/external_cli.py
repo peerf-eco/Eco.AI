@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
+from eco_harness.agent.internal.tools.binaries import resolve_binary
 from eco_harness.adapters.protocol import AgentResult, EventSink
 
 
@@ -17,18 +17,21 @@ _HANDOFF_RE = re.compile(
 
 
 class ExternalCliBackend:
-    _FLAGS = {"codex": "-p", "pi": "-e", "claude": "-p"}
+    # Legacy built-in flags; config/agents/external/<name>.yaml `flag` wins.
+    _FLAGS = {"codex": "-p", "pi": "-e", "claude": "-p", "grok": "-p"}
 
     def __init__(
         self,
         name: str,
         *,
         executable: str | None = None,
+        flag: str | None = None,
         cwd: Path | None = None,
         timeout_s: int = 900,
     ) -> None:
         self.name = name
         self.executable = executable or name
+        self.flag = flag
         self.cwd = cwd
         self.timeout_s = timeout_s
 
@@ -36,12 +39,9 @@ class ExternalCliBackend:
         return False
 
     def _resolve_executable(self) -> str:
-        configured = Path(self.executable)
-        if configured.is_file():
-            return str(configured)
-        resolved = shutil.which(self.executable)
+        resolved = resolve_binary(self.name, explicit=self.executable)
         if resolved:
-            return resolved
+            return str(resolved)
         raise FileNotFoundError(
             f"External agent '{self.name}' was not found. "
             f"Install it or set ECO_{self.name.upper()}_PATH to its executable."
@@ -60,7 +60,7 @@ class ExternalCliBackend:
         except FileNotFoundError as error:
             return AgentResult(status="error", edge=None, message="", error=str(error))
 
-        flag = self._FLAGS.get(self.name)
+        flag = self.flag or self._FLAGS.get(self.name)
         if flag is None:
             return AgentResult(
                 status="error",

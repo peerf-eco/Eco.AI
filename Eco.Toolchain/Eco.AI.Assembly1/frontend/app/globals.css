@@ -75,6 +75,69 @@
   }
 }
 
+/* ─── Shared glass utilities ───────────────────────────────────────────────
+   Referenced across chat components (header, sidebars, input dock, cards).
+   These were previously undefined — every usage silently rendered without
+   the intended translucent surface, so define them once here. */
+.glass {
+  background: rgb(255 255 255 / 0.04);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgb(255 255 255 / 0.06);
+}
+
+.glass-strong {
+  background: rgb(10 10 16 / 0.72);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgb(255 255 255 / 0.1);
+}
+
+.glow-blue {
+  box-shadow:
+    0 0 24px rgb(59 130 246 / 0.15),
+    0 0 0 1px rgb(59 130 246 / 0.08);
+}
+
+.text-gradient {
+  background: linear-gradient(90deg, #93c5fd, #c4b5fd);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes float-kf {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+.animate-float {
+  animation: float-kf 5s ease-in-out infinite;
+}
+
+/* Thin dark scrollbars for panels and menus */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.14) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.12);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.22);
+}
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.14) transparent;
+}
+
 /* Thinking-block live indicators — pattern from ai-mek HarnessUI.module.css.
    `thinking-pulse` is the small dot in the header; `thinking-caret` appends a
    blinking ▮ glyph to the end of the streaming text via ::after, so there's

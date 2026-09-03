@@ -1,22 +1,53 @@
 modes:
-  create:
-    prompt: prompts/modes/create.md
+  # Default mode. Deterministic plan→approve→implement→test loop. A short
+  # intent gate keeps plain chat questions out of the build pipeline.
+  auto:
+    prompt: prompts/modes/auto.md
     roles: [architect, coder, tester]
+    pipeline: true
+    # HITL plan approval is the biggest wall-clock item in an unattended
+    # auto run (session 8c3431c2: 291s of 431s = 67% waiting on the gate).
+    # auto_approve emits plan_review_required for visibility but proceeds
+    # immediately. Override per run with HARNESS_PLAN_GATE=hitl.
+    plan_gate: auto_approve
     capabilities:
       - marketplace_assembly
       - eco_wizard_generation
       - build_and_runtime_testing
+  # Planning only — research, design, and produce a PRD / closed plan. Never
+  # writes or builds code; no automatic pipeline (no HITM→coder→tester loop).
+  plan:
+    prompt: prompts/modes/plan.md
+    roles: [architect]
+    pipeline: false
+    capabilities:
+      - research_and_planning
+      - prd_generation
+  # Direct implementation by the coder role. Standalone — no architect handoff
+  # and no automatic test pipeline; the user drives each phase manually.
+  code:
+    prompt: prompts/modes/code.md
+    roles: [coder]
+    pipeline: false
+    capabilities:
+      - direct_implementation
+      - build_and_runtime_testing
+      - eco_wizard_generation
   migrate:
     prompt: prompts/modes/migrate.md
-    roles: [architect, coder, tester]
+    roles: [architect, coder, reviewer, tester]
+    pipeline: true
     capabilities:
       - legacy_code_analysis
       - acom_contract_mapping
       - incremental_migration
       - build_and_runtime_testing
+      - acom_code_review
+      - eco_wizard_generation
   test:
     prompt: prompts/modes/test.md
     roles: [tester]
+    pipeline: false
     capabilities:
       - read_only_code_inspection
       - runtime_testing
@@ -24,6 +55,7 @@ modes:
   review:
     prompt: prompts/modes/review.md
     roles: [reviewer]
+    pipeline: false
     capabilities:
       - read_only_code_inspection
       - acom_style_review

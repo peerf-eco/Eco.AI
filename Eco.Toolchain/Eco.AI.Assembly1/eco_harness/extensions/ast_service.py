@@ -8,7 +8,7 @@ class AstService:
     def parse(self, path: Path) -> dict[str, Any]:
         if not path.is_file():
             raise FileNotFoundError(path)
-        from agent.rag.chunker_ast import ASTChunker
+        from eco_harness.agent.rag.chunker_ast import ASTChunker
 
         text = path.read_text(encoding="utf-8", errors="replace")
         chunks = ASTChunker(target_chars=400).chunk(text, path.name)

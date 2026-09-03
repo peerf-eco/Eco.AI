@@ -14,10 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent.rag.chunker_ast import ASTChunker, RegexFallbackChunker
-from agent.rag.embedder import Embedder
-from agent.rag.ingest import ingest_cache
-from agent.rag.store import RagStore
+from eco_harness.agent.rag.chunker_ast import ASTChunker, RegexFallbackChunker
+from eco_harness.agent.rag.embedder import Embedder
+from eco_harness.agent.rag.ingest import ingest_cache
+from eco_harness.agent.rag.store import RagStore
 
 logging.basicConfig(
     level=logging.INFO,

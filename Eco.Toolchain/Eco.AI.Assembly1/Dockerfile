@@ -1,14 +1,14 @@
-# EcoOS Component Agent (V7) — backend API + agent
+# EcoOS Component Agent — backend API + agent
 #
 # Stack: FastAPI + custom Orchestrator + pi_ai (OpenRouter) + sqlite-vec RAG.
 # No ChromaDB / LangChain (retired 2026-06-22).
 #
 # Base image is digest-pinned for reproducibility. To refresh the pin:
 #   docker buildx imagetools inspect python:3.11-slim
-FROM python:3.11.11-slim-bookworm@sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5
+FROM python:3.11-slim-bookworm
 
 LABEL maintainer="EcoOS Agent"
-LABEL description="EcoOS V7 agent — FastAPI + pi_ai + sqlite-vec RAG"
+LABEL description="EcoOS agent — FastAPI + pi_ai + sqlite-vec RAG"
 
 # Переменные окружения (значения по умолчанию, переопределяются из .env)
 ENV PYTHONUNBUFFERED=1 \
@@ -21,7 +21,11 @@ ENV PYTHONUNBUFFERED=1 \
 # wine — единственный практичный способ оставить весь стек в одной compose
 # схеме. Преинициализация WINEPREFIX в build-time убирает 10-30с лаг при
 # первом вызове и гарантирует, что wineboot не пишет в read-only volume.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Fix GPG signature issues by updating certificates first
+RUN apt-get update -o Acquire::Check-Valid-Until=false && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
     build-essential \
     git \
     curl \
@@ -32,7 +36,7 @@ ENV WINEPREFIX=/tmp/wine \
     WINEDEBUG=-all
 # Debian 13 trixie ships wine64 binary at /usr/lib/wine/wine64 and does NOT
 # install a wrapper in PATH. Symlink it so subprocess calls that don't go
-# through V6_CLI_PREFIX (and any future debug shells) still work.
+# through ECO_CLI_PREFIX (and any future debug shells) still work.
 RUN ln -sf /usr/lib/wine/wine64 /usr/bin/wine \
     && mkdir -p /tmp/wine \
     && /usr/lib/wine/wine64 wineboot -i 2>/dev/null || true
@@ -45,19 +49,18 @@ WORKDIR /app
 # after editing requirements.txt:
 #   uv pip compile requirements.txt --python-version 3.11 \
 #       --python-platform x86_64-unknown-linux-gnu -o requirements.lock
-COPY agent/requirements.lock /app/requirements.lock
+COPY eco_harness/agent/requirements.lock /app/requirements.lock
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.lock
 
 # Создание директорий для данных
 RUN mkdir -p /app/output
 
-# Копирование кода агента
-COPY agent/ /app/agent/
-COPY backend/ /app/backend/
+# Копирование кода агента (packages live under eco_harness/ since the
+# PyPI restructure; repo-root agent/ and backend/ are back-compat shims only)
+COPY eco_harness/ /app/eco_harness/
 COPY scripts/ /app/scripts/
 COPY config/ /app/config/
-COPY eco_harness/ /app/eco_harness/
 
 # Создание entrypoint скрипта
 RUN echo '#!/bin/bash\n\
@@ -85,5 +88,9 @@ fi\n\
 # Entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# API is the production entrypoint. Use `docker compose run api shell` for a shell.
-CMD ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000"]
+# API is the production entrypoint. NOTE: docker-compose.yml disables this
+# entrypoint (entrypoint: [] — the /app monorepo mount shadows it), so the
+# old `docker compose run api shell` no longer works. Use instead:
+#   docker compose exec api bash            (container running)
+#   docker compose run api bash             (lands in working_dir, nested project)
+CMD ["uvicorn", "eco_harness.backend.server:app", "--host", "0.0.0.0", "--port", "8000"]

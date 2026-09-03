@@ -1,0 +1,34 @@
+# Eco.AI Harness — customer Docker install (reference copy).
+#
+# The installers (scripts/install/install.{sh,ps1} --docker) GENERATE this
+# file with absolute host paths baked in; this checked-in version is the
+# reference for manual installs. Update flow:
+#   docker compose pull && docker compose up -d
+#
+# Prereqs: host dirs $HOME/.eco-harness (app home: .env, data, binaries) and
+# a project dir (the folder the UI will work in).
+
+services:
+  eco-harness:
+    image: ${ECO_HARNESS_IMAGE:-ghcr.io/peerf-eco/eco.ai}:${ECO_HARNESS_TAG:-latest}
+    container_name: eco-harness
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      ECO_HOME: /data
+      ECO_PROJECT_DIR: /project
+      ECO_WORKTREE_ROOT: /data/worktrees
+      # Worktree creation runs git against the host-owned mounted project;
+      # whitelist THE MOUNTED PROJECT PATH ONLY (git >= 2.35.2).
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /project
+    env_file:
+      - ${ECO_HOME:-$HOME/.eco-harness}/.env
+    volumes:
+      # App home: .env, prebuilt index + marketplace cache, downloaded
+      # native binaries, harness output/ and traces/.
+      - ${ECO_HOME:-$HOME/.eco-harness}:/data
+      # The user project (UI folder picker starts here).
+      - ${ECO_PROJECT_DIR:-$HOME/eco-projects/default}:/project
+    restart: unless-stopped

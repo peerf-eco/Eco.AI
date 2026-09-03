@@ -45,3 +45,18 @@ dist/
 *.cache
 token_analysis.json
 
+
+# Runtime artifacts (per-session data, never image content)
+output/
+traces/
+marketplace_cache/
+marketplace_index.sqlite
+eco_framework/
+
+# Frontend (built separately; dev image mounts it)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Agent Manager / tooling state
+.kilo/

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build (or rebuild) ``marketplace_index.sqlite`` from ``marketplace_cache/``.
 
-This is the production-index builder for the V7 ``search_marketplace`` EcoTool.
+This is the production-index builder for the ``search_marketplace`` EcoTool.
 It reuses ``agent/rag/ingest.py``'s pipeline with the **production** stack:
 
     Chunker:   ASTChunker(target_chars=400)  — winner of the 4-way eval
@@ -42,10 +42,11 @@ try:
 except ImportError:
     pass
 
-from agent.rag.chunker_ast import ASTChunker
-from agent.rag.embedder import Embedder
-from agent.rag.ingest import ingest_cache
-from agent.rag.store import RagStore
+from eco_harness.agent.internal.tools.paths import framework_root
+from eco_harness.agent.rag.chunker_ast import ASTChunker
+from eco_harness.agent.rag.embedder import Embedder
+from eco_harness.agent.rag.ingest import ingest_cache
+from eco_harness.agent.rag.store import RagStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,24 +62,72 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--rebuild", action="store_true",
-        help="Force rebuild even if marketplace_index.sqlite exists.",
+        help="Force rebuild even if the index exists.",
+    )
+    parser.add_argument(
+        "--merge", action="store_true",
+        help="Update an existing index in place: re-ingest the corpus and "
+             "add only NEW/changed chunks (add_chunks dedupes on "
+             "component+file+line range+text). Chunks of removed files stay "
+             "until the next full --rebuild. Used by the Settings → RAG "
+             "'Update Index from marketplace' flow.",
     )
     parser.add_argument(
         "--target-chars", type=int, default=400,
         help="ASTChunker chunk size (non-whitespace chars). Default 400 — "
              "the size that won the 4-way chunking eval on golden_queries.",
     )
+    parser.add_argument(
+        "--source", choices=("cache", "framework"), default="cache",
+        help="Corpus source: 'cache' (default) indexes marketplace_cache/; "
+             "'framework' indexes the standard ACOM $ECO_FRAMEWORK "
+             "development-kit tree (<Component>_DK_v.<ver>/<Component>/…), "
+             "so DK headers are indexed without a prior fetch. Component "
+             "names are normalized (the _DK_v.<ver> suffix is stripped).",
+    )
     args = parser.parse_args()
 
-    if not CACHE_DIR.exists():
+    if args.source == "framework":
+        corpus_dir = framework_root(repo=PROJECT_ROOT)
+        if not corpus_dir.is_dir():
+            sys.exit(
+                f"ECO_FRAMEWORK corpus not found at {corpus_dir}. Set "
+                f"ECO_FRAMEWORK to the ACOM development-kit directory or "
+                f"populate {CACHE_DIR} and use --source cache."
+            )
+    else:
+        corpus_dir = CACHE_DIR
+
+    if not corpus_dir.exists():
         sys.exit(
-            f"marketplace_cache not found at {CACHE_DIR}. "
+            f"corpus dir not found at {corpus_dir}. "
             f"Pull components first via scripts/fetch_marketplace.py."
         )
 
-    if INDEX_PATH.exists() and not args.rebuild:
+    corpus_files = [p for p in corpus_dir.rglob("*") if p.is_file()]
+    if not corpus_files:
+        sys.exit(
+            f"corpus dir at {corpus_dir} is empty — nothing to index. "
+            f"Pull components first via scripts/fetch_marketplace.py."
+        )
+
+    if INDEX_PATH.exists() and not INDEX_PATH.is_file():
+        # Stale directory (or other non-file) where the index should live —
+        # remove it so --rebuild (and RagStore.create) can proceed.
+        logger.warning(
+            "%s exists but is not a file; removing it before rebuild.",
+            INDEX_PATH,
+        )
+        import shutil as _shutil
+        if INDEX_PATH.is_dir():
+            _shutil.rmtree(INDEX_PATH)
+        else:
+            INDEX_PATH.unlink()
+
+    if INDEX_PATH.is_file() and not args.rebuild and not args.merge:
         logger.info(
-            "Index exists at %s. Re-run with --rebuild to wipe + re-embed.",
+            "Index exists at %s. Re-run with --rebuild to wipe + re-embed, "
+            "or --merge to update it in place.",
             INDEX_PATH,
         )
         return 0
@@ -90,10 +139,14 @@ def main() -> int:
         "Embedder ready: model=%s dim=%d", embedder.model, embedder.dim,
     )
 
-    store = RagStore.create(INDEX_PATH, embed_dim=embedder.dim, reset=True)
+    # --merge keeps the existing index (and any user-imported chunks) and
+    # only appends new/changed chunks; --rebuild wipes everything.
+    store = RagStore.create(
+        INDEX_PATH, embed_dim=embedder.dim, reset=bool(args.rebuild),
+    )
     try:
         chunker = ASTChunker(target_chars=args.target_chars)
-        stats = ingest_cache(CACHE_DIR, store, chunker, embedder)
+        stats = ingest_cache(corpus_dir, store, chunker, embedder)
     finally:
         store.close()
 

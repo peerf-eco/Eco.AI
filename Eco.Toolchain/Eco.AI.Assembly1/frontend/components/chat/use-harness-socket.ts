@@ -1,0 +1,733 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  Block,
+  ChatMessage,
+  ClientMessage,
+  PipelineNode,
+  ServerEvent,
+  HarnessPhase,
+  WorkingMode,
+  Attachment,
+} from "./types";
+import { initialPhaseForMode, type PhaseTokenMap, type TokenStat } from "./types";
+
+export interface WorktreeRef {
+  name: string;
+  path: string;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// id generation — UUID where available, counter as a safe fallback.
+// ────────────────────────────────────────────────────────────────────────────
+let _idCounter = 0;
+function newId(prefix: string): string {
+  _idCounter += 1;
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `${prefix}_${crypto.randomUUID().slice(0, 8)}_${_idCounter}`;
+  }
+  return `${prefix}_${_idCounter}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+const THREAD_ID_KEY = "eco_harness.thread_id";
+
+// Tool output preview cap — collapsible cards in the chat show only the
+// first N chars; the full payload is available in dev tools / logs.
+const TOOL_OUTPUT_PREVIEW_CHARS = 500;
+
+function safeStringifyPreview(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  try {
+    return JSON.stringify(value).slice(0, TOOL_OUTPUT_PREVIEW_CHARS);
+  } catch {
+    // Circular refs, BigInt, etc. — never crash the chat UI for telemetry.
+    return "[unserializable]";
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Pure helpers — append/update blocks immutably inside the message list.
+// Same idea as mek-ai useChatStream.ts:30-65.
+// ────────────────────────────────────────────────────────────────────────────
+
+function appendBlock(prev: ChatMessage[], block: Block): ChatMessage[] {
+  const last = prev[prev.length - 1];
+  if (last && last.role === "assistant") {
+    return [
+      ...prev.slice(0, -1),
+      { ...last, blocks: [...last.blocks, block] },
+    ];
+  }
+  return [
+    ...prev,
+    { id: newId("msg"), role: "assistant", blocks: [block] },
+  ];
+}
+
+function updateBlock(
+  prev: ChatMessage[],
+  predicate: (b: Block) => boolean,
+  updater: (b: Block) => Block,
+): ChatMessage[] {
+  return prev.map((msg) => ({
+    ...msg,
+    blocks: msg.blocks.map((b) => (predicate(b) ? updater(b) : b)),
+  }));
+}
+
+// Walk blocks tail-first, mutate the first match, return the new list. Same
+// reverse-scan idea as mek-ai useChatStream.ts:49-65 — works because backend
+// emits per-node events in order and we never need to update older blocks.
+function updateLastBlock(
+  prev: ChatMessage[],
+  predicate: (b: Block) => boolean,
+  updater: (b: Block) => Block,
+): { messages: ChatMessage[]; matched: boolean } {
+  let matched = false;
+  const reversed = [...prev].reverse();
+  const updated = reversed.map((msg) => {
+    if (matched) return msg;
+    const idxFromTail = [...msg.blocks].reverse().findIndex(predicate);
+    if (idxFromTail === -1) return msg;
+    const realIdx = msg.blocks.length - 1 - idxFromTail;
+    matched = true;
+    return {
+      ...msg,
+      blocks: msg.blocks.map((b, i) => (i === realIdx ? updater(b) : b)),
+    };
+  }).reverse();
+  return { messages: updated, matched };
+}
+
+// Flip every active ThinkingBlock / AnswerBlock for `node` (or all nodes when
+// undefined) to isActive=false so the UI stops the caret/pulse without
+// deleting the history. Called on tool_call_start, phase_change, node_done,
+// pipeline_done — any boundary that semantically ends a streaming burst.
+// Thinking blocks additionally collapse; answer blocks stay expanded (the
+// renderer treats isActive as "live" only).
+function finalizeActiveStreaming(prev: ChatMessage[], node?: PipelineNode): ChatMessage[] {
+  return prev.map((msg) => ({
+    ...msg,
+    blocks: msg.blocks.map((b) =>
+      (b.type === "thinking" || b.type === "answer") && b.isActive && (node === undefined || b.node === node)
+        ? { ...b, isActive: false }
+        : b,
+    ),
+  }));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Compatibility module for the chat UI.
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface UseHarnessSocketResult {
+  messages: ChatMessage[];
+  isConnected: boolean;
+  isProcessing: boolean;
+  currentPhase: HarnessPhase | null;
+  completedPhases: HarnessPhase[];
+  // Token counters for the phase stepper: per-phase buckets + session total.
+  phaseTokens: PhaseTokenMap;
+  totalTokens: TokenStat;
+  // Context-load gauge (UI_PRD I-6): the prompt side of the MOST RECENT LLM
+  // call against the model window. Replaced per usage event, never summed;
+  // null while no usage event has carried a context_window yet.
+  contextUsage: { used: number; window: number } | null;
+  threadId: string | null;
+  // Set when the backend creates an isolated worktree for this session;
+  // kept until New session so the name/path stays available for reference.
+  worktree: WorktreeRef | null;
+
+  sendUserRequest: (
+    text: string,
+    opts?: {
+      projectDir?: string;
+      maxRetries?: number;
+      targetOs?: string;
+      targetArch?: string;
+      language?: string;
+      mode?: WorkingMode;
+      useWorktree?: boolean;
+      attachedFiles?: Attachment[];
+    },
+  ) => void;
+  sendPlanDecision: (blockId: string, approved: boolean, opts?: { modifiedPlanMd?: string; reason?: string }) => void;
+  sendEscalationDecision: (blockId: string, cont: boolean) => void;
+  sendAbort: () => void;
+  clearMessages: () => void;
+  // Load a reconstructed transcript (from /api/sessions/{id}/messages) into the
+  // chat area — used when the user opens a past session from the panel.
+  loadMessages: (messages: ChatMessage[]) => void;
+  // Re-point the live WebSocket at a specific thread (to re-attach to a session
+  // the user opened) or null for a fresh thread (return to live).
+  connectThread: (threadId: string | null) => void;
+}
+
+export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [currentPhase, setCurrentPhase] = useState<HarnessPhase | null>(null);
+  const [completedPhases, setCompletedPhases] = useState<HarnessPhase[]>([]);
+  const [phaseTokens, setPhaseTokens] = useState<PhaseTokenMap>({});
+  const [totalTokens, setTotalTokens] = useState<TokenStat>({ input: 0, output: 0, total: 0 });
+  const [contextUsage, setContextUsage] = useState<{ used: number; window: number } | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [worktree, setWorktree] = useState<WorktreeRef | null>(null);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectAttempt = useRef(0);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intentionalClose = useRef(false);
+  const handleEventRef = useRef<(ev: ServerEvent) => void>(() => {});
+
+  // ── event handler ────────────────────────────────────────────────────────
+  const handleEvent = useCallback((ev: ServerEvent) => {
+    switch (ev.type) {
+      case "heartbeat": {
+        if (ev.thread_id) {
+          setThreadId(ev.thread_id);
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem(THREAD_ID_KEY, ev.thread_id);
+          }
+        }
+        return;
+      }
+
+      case "worktree_created": {
+        setWorktree({ name: ev.name || "", path: ev.path || "" });
+        return;
+      }
+
+      case "phase_change": {
+        setCurrentPhase((prevPhase) => {
+          if (prevPhase && prevPhase !== ev.phase) {
+            setCompletedPhases((p) => (p.includes(prevPhase) ? p : [...p, prevPhase]));
+          }
+          return ev.phase;
+        });
+        setMessages((prev) => {
+          // Crossing a phase boundary means the previous node has stopped
+          // reasoning — collapse all active thinking blocks first, then
+          // append the phase header.
+          const collapsed = finalizeActiveStreaming(prev);
+          return appendBlock(collapsed, {
+            id: newId("phase"),
+            type: "phase_header",
+            phase: ev.phase,
+            node: ev.node,
+          });
+        });
+        return;
+      }
+
+      case "node_done": {
+        setMessages((prev) => {
+          const collapsed = finalizeActiveStreaming(prev, ev.node as PipelineNode);
+          return appendBlock(collapsed, {
+            id: newId("nodedone"),
+            type: "node_done",
+            node: ev.node as PipelineNode,
+            projectName: ev.project_name,
+            componentsCount: ev.components_count,
+            downloadedPaths: ev.downloaded_paths,
+            summaryMd: ev.summary_md,
+            buildArtifact: ev.build_artifact,
+            reasonMd: ev.reason_md,
+          });
+        });
+        return;
+      }
+
+      case "build_fail": {
+        setMessages((prev) => appendBlock(prev, {
+          id: newId("buildfail"),
+          type: "build_fail",
+          message: ev.error_md,
+          retryCount: ev.retry_count,
+        }));
+        return;
+      }
+
+      case "test_fail": {
+        setMessages((prev) => appendBlock(prev, {
+          id: newId("testfail"),
+          type: "test_fail",
+          message: ev.reason_md,
+          retryCount: ev.retry_count,
+        }));
+        return;
+      }
+
+      case "plan_review_required": {
+        setIsProcessing(false);
+        setMessages((prev) => appendBlock(prev, {
+          id: newId("planreview"),
+          type: "plan_review",
+          planMd: ev.plan_md,
+          components: ev.components || [],
+          projectName: ev.project_name || "",
+          status: null,
+        }));
+        return;
+      }
+
+      case "escalation_required": {
+        setIsProcessing(false);
+        setMessages((prev) => appendBlock(prev, {
+          id: newId("escalation"),
+          type: "escalation",
+          reason: ev.reason || "unknown",
+          failureOrigin: ev.failure_origin || "",
+          retryCount: ev.retry_count || 0,
+          maxRetries: ev.max_retries || 0,
+          buildLog: ev.build_log || "",
+          testerReportMd: ev.tester_report_md || "",
+          planMd: ev.plan_md || "",
+          coderSummaryMd: ev.coder_summary_md || "",
+          status: null,
+        }));
+        return;
+      }
+
+      case "usage": {
+        // Bucket this LLM call's tokens into the phase that was running.
+        const u = ev.usage ?? { input: 0, output: 0 };
+        const total = u.total ?? (u.input ?? 0) + (u.output ?? 0);
+        if (!total) return;
+        const phase = ev.phase;
+        setPhaseTokens((prev) => {
+          const cur = prev[phase] ?? { input: 0, output: 0, total: 0 };
+          return {
+            ...prev,
+            [phase]: {
+              input: cur.input + (u.input ?? 0),
+              output: cur.output + (u.output ?? 0),
+              total: cur.total + total,
+            },
+          };
+        });
+        setTotalTokens((prev) => ({
+          input: prev.input + (u.input ?? 0),
+          output: prev.output + (u.output ?? 0),
+          total: prev.total + total,
+        }));
+        if (u.context_window && u.context_window > 0) {
+          setContextUsage({
+            used: u.context_used ?? ((u.input ?? 0) + (u.cache_read ?? 0) + (u.cache_write ?? 0)),
+            window: u.context_window,
+          });
+        }
+        return;
+      }
+
+      case "pipeline_done": {
+        setIsProcessing(false);
+        if (currentPhase) {
+          setCompletedPhases((p) => (p.includes(currentPhase) ? p : [...p, currentPhase]));
+        }
+        // Success lights the terminal "End" step in the stepper.
+        if (ev.status === "success") {
+          setCompletedPhases((p) => (p.includes("done") ? p : [...p, "done"]));
+        }
+        setMessages((prev) => {
+          const collapsed = finalizeActiveStreaming(prev);
+          return appendBlock(collapsed, {
+            id: newId("done"),
+            type: "pipeline_done",
+            status: ev.status,
+            buildArtifact: ev.build_artifact || "",
+            testerReportMd: ev.tester_report_md || "",
+          });
+        });
+        // Terminal state — drop the thread_id so the next user_request creates
+        // a fresh thread. Backend graph would otherwise resume a "dead" thread
+        // after page reload and reply with stale interrupts.
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem(THREAD_ID_KEY);
+        }
+        setThreadId(null);
+        return;
+      }
+
+      case "node_event": {
+        if (ev.event === "thinking_delta" || ev.event === "text_delta") {
+          const isAnswer = ev.event === "text_delta";
+          const delta = (ev.data.content as string | undefined) ?? "";
+          if (!delta) return;
+          // thinking_delta → collapsible reasoning block (one per ReAct
+          // iteration). text_delta → always-expanded answer block so the
+          // model's actual reply is never hidden inside a collapsed reasoning
+          // card. Inactive blocks are NOT reused — each burst after a
+          // tool/phase boundary gets its own block.
+          const blockType = isAnswer ? "answer" : "thinking";
+          setMessages((prev) => {
+            const { messages: appended, matched } = updateLastBlock(
+              prev,
+              (b) => b.type === blockType && b.isActive && b.node === ev.node,
+              (b) => b.type === blockType
+                ? { ...b, content: b.content + delta }
+                : b,
+            );
+            if (matched) return appended;
+            return appendBlock(prev, {
+              id: newId(isAnswer ? "ans" : "think"),
+              type: blockType,
+              node: ev.node,
+              content: delta,
+              isActive: true,
+              startedAt: typeof performance !== "undefined" ? performance.now() : Date.now(),
+            });
+          });
+          return;
+        }
+
+        if (ev.event === "tool_call_start") {
+          const name = (ev.data.name as string | undefined) ?? "";
+          if (!name) return;
+          const args = (ev.data.args as Record<string, unknown>) ?? {};
+          setMessages((prev) => {
+            // A tool call ends the current reasoning burst — collapse first,
+            // then append the tool card.
+            const collapsed = finalizeActiveStreaming(prev, ev.node);
+            return appendBlock(collapsed, {
+              id: newId("toolcall"),
+              type: "tool_call",
+              node: ev.node,
+              toolName: name,
+              args,
+              status: "running",
+              startedAt: typeof performance !== "undefined" ? performance.now() : Date.now(),
+            });
+          });
+          return;
+        }
+
+        if (ev.event === "tool_call_end") {
+          const name = (ev.data.name as string | undefined) ?? "";
+          const isError = Boolean(ev.data.is_error);
+          const details = (ev.data.details ?? {}) as Record<string, unknown>;
+          // Policy denials arrive either as a structured marker from the
+          // agent loop or as recognizable rejection texts in the preview.
+          const preview = typeof details.reason === "string" ? details.reason : "";
+          const DENIAL_PATTERNS = [
+            /not in the whitelist/i,
+            /^BLOCKED:/i,
+            /outside the allowed roots/i,
+            /outside project_dir/i,
+          ];
+          const blockedByPolicy =
+            details.denied === true ||
+            (!isError ? false : DENIAL_PATTERNS.some((p) => p.test(preview)));
+          // Match the most-recent running ToolCallBlock with the same node + toolName.
+          setMessages((prev) => {
+            let matchedOnce = false;
+            const reversed = [...prev].reverse();
+            const updated = reversed.map((msg) => {
+              const blocksRev = [...msg.blocks].reverse().map((b) => {
+                if (matchedOnce) return b;
+                if (b.type === "tool_call"
+                    && b.status === "running"
+                    && b.node === ev.node
+                    && b.toolName === name) {
+                  matchedOnce = true;
+                  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+                  return {
+                    ...b,
+                    status: isError ? ("error" as const) : ("ok" as const),
+                    durationMs: Math.max(0, now - b.startedAt),
+                    output: safeStringifyPreview(ev.data.details),
+                    ...(blockedByPolicy
+                      ? { blockedByPolicy: true, denialReason: preview || undefined }
+                      : {}),
+                  };
+                }
+                return b;
+              }).reverse();
+              return { ...msg, blocks: blocksRev };
+            }).reverse();
+            return updated;
+          });
+          return;
+        }
+
+        if (ev.event === "error") {
+          const reason = (ev.data?.reason as string | undefined) ?? "Agent error";
+          setMessages((prev) => {
+            const collapsed = finalizeActiveStreaming(prev, ev.node);
+            return appendBlock(collapsed, {
+              id: newId("err"),
+              type: "error",
+              content: reason,
+            });
+          });
+          return;
+        }
+
+        // Other node_event kinds (iteration, start, done, no_tool_call, max_iters)
+        // are bookkeeping — surface in a later iteration; spec §6 deferred them.
+        return;
+      }
+
+      case "error": {
+        setIsProcessing(false);
+        // A rejected request (e.g. "project_dir is outside the allowed roots")
+        // never started a session, so drop the pre-set phase highlight — otherwise
+        // the PhaseStepper keeps spinning on "planning" with nothing running.
+        setCurrentPhase(null);
+        setCompletedPhases([]);
+        setMessages((prev) => appendBlock(prev, {
+          id: newId("err"),
+          type: "error",
+          content: ev.content,
+        }));
+        return;
+      }
+    }
+  }, [currentPhase]);
+
+  useEffect(() => {
+    handleEventRef.current = handleEvent;
+  }, [handleEvent]);
+
+  // ── connect with exponential backoff + ?thread_id resume ────────────────
+  const connect = useCallback((explicitThread?: string | null) => {
+    if (
+      wsRef.current?.readyState === WebSocket.OPEN ||
+      wsRef.current?.readyState === WebSocket.CONNECTING
+    ) return;
+
+    intentionalClose.current = false;
+
+    let tid: string | null = null;
+    if (explicitThread !== undefined) {
+      tid = explicitThread;
+    } else if (typeof window !== "undefined") {
+      tid = sessionStorage.getItem(THREAD_ID_KEY);
+    }
+    const qs = tid ? `?thread_id=${encodeURIComponent(tid)}` : "";
+    const ws = new WebSocket(`${wsBaseUrl}/ws/chat${qs}`);
+
+    ws.onopen = () => {
+      setIsConnected(true);
+      reconnectAttempt.current = 0;
+    };
+
+    ws.onclose = () => {
+      // Only the CURRENT socket may drive reconnect bookkeeping. An orphaned
+      // socket (StrictMode/dev double-mount, one replaced by connectThread or
+      // New Session) must die quietly: if its close also scheduled a
+      // reconnect, every orphan kept its own backoff loop alive forever —
+      // observed as paired /ws/chat reconnects against a stale thread_id
+      // plus uvicorn accept-state crashes on the server.
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
+      setIsConnected(false);
+      if (!intentionalClose.current) {
+        const delay = Math.min(500 * Math.pow(2, reconnectAttempt.current), 15000);
+        reconnectAttempt.current += 1;
+        reconnectTimer.current = setTimeout(() => connect(), delay);
+      }
+    };
+
+    ws.onerror = () => {
+      // onclose follows; backoff handled there.
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data) as ServerEvent;
+        handleEventRef.current(data);
+      } catch (err) {
+        // swallow malformed messages — they're a server bug, not our concern.
+        console.error("Chat WS: malformed message", err, e.data);
+      }
+    };
+
+    wsRef.current = ws;
+  }, [wsBaseUrl]);
+
+  useEffect(() => {
+    connect();
+    return () => {
+      intentionalClose.current = true;
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      // Null the ref BEFORE closing so a StrictMode/dev remount (or fast
+      // refresh) sees a clean ref and opens a fresh socket instead of
+      // bailing on the still-CONNECTING one. Otherwise the first mount's
+      // socket is torn down while connecting and the second mount's
+      // connect() guard short-circuits, leaving the UI permanently
+      // disconnected ("WebSocket closed before the connection is established").
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
+    };
+  }, [connect]);
+
+  // ── send helpers ─────────────────────────────────────────────────────────
+  const send = useCallback((msg: ClientMessage) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn("Chat WS: send while not connected", msg.type);
+      return;
+    }
+    ws.send(JSON.stringify(msg));
+  }, []);
+
+  const sendUserRequest = useCallback((
+    text: string,
+    opts?: {
+      projectDir?: string;
+      maxRetries?: number;
+      targetOs?: string;
+      targetArch?: string;
+      language?: string;
+      mode?: WorkingMode;
+      useWorktree?: boolean;
+      attachedFiles?: Attachment[];
+    },
+  ) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const attachments = opts?.attachedFiles;
+    setMessages((prev) => [
+      ...prev,
+      { id: newId("msg"), role: "user", text: trimmed, blocks: [], attachments },
+    ]);
+    setIsProcessing(true);
+    setCurrentPhase(initialPhaseForMode(opts?.mode));
+    setCompletedPhases([]);
+    setPhaseTokens({});
+    setTotalTokens({ input: 0, output: 0, total: 0 });
+    setContextUsage(null);
+    send({
+      type: "user_request",
+      user_request: trimmed,
+      project_dir: opts?.projectDir,
+      max_retries: opts?.maxRetries,
+      target_os: opts?.targetOs,
+      target_arch: opts?.targetArch,
+      language: opts?.language ?? undefined,
+      mode: opts?.mode,
+      use_worktree: opts?.useWorktree,
+      attached_files: attachments?.map((a) => ({
+        name: a.name,
+        path: a.path,
+        kind: a.kind,
+        mime: a.mime,
+        size: a.size,
+        content: a.content,
+      })) ?? [],
+    });
+  }, [send]);
+
+  const sendPlanDecision = useCallback((
+    blockId: string,
+    approved: boolean,
+    opts?: { modifiedPlanMd?: string; reason?: string },
+  ) => {
+    setIsProcessing(true);
+    setMessages((prev) => updateBlock(
+      prev,
+      (b) => b.id === blockId && b.type === "plan_review",
+      (b) => ({ ...(b as any), status: approved ? "approved" : "rejected" }),
+    ));
+    send({
+      type: "plan_decision",
+      approved,
+      modified_plan_md: opts?.modifiedPlanMd,
+      reason: opts?.reason,
+    });
+  }, [send]);
+
+  const sendEscalationDecision = useCallback((blockId: string, cont: boolean) => {
+    setIsProcessing(true);
+    setMessages((prev) => updateBlock(
+      prev,
+      (b) => b.id === blockId && b.type === "escalation",
+      (b) => ({ ...(b as any), status: cont ? "continue" : "abort" }),
+    ));
+    send({ type: "escalation_decision", continue: cont });
+    if (!cont && typeof window !== "undefined") {
+      sessionStorage.removeItem(THREAD_ID_KEY);
+      setThreadId(null);
+    }
+  }, [send]);
+
+  const sendAbort = useCallback(() => {
+    send({ type: "abort" });
+    setIsProcessing(false);
+  }, [send]);
+
+  // Re-point the live socket at a specific thread (re-attach to a session the
+  // user opened from the panel) or null for a brand-new thread. Sessions are
+  // loaded separately via loadMessages; this only (re)opens the channel so a
+  // still-running session streams live events and the panel's Stop can reach it.
+  const connectThread = useCallback((threadId: string | null) => {
+    intentionalClose.current = true;
+    wsRef.current?.close();
+    setThreadId(threadId);
+    if (typeof window !== "undefined") {
+      if (threadId) sessionStorage.setItem(THREAD_ID_KEY, threadId);
+      else sessionStorage.removeItem(THREAD_ID_KEY);
+    }
+    setTimeout(() => {
+      intentionalClose.current = false;
+      connect(threadId);
+    }, 60);
+  }, [connect]);
+
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+    setCurrentPhase(null);
+    setCompletedPhases([]);
+    setPhaseTokens({});
+    setTotalTokens({ input: 0, output: 0, total: 0 });
+    setContextUsage(null);
+    setWorktree(null);
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(THREAD_ID_KEY);
+    }
+    // Close and reopen so backend rolls a fresh thread_id.
+    intentionalClose.current = true;
+    wsRef.current?.close();
+    setThreadId(null);
+    setTimeout(() => {
+      intentionalClose.current = false;
+      connect();
+    }, 50);
+  }, [connect]);
+
+  // Inject a reconstructed transcript (past session) into the chat area.
+  const loadMessages = useCallback((msgs: ChatMessage[]) => {
+    setMessages(msgs);
+    setIsProcessing(false);
+    setCurrentPhase(null);
+    setCompletedPhases([]);
+    setPhaseTokens({});
+    setTotalTokens({ input: 0, output: 0, total: 0 });
+    setContextUsage(null);
+    setWorktree(null);
+  }, []);
+
+  return {
+    messages,
+    isConnected,
+    isProcessing,
+    currentPhase,
+    completedPhases,
+    phaseTokens,
+    totalTokens,
+    contextUsage,
+    threadId,
+    worktree,
+    sendUserRequest,
+    sendPlanDecision,
+    sendEscalationDecision,
+    sendAbort,
+    clearMessages,
+    loadMessages,
+    connectThread,
+  };
+}
