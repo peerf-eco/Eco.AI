@@ -17,8 +17,8 @@
  *
  */
 
-#ifndef __C_ECOAIINFERENCE1_FACTORY_H__
-#define __C_ECOAIINFERENCE1_FACTORY_H__
+#ifndef __C_ECO_AI_INFERENCE_1_FACTORY_H__
+#define __C_ECO_AI_INFERENCE_1_FACTORY_H__
 
 #include "IEcoSystem1.h"
 
@@ -37,4 +37,4 @@ typedef struct CEcoAIInference1_D82986D3Factory {
 
 } CEcoAIInference1_D82986D3Factory;
 
-#endif /* __C_ECOAIINFERENCE1_FACTORY_H__ */
+#endif /* __C_ECO_AI_INFERENCE_1_FACTORY_H__ */

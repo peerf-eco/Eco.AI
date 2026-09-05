@@ -1,19 +1,10 @@
-# Configurations
-
-# Platform detection
-PLATFORM = Windows
-
 ifeq ($(OS), Windows_NT)
 	#WINDOWS USE THESE DEFINITIONS
-	RM = -rm -f
+	RM = -del /q /f
 	SLASH = \\
 	SWALLOW_OUTPUT = >nul 2>nul
 	TOOLCHAIN = 
 	TOOL = 
-
-	TOOLCHAIN = 
-	TOOL = 
-
 else
 	#LINUX USE THESE DEFINITIONS
 	RM = -rm -f
@@ -23,127 +14,109 @@ else
 	TOOL = 
 endif 
 
-# Target configuration
 ifeq ($(TARGET), 1)
-	OUT_TARGET = EcoAIInference1
-	BASE_TARGET = Static
-
-	CCFLAGS_TARGET = -Wall -DECO_LINUX -DECO_LIB
-	LDFLAGS_TARGET = 
-
-else
-	OUT_TARGET = EcoAIInference1
-	BASE_TARGET = Dynamic
-
-	CCFLAGS_TARGET = -Wall -DECO_LINUX -DECO_DLL
-	LDFLAGS_TARGET =
-
-endif
-
-# Debug symbols configuration
+OUT_TARGET = EcoAIInference1
 ifeq ($(DEBUG), 1)
-	CONFIG_TARGET = $(BASE_TARGET)Debug
+CONFIG_TARGET = StaticDebug
+CCFLAGS_TARGET = -Wall -g -DECO_LIB
+LDFLAGS_TARGET =
+ARCH_TARGET = x86_64
 else
-	CONFIG_TARGET = $(BASE_TARGET)Release
+CONFIG_TARGET = StaticRelease
+CCFLAGS_TARGET = -O3 -DECO_LIB
+LDFLAGS_TARGET =
+ARCH_TARGET = x86_64
+endif
+else
+OUT_TARGET = EcoAIInference1
+ifeq ($(DEBUG), 1)
+CONFIG_TARGET = DynamicDebug
+CCFLAGS_TARGET = -Wall -g -DECO_DLL
+LDFLAGS_TARGET = 
+ARCH_TARGET = x86_64
+else
+CONFIG_TARGET = DynamicRelease
+CCFLAGS_TARGET = -O3 -DECO_DLL
+LDFLAGS_TARGET = 
+ARCH_TARGET = x86_64
+endif
 endif
 
-ifeq ($(ARCH), x86_16)
-    CCFLAGS_TARGET +=
-    LDFLAGS_TARGET +=
-    ARCH_TARGET = x86_16
-else ifeq ($(ARCH), x86)
-    ARCH_TARGET = x86
-else ifeq ($(ARCH), x86_64)
-    ARCH_TARGET = amd64
-else ifeq ($(ARCH), arm)
-    CCFLAGS_TARGET +=   
-    LDFLAGS_TARGET += 
-    ARCH_TARGET = arm
-else ifeq ($(ARCH), aarch32)
-    CCFLAGS_TARGET +=   
-    LDFLAGS_TARGET += 
-    ARCH_TARGET = armv7
-else ifeq ($(ARCH), aarch64)
-    CCFLAGS_TARGET +=   
-    LDFLAGS_TARGET += 
-    ARCH_TARGET = armv8
-else ifeq ($(ARCH), rv32)
-    CCFLAGS_TARGET +=   
-    LDFLAGS_TARGET += 
-    ARCH_TARGET = rv32
-else ifeq ($(ARCH), rv64)
-    CCFLAGS_TARGET +=   
-    LDFLAGS_TARGET += 
-    ARCH_TARGET = rv64gcv
-else ifeq ($(ARCH), mips)
-    CCFLAGS_TARGET +=   
-    LDFLAGS_TARGET += 
-    ARCH_TARGET = mips
-else ifeq ($(ARCH), mips64)
-    CCFLAGS_TARGET +=   
-    LDFLAGS_TARGET += 
-    ARCH_TARGET = mips64
-endif
-
-# Device selection
-ifdef DEVICE
-    DEVICE_TARGET = $(DEVICE)$(SLASH)
-endif
-
-# Include directories
-INC = \
-/I ..$(SLASH)..$(SLASH)..$(SLASH)HeaderFiles \
-/I ..$(SLASH)..$(SLASH)..$(SLASH)SharedFiles \
-/I "$(ECO_FRAMEWORK)$(SLASH)Eco.Core1$(SLASH)SharedFiles" \
-/I "$(ECO_FRAMEWORK)$(SLASH)Eco.System1$(SLASH)SharedFiles" \
-/I "$(ECO_FRAMEWORK)$(SLASH)Eco.InterfaceBus1$(SLASH)SharedFiles" \
-/I "$(ECO_FRAMEWORK)$(SLASH)Eco.MemoryManager1$(SLASH)SharedFiles" \
-/I "$(ECO_FRAMEWORK)$(SLASH)Eco.FileSystemManagement1$(SLASH)SharedFiles" 
-
-# Libraries directories
-LIB_DIR = \
-/LIBPATH:"..$(SLASH)..$(SLASH)..$(SLASH)BuildFiles$(SLASH)$(PLATFORM)$(SLASH)$(ARCH_TARGET)$(SLASH)$(CONFIG_TARGET)" \
-/LIBPATH:"$(ECO_FRAMEWORK)$(SLASH)Eco.MemoryManager1$(SLASH)BuildFiles$(SLASH)$(PLATFORM)$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease" \
-/LIBPATH:"$(ECO_FRAMEWORK)$(SLASH)Eco.FileSystemManagement1$(SLASH)BuildFiles$(SLASH)$(PLATFORM)$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease"
-
-# Source files.
+# source files.
 SRC = \
-..$(SLASH)..$(SLASH)..$(SLASH)UnitTestFiles$(SLASH)SourceFiles$(SLASH)EcoAIInference1.c
+../../../UnitTestFiles/SourceFiles/EcoAIInference1.c
 
-# Libraries
-LIBS += "00000000000000000000000042757331.lib" "0000000000000000000000004D656D31.lib" 
+# include directories
+INCLUDES = \
+-I ..$(SLASH)..$(SLASH)..$(SLASH)HeaderFiles \
+-I ..$(SLASH)..$(SLASH)..$(SLASH)SharedFiles \
+-I ..$(SLASH)..$(SLASH)..$(SLASH)UnitTestFiles$(SLASH)HeaderFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.Core1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.InterfaceBus1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.MemoryManager1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.FileSystemManagement1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.GGUF1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.ONNX1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.String1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.List1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.Comparator1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.Vector1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.Matrix1$(SLASH)SharedFiles \
+-I $(ECO_FRAMEWORK)$(SLASH)Eco.Graph1$(SLASH)SharedFiles
 
-# Object files
+# libraries directories
+LIB_DIR = \
+-L ..$(SLASH)..$(SLASH)..$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)$(CONFIG_TARGET) \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.InterfaceBus1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.FileSystemManagement1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.MemoryManager1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.System1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.GGUF1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.ONNX1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.String1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.DateTime1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.Log1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.List1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.Comparator1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.Vector1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.Matrix1$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease \
+-L $(ECO_FRAMEWORK)$(SLASH)Eco.Graph$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)StaticRelease
+
 OBJ = $(SRC:.c=.o)
 
 OUT = $(OUT_TARGET)
-OUT_DIR = ..$(SLASH)..$(SLASH)..$(SLASH)BuildFiles$(SLASH)$(PLATFORM)$(SLASH)$(ARCH_TARGET)$(SLASH)$(CONFIG_TARGET)
+OUT_DIR = ..$(SLASH)..$(SLASH)..$(SLASH)BuildFiles$(SLASH)Linux$(SLASH)$(ARCH_TARGET)$(SLASH)$(CONFIG_TARGET)
 
-# C/C++ compiler flags
-CCFLAGS = $(CCFLAGS_TARGET)
- 
- # Compile flags
-LDFLAGS = $(LDFLAGS_TARGET)
+# C++ compiler flags (-g -O2 -Wall)
+CCFLAGS = $(CCFLAGS_TARGET) -DLINUX -DUGUID_UTILITY -DECO_LINUX  -DECO_X86_64
 
-# Tools
-
+# compiler
+GNU = $(TOOLCHAIN)
 CC = $(TOOL)gcc
 AR = $(TOOL)gcc-ar
-OC = $(TOOL)objcopy
 
+ifeq ($(TARGET), 1)
+LIBS_TARGET=-l00000000000000000000000042757331 -l0000000000000000000000004D656D31 -l00000000000000000000000046534D31 -lC5519906D88D49E9BC8AE817D82986D3
+else
+LIBS_TARGET=
+endif
+
+# library paths
+LIBS = $(LIB_DIR) -lm -lc -lgcc -ldl -l00000000000000000000000053595333 $(LIBS_TARGET)
+
+# compile flags
+LDFLAGS = $(LDFLAGS_TARGET) $(LIBS)
 
 .SUFFIXES: .c
 
-all:  $(OUT)
-
 .c.o:
-	mkdir -p "$(subst /,\,$(OUT_DIR))"
-	$(CC) $(INC) $(CCFLAGS) /c $< /Fo$@
- 
+	$(GNU)$(CC) $(INCLUDES) $(CCFLAGS) -c $< -o $@
+
 $(OUT): $(OBJ)
-	$(LD) $(LIB_DIR) $(LIBS) /OUT:$(OUT_DIR)$(SLASH)$(OUT) $(OBJ) $(LDFLAGS)
-	$(RM) $(OBJ)
+	mkdir -p $(OUT_DIR)
+	$(GNU)$(CC) ${LDFLAGS} -o $(OUT_DIR)/$(OUT) $(OBJ) $(LDFLAGS)
+	rm $(OBJ)
 
 clean:
+	rm $(OBJ) $(OUT_DIR)/$(OUT)
 
-	$(RM) $(OBJ) $(OUT_DIR)$(SLASH)$(OUT)

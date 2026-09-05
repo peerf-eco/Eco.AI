@@ -1,0 +1,2795 @@
+[
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_1",
+        "type": "Specification",
+        "content": "1. Overview  \nThis document describes the requirements for the implementation of the Eco.InterfaceBus1 component. (Component)  \n\n1.1. Introduction  \nDescription.  \n\n1.2. Notes  \n- Keywords  \n\n1.3. Links  \nThis paragraph contains links to the component on marketplace and to other information useful to better understand this document:   \n\nAvailable in Marketplace at url: <u>https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245</u>",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": null,
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_2",
+        "type": "Specification",
+        "content": "2. Eco.InterfaceBus1 Component  \n\nThe Eco.InterfaceBus1 component is a part of EcoOS microkernel and designated for other components registration in the OS kernel, components discovery and calls marshaling. Interface bus will provide components with System Interface pointer of a generation, corresponding to the generation of calling component.  \nThe component has the following features: TBA",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": null,
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_3",
+        "type": "Specification",
+        "content": "3. IEcoInterfaceBus1 Interface  \n\n3.1. IEcoInterfaceBus1 IDL descriptor  \n\n```cpp\nimport \"IEcoBase1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-A00000000101),  \n]  \ninterface IEcoInterfaceBus1 : IEcoUnknown {  \n\nint16_t\tInit\t([in] void);  \n\nint16_t\tInitWith\t([in] void* heapStartAddress, [in] uint32_t size);  \n\nint16_t\tRegisterComponent\t([in] const UGUID* rcid, [in] IecoUnknown* pIFactory);  \n\nint16_t\tUnRegisterComponent\t([in] const UGUID* rcid);  \n\nint16_t\tQueryComponent\t([in] const UGUID* rcid, [in] IEcoUnknown* pIUnkOuter [in] const UGUID* riid, [out] voidptr_t* ppv);  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_4",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1\n3.1.1. Init function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_5",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1\n3.1.2. InitWith function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_6",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1\n3.1.3. RegisterComponent function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_7",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1\n3.1.4. UnRegisterComponent function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_8",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1\n3.1.5. QueryComponent function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_9",
+        "type": "Specification",
+        "content": "4. IEcoInterfaceBus1NetExt Interface  \n\n4.1. IEcoInterfaceBus1NetExt IDL descriptor  \n\n```cpp\nimport \"IEcoBase1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-A00300000101),  \n]  \ninterface IEcoInterfaceBus1NetExt : IEcoUnknown {  \n\nint16_t\tset_Manager\t([in] const UGUID* rcid);  \n\nconst UGUID*\tget_Manager\t([in] void);  \n\nint16_t\tQueryComponent\t([in] char_t* networkname,  \n [in] const UGUID* rcid,  \n [in] IEcoUnknown* pIUnkOuter,  \n [in] const UGUID* riid,  \n [out] voidptr_t* ppv)  \n\n}\t\t  \n\n```",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1NetExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_10",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1NetExt\n4.1.1. set_Manager function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1NetExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_11",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1NetExt\n4.1.2. get_Manager function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1NetExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_12",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1NetExt\n4.1.3. QueryComponent function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1NetExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_13",
+        "type": "Specification",
+        "content": "5. IEcoInterfaceBus1MemExt Interface  \n\n5.1. IEcoInterfaceBus1MemExt IDL  \n\n```cpp\nimport \"IEcoBase1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-A00100000101),  \n]  \ninterface IEcoInterfaceBus1MemExt : IEcoUnknown {  \n\nint16_t\tset_Manager\t([in] const UGUID* rcid);  \n\nconst UGUID*\tget_Manager\t([in] void);  \n\nint16_t\tset_ExpandPool\t([in] bool_t bExpandPool);  \n\n}\t\t  \n\n```",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1MemExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_14",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1MemExt\n5.1.1. set_Manager function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1MemExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_15",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1MemExt\n5.1.2. get_Manager function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1MemExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_16",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1MemExt\n5.1.3. set_ExpandPool function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1MemExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_17",
+        "type": "Specification",
+        "content": "6. IEcoInterfaceBus1FileExt Interface  \n\n6.1. IEcoInterfaceBus1FileExt IDL  \n\n```cpp\nimport \"IEcoBase1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-A00200000101),  \n]  \ninterface IEcoInterfaceBus1FileExt : IEcoUnknown {  \n\nint16_t\tset_Manager\t([in] const UGUID* rcid);  \n\nconst UGUID*\tget_Manager\t([in] void);  \n\nint16_t\tset_SearchPath\t([in] char_t* path);  \n\nchar_t*\tget_SearchPath\t([in] void);  \n\nint16_t\tRegisterComponent\t([in] const UGUID* rcid,  \n [in] char_t* filename);  \n\nint16_t\tQueryComponent\t([in] char_t* filename,  \n [in] const UGUID* rcid,  \n [in] IEcoUnknown* pIUnkOuter,  \n [in] const UGUID* riid,  \n [out] voidptr_t* ppv)  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1FileExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_18",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1FileExt\n6.1.1. set_Manager function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1FileExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_19",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1FileExt\n6.1.2. get_Manager function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1FileExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_20",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1FileExt\n6.1.3. set_SearchPath function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1FileExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_21",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1FileExt\n6.1.4. get_SearchPath function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1FileExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_22",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1FileExt\n6.1.5. RegisterComponent function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1FileExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_23",
+        "type": "Specification",
+        "content": "Interface IEcoInterfaceBus1FileExt\n6.1.6. QueryComponent function  \nThe function   \n",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": "IEcoInterfaceBus1FileExt",
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000042757331.md_chunk_24",
+        "type": "Specification",
+        "content": "7. Error codes  \n\nThe following table contains the error codes.  \n\n|Error code|Value|Description|\n| --- | --- | --- |\n|ERR_ECO_SUCCESES|0x0000|Operation successful.|\n|ERR_ECO_UNEXPECTED|0xFFFF|Unexpected condition.|\n|ERR_ECO_POINTER|0xFFEE|NULL was passed incorrectly for a pointer value.|\n|ERR_ECO_NOINTERFACE|0xFFED|No such interface supported.|\n|ERR_ECO_COMPONENT_NOTFOUND|0xFFE9|The component was not found.|\n||||\n||||",
+        "metadata": {
+            "fileName": "00000000000000000000000042757331.md",
+            "title": "Eco.InterfaceBus1 Software Component Specification",
+            "component": "Eco.InterfaceBus1",
+            "description": "implements components registration in kernel, components discovery and calls marshaling",
+            "interface": null,
+            "cid": "00000000000000000000000042757331",
+            "tags": "KERNEL, INTERFACE BUS, COMMUNICATION, BUS",
+            "registryUrl": "https://ecoos.dev/product/7d71eccc-c82a-4181-bf15-045230ab7245",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000042757331/US.ECO.00015-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_1",
+        "type": "Specification",
+        "content": "1. Overview  \nThis document describes the requirements for the implementation of Eco.FileSystemManagement1 component. (Component)  \n\n1.1. Introduction  \nDescription.  \n\n1.2. Notes  \n- Keywords  \n\n1.3. Links  \nThis paragraph contains links to information to help you understand this document:   \nAvailable in Marketplace at url: <u>https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a</u>",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": null,
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_2",
+        "type": "Specification",
+        "content": "2. Eco.FileSystemManagement1 Component  \n\nThe Eco.FileSystemManagement1 component is designated for OS file system operations  \nThe component has the following features: TBA",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": null,
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_3",
+        "type": "Specification",
+        "content": "3. IEcoFileSystemManagement1 Interface  \n\n3.1. IEcoFileSystemManagement1 interface IDL descriptor  \n\n```cpp\nimport \"IEcoBase1.idl\"  \nimport \"IEcoFileManager1.idl\"  \nimport \"IEcoDirectoryManager1.idl\"  \nimport \"IEcoDriveManager1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-C00000000101),  \n]  \ninterface IEcoFileSystemManagement1 : IEcoUnknown {  \n\nIEcoFileManager1*\tget_FileManager\t([in] void);  \n\nIEcoDirectoryManager1*\tget_DirectoryManager\t([in] void);  \n\nIEcoDriveManager1*\tget_DriveManager\t([in] void);  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileSystemManagement1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_4",
+        "type": "Specification",
+        "content": "Interface IEcoFileSystemManagement1\n3.1.1. get_FileManager function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileSystemManagement1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_5",
+        "type": "Specification",
+        "content": "Interface IEcoFileSystemManagement1\n3.1.2. get_DirectoryManager function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileSystemManagement1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_6",
+        "type": "Specification",
+        "content": "Interface IEcoFileSystemManagement1\n3.1.3. get_DriveManager function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileSystemManagement1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_7",
+        "type": "Specification",
+        "content": "4. IEcoFileInfo1 Interface  \n\n4.1. IEcoFileInfo1 interface IDL descriptor  \n\n```cpp\nimport \"IEcoBase1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-C00000000103),  \n]  \ninterface IEcoFileInfo1 : IEcoUnknown {  \n\nUGUID*\tget_Id\t([in] void);  \n\n}\t\t  \n\n```",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileInfo1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_8",
+        "type": "Specification",
+        "content": "Interface IEcoFileInfo1\n4.1.1. get_Id function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileInfo1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_9",
+        "type": "Specification",
+        "content": "5. IEcoFileManager1 Interface  \n\n5.1. IEcoFileManager1 interface IDL descriptor  \n\n```cpp\nimport \"IEcoBase1.idl\"  \nimport \"IEcoFile1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-C00000000102),  \n]  \ninterface IEcoFileManager1 : IEcoUnknown {  \n\nIEcoFile1*\tCreate\t([in] chart* pszName);  \n\nIEcoFile1*\tOpen\t([in] chart* pszName);  \n\nint32_t\tClose\t([in] IEcoFile1* pIFile);  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileManager1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_10",
+        "type": "Specification",
+        "content": "Interface IEcoFileManager1\n5.1.1. Create function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileManager1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_11",
+        "type": "Specification",
+        "content": "Interface IEcoFileManager1\n5.1.2. Open function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileManager1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_12",
+        "type": "Specification",
+        "content": "Interface IEcoFileManager1\n5.1.3. Close function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFileManager1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_13",
+        "type": "Specification",
+        "content": "6. IEcoDirectoryInfo1 Interface  \n\n6.1. IEcoDirectoryInfo1 interface IDL descriptor  \n\n```cpp\nimport \"IEcoBase1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-C00000000108),  \n]  \ninterface IEcoDirectoryInfo1 : IEcoUnknown {  \n\nUGUID*\tget_Id\t([in] void);  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoDirectoryInfo1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_14",
+        "type": "Specification",
+        "content": "Interface IEcoDirectoryInfo1\n6.1.1. get_Id function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoDirectoryInfo1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_15",
+        "type": "Specification",
+        "content": "7. IEcoDirectoryManager1 Interface  \n\n7.1. IEcoDirectoryManager1 interface IDL descriptor  \n\n```cpp\nimport \"IEcoBase1.idl\"  \nimport \"IEcoDirectoryInfo1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-C00000000107),  \n]  \ninterface IEcoDirectoryManager1 : IEcoUnknown {  \n\nIEcoDirectoryInfo1*\tCreate\t([in] chart_t* pszName);  \n\nint32_t\tDelete\t([in] chart_t* pszName);  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoDirectoryManager1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_16",
+        "type": "Specification",
+        "content": "Interface IEcoDirectoryManager1\n7.1.1. Create function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoDirectoryManager1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_17",
+        "type": "Specification",
+        "content": "Interface IEcoDirectoryManager1\n7.1.2. Delete function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoDirectoryManager1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_18",
+        "type": "Specification",
+        "content": "8. IEcoDriveInfo1 Interface  \n\n8.1. IEcoDriveInfo1 interface IDL descriptor  \n\n```cpp\nimport \"IEcoBase1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-C00000000106),  \n]  \ninterface IEcoDriveInfo1 : IEcoUnknown {  \n\nUGUID*\tget_Id\t([in] void);  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoDriveInfo1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_19",
+        "type": "Specification",
+        "content": "Interface IEcoDriveInfo1\n8.1.1. get_Id function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoDriveInfo1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_20",
+        "type": "Specification",
+        "content": "9. IEcoDriveManager1 Interface  \n\n9.1. IEcoDriveManager1 IDL  \n\n```cpp\nimport \"IEcoBase1.idl\"  \nimport \"IEcoDriveInfo1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-C00000000105),  \n]  \ninterface IEcoDriveManager1 : IEcoUnknown {  \n\nIEcoDriveInfo1*\tget_Drive\t([in] char_t* pszName);  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoDriveManager1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_21",
+        "type": "Specification",
+        "content": "Interface IEcoDriveManager1\n9.1.1. get_Drive function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoDriveManager1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_22",
+        "type": "Specification",
+        "content": "10. IEcoFile1 Interface  \n\n10.1. IEcoFile1 interface IDL descriptor  \n\n```cpp\nimport \"IEcoBase1.idl\"  \nimport \"IEcoFileInfo1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-C00000000104),  \n]  \ninterface IEcoFile1 : IEcoUnknown {  \n\nuint32_t\tget_Size\t([in] void);  \n\nchar_t*\tget_Name\t([in] void);  \n\nIEcoFileInfo1*\tget_Info\t([in] void);  \n\nuint32_t\tget_Pointer\t([in] void);  \n\nvoid\tset_Pointer\t([in] uint32_t value);  \n\nint16_t\tRead\t([in] voidptr_t pv,  \n [in | out] uint32_t* pSize);  \n\nint16_t\tWrite\t([in] voidptr_t pv,  \n [in | out] uint32_t* pSize);  \n\nint16_t\tClose\t([in] void);  \n\ndescriptor_t\tget_Descriptor\t([in] void);  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_23",
+        "type": "Specification",
+        "content": "Interface IEcoFile1\n10.1.1. get_Size function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_24",
+        "type": "Specification",
+        "content": "Interface IEcoFile1\n10.1.2. get_Name function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_25",
+        "type": "Specification",
+        "content": "Interface IEcoFile1\n10.1.3. get_Info function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_26",
+        "type": "Specification",
+        "content": "Interface IEcoFile1\n10.1.4. get_Pointer function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_27",
+        "type": "Specification",
+        "content": "Interface IEcoFile1\n10.1.5. set_Pointer function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_28",
+        "type": "Specification",
+        "content": "Interface IEcoFile1\n10.1.6. Read function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_29",
+        "type": "Specification",
+        "content": "Interface IEcoFile1\n10.1.7. Write function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_30",
+        "type": "Specification",
+        "content": "Interface IEcoFile1\n10.1.8. Close function  \nThe function",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_31",
+        "type": "Specification",
+        "content": "Interface IEcoFile1\n10.1.9. get_Descriptor function  \nThe function  \n",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": "IEcoFile1",
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "00000000000000000000000046534D31.md_chunk_32",
+        "type": "Specification",
+        "content": "11. Error codes  \n\nThe following table contains the error codes.  \n\n|Error code|Value|Description|\n| --- | --- | --- |\n|ERR_ECO_SUCCESES|0x0000|Operation successful.|\n|ERR_ECO_UNEXPECTED|0xFFFF|Unexpected condition.|\n|ERR_ECO_POINTER|0xFFEE|NULL was passed incorrectly for a pointer value.|\n|ERR_ECO_NOINTERFACE|0xFFED|No such interface supported.|\n|ERR_ECO_COMPONENT_NOTFOUND|0xFFE9|The component was not found.|\n||||\n||||\n\nHeading 1",
+        "metadata": {
+            "fileName": "00000000000000000000000046534D31.md",
+            "title": "Eco.FileSystemManagement1 Software Component Specification",
+            "component": "Eco.FileSystemManagement1",
+            "description": "implements file operations in an operating system",
+            "interface": null,
+            "cid": "00000000000000000000000046534D31",
+            "tags": "File, Folder, Directory, File system, File Explorer",
+            "registryUrl": "https://ecoos.dev/product/e71f846d-89dc-425f-b3f8-e1884a84b77a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/00000000000000000000000046534D31/US.ECO.00014-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_1",
+        "type": "Specification",
+        "content": "1. Overview  \nThis document describes the requirements for the implementation of the Eco.MemoryManager1 component (Component).  \n\n1.1. Introduction  \nDescription.  \n\n1.2. Notes  \n- Keywords  \n-   \n\n1.3. Links  \n\nThis paragraph contains links to component marketplace and information to help you understand this document:   \nAvailable in marketplace at: <u>https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932</u>",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": null,
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_2",
+        "type": "Specification",
+        "content": "2. Eco.MemoryManager1 Component  \n\nThe Eco.MemoryManager1 component is   \nThe component has the following description:",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": null,
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_3",
+        "type": "Specification",
+        "content": "3. IEcoMemoryManager1 Interface  \n\n3.1. IEcoMemoryManager1 IDL  \n\n```cpp\nimport \"IEcoBase1.idl\"  \nimport \"IEcoMemoryAllocator1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-B00000000101),  \n]  \ninterface IEcoMemoryManager1 : IEcoUnknown {  \n\nint16_t\tInit\t([in] void* startAddress,  \n [in] uint32_t size);  \n\nbool_t\tget_Status\t([in | out] ECOMEMORYMANAGER1STATUS* status);  \n\nbool_t\tget_UsedBlocks\t([in | out] ECOMEMORYMANAGER1BLOCK* blocks,  \n [in | out] uint32_t* sizeInBlocks);  \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryManager1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_4",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryManager1\n3.1.1. Init function  \n\nThe function",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryManager1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_5",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryManager1\n3.1.2. get_Status function  \n\nThe function",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryManager1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_6",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryManager1\n3.1.3. get_UsedBlocks function  \n\nThe function",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryManager1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_7",
+        "type": "Specification",
+        "content": "4. IEcoMemoryAllocator1 Interface  \n\n4.1. IEcoMemoryAllocator1 IDL  \n\n```cpp\nimport \"IEcoBase1.idl\"  \n\n[  \nobject,  \nuguid(00000000-0000-0000-0000-B00000000102),  \n]  \ninterface IEcoMemoryAllocator1 : IEcoUnknown {  \n\nvoid*\tAlloc\t([in] uint32_t size);  \n\nvoid\tFree\t([in] void *pv);  \n\nvoid*\tRealloc\t([in] void *pv,  \n [in] uint32_t size);  \n\nvoid*\tCopy\t([in] void *pvDst,  \n [in] void *pvSrc,  \n [in] uint32_t size);  \n\nvoid*\tFill\t([in] void *pvDst,  \n [in] char_t Fill,  \n [in] uint32_t size);  \n\nint16_t\tCompare\t([in] void *pv1,  \n [in] void *pv2,  \n [in] uint32_t size);  \n\nuint32_t\tRetrieveSize\t([in] void *pv);  \n\n}\t\t  \n\n```",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryAllocator1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_8",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryAllocator1\n4.1.1. Alloc function  \n\nThe function",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryAllocator1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_9",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryAllocator1\n4.1.2. Free function  \n\nThe function",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryAllocator1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_10",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryAllocator1\n4.1.3. Realloc function  \n\nThe function",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryAllocator1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_11",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryAllocator1\n4.1.4. Copy function  \n\nThe function",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryAllocator1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_12",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryAllocator1\n4.1.5. Fill function  \n\nThe function",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryAllocator1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_13",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryAllocator1\n4.1.6. Compare function  \n\nThe function",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryAllocator1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_14",
+        "type": "Specification",
+        "content": "Interface IEcoMemoryAllocator1\n4.1.7. RetrieveSize function  \n\nThe function   \n",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": "IEcoMemoryAllocator1",
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "0000000000000000000000004D656D31.md_chunk_15",
+        "type": "Specification",
+        "content": "5. Error codes  \n\nThe following table contains the error codes.  \n\n|Error code|Value|Description|\n| --- | --- | --- |\n|ERR_ECO_SUCCESES|0x0000|Operation successful.|\n|ERR_ECO_UNEXPECTED|0xFFFF|Unexpected condition.|\n|ERR_ECO_POINTER|0xFFEE|NULL was passed incorrectly for a pointer value.|\n|ERR_ECO_NOINTERFACE|0xFFED|No such interface supported.|\n|ERR_ECO_COMPONENT_NOTFOUND|0xFFE9|The component was not found.|\n||||\n||||",
+        "metadata": {
+            "fileName": "0000000000000000000000004D656D31.md",
+            "title": "Eco.MemoryManager1 Software Component Specification",
+            "component": "Eco.MemoryManager1",
+            "description": "implements computer memory access and management functions",
+            "interface": null,
+            "cid": "0000000000000000000000004D656D31",
+            "tags": "Memory, Malloc, Memory Manager, Heap, Calloc, Free",
+            "registryUrl": "https://ecoos.dev/product/d28c861e-df9b-4585-bbc5-e9637e308932",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/0000000000000000000000004D656D31/US.ECO.00016-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "EN"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_1",
+        "type": "Specification",
+        "content": "1. Обзор  \nДанный документ описывает требования к реализации компонента Eco.SocketP02.  \n\n1.1. Введение  \nОписание.  \n\n1.2. Примечание  \n\nКлючевые слова в документе  \n\n1.3. Ссылки  \nДанный параграф содержит ссылки на компонент в маркетплейсе (регистри) и на другую полезную информацию, помогающую понять данный документ:   \n\nДоступен в маркетплейсе: https://ecoos.dev/product/8049727a-1332-46c7-bfd2-7e72b8c43f5a  \n<u></u>  \n<u></u>  \n<u></u>",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": null,
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_2",
+        "type": "Specification",
+        "content": "2. Компонент Eco.SocketP02  \n\nКомпонент Eco.SocketP02   \nКомпонент, имеет следующее описание:",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": null,
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_3",
+        "type": "Specification",
+        "content": "3. Интерфейс IEcoSocketP02  \n\n3.1. IEcoSocketP02 IDL  \n\n```cpp\nECO IDL  \nimport \"IEcoBase1.h\"  \n[  \nobject,  \nuguid(8EDA7C36-A3D0-422A-9C10-189A2BB86F5F),  \n]  \ninterface IEcoSocketP02 : IEcoUnknown {  \n\nint\taccept\t([in] int,  \n [in] struct sockaddr *,  \n [in, out] socklen_t *);   \n\nint\tbind\t([in] int,  \n const struct sockaddr *,  \n [in] socklen_t);  \n\nint\tConnect\t([in] int,  \n [in] const struct sockaddr *,  \n [in] socklen_t);  \n\nint\tgetpeername\t([in] int,  \n [out] struct sockaddr *,  \n [in, out] socklen_t *);  \n\nint\tgetsockname\t([in] int,  \n [out] struct sockaddr *,  \n [in, out] socklen_t *);  \n\nint\tgetsockopt\t([in] int,  \n [in] int,  \n [in] int,  \n [out] void *,  \n [in,out] socklen_t *);  \n\nint\tlisten\t([in] int,  \n [in] int);  \n\nssize_t\trecv\t([in] int,  \n [out] void *,  \n [in] size_t,  \n [in] int);  \n\nssize_t\trecvfrom\t([in] int,  \n [out] void *,  \n [in] size_t,  \n [in] int,  \n [out] stuct sockaddr *,  \n [in, out, optional] socklen_t *);  \n\nssize_t\trecvmsg\t(int,  \n struct msghdr *,  \n int);  \n\nint\trecvmmsg  \n\t(int,  \n struct mmsghdr *,  \n unsigned int,  \n int,  \n struct timespec *);  \n\nssize_t\tsend\t([in] int,  \n [in] const void *,  \n [in] size_t,  \n [in] int);  \n\nssize_t\tsendto\t([in] int,  \n [in] const void *,  \n [in] size_t,  \n [in] int,  \n [in] const struct sockaddr *,  \n [in] socklen_t);  \n\nssize_t\tsendmsg\t(int,  \n const struct msghdr *,  \n int);  \n\nint\tsendmmsg\t(int,  \n struct mmsghdr *,  \n unsigned int,  \n int);  \n\nint\tsetsockopt\t([in] int,  \n [in] int,  \n [in] int,  \n [in] const void *,  \n [in] socklen_t);  \n\nint\tshutdown\t([in] int,  \n [in] int);  \n\nint\tsockatmark\t([in] int);  \n\nint\tsocket\t([in] int,  \n [in] int,  \n [in] int);  \n\nint\tsocketpair\t(int,  \n int,  \n int,  \n int *);  \n\n}\t\t\t\t  \n```  \n\nHeading 1",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_4",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.1. Функция accept  \n\nФункция разрешает входящую попытку подключения к сокету.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_5",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.2. Функция bind  \n\nФункция связывает локальный адрес с сокетом.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_6",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.3. Функция connect  \n\nФункция устанавливает соединение с указанным сокетом.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_7",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.4. Функция getpeername  \n\nФункция извлекает адрес однорангового узла, к которому подключен сокет.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_8",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.5. Функция getsockname  \n\nФункция извлекает локальное имя сокета.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_9",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.6. Функция getsockopt  \n\nФункция извлекает параметр сокета.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_10",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.7. Функция listen  \n\nФункция помещает сокет в состояние, в котором он прослушивает входящее соединение.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_11",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.8. Функция recv  \n\nФункция получает данные из подключенного сокета или связанного сокета без установления соединения.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_12",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.9. Функция recvfrom  \n\nФункция получает дейтаграмму и сохраняет адрес источника.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_13",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.10. Функция recvmsg  \n\nФункция получает сообщения на сокете с дескриптором сокета и сохраняет их в массиве заголовков сообщений.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_14",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.11. Функция recvmmsg  \n\nФункция",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_15",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.12. Функция send  \n\nФункция  отправляет данные в подключенный сокет.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_16",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.13. Функция sendto  \n\nФункция отправляет данные в определенное место назначения.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_17",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.14. Функция sendmsg  \n\nФункция отправляет сообщения на сокет.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_18",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.15. Функция sendmmsg  \n\nФункция отправляет несколько сообщений в сокет.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_19",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.16. Функция setsockopt  \n\nФункция задает параметр сокета.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_20",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.17. Функция shutdown  \n\nФункция отключает отправку или получение данных на сокете.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_21",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.18. Функция sockatmark  \n\nФункция определяет, есть ли в сокете отметка о внеполосных данных.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_22",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.19. Функция socket  \n\nФункция создает конечную точку для связи и возвращает файловый дескриптор для сокета.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_23",
+        "type": "Specification",
+        "content": "Интерфейс IEcoSocketP02  \n3.1.20. Функция socketpair  \n\nФункция получает пару сокетов указанного типа, которые не имеют имени и подключены в указанном домене и используют указанный протокол.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoSocketP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_24",
+        "type": "Specification",
+        "content": "4. Интерфейс IEcoINetP02  \n\n4.1. IEcoINetP02 описание на ECO IDL  \n\n```cpp\nECO IDL  \nimport \"IEcoBase1.h\"  \n[  \nobject,  \nuguid(2C313FFA-19C2-4D63-82F0-62E83B1DC103),  \n]  \ninterface IEcoINetP02 : IEcoUnknown {  \n\nuint32_t\thtonl\t([in] uint32_t);  \n\nuint16_t\thtons\t([in] uint16_t);  \n\nuint32_t\tntohl\t([in] uint32_t);  \n\nuint16_t\tntohs\t([in] uint16_t);  \n\nin_addr_t\tinet_addr\t(const char *);  \n\nchar*\tinet_ntoa\t(struct in_addr);  \n\nconst char*\tinet_ntop\t([in] int,  \n [in] const void* [restrict],  \n [out] char* [restrict],  \n [in] socklen_t);  \n\nint\tinet_pton\t([in] int,  \n [in] const char* [restrict],  \n [out] void* [restrict]);  \n}\t\t  \n```",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoINetP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_25",
+        "type": "Specification",
+        "content": "Интерфейс IEcoINetP02  \n4.1.1. Функция htonl  \n\nФункция возвращает значение в сетевом порядке байтов TCP/IP’s.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoINetP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_26",
+        "type": "Specification",
+        "content": "Интерфейс IEcoINetP02  \n4.1.2. Функция htons  \n\nФункция возвращает значение в сетевом порядке байтов TCP/IP.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoINetP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_27",
+        "type": "Specification",
+        "content": "Интерфейс IEcoINetP02  \n4.1.3. Функция ntohl  \n\nФункция преобразует u_long из сетевого порядка байтов TCP/IP в порядок байтов хоста.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoINetP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_28",
+        "type": "Specification",
+        "content": "Интерфейс IEcoINetP02  \n4.1.4. Функция ntohs  \n\nФункция преобразует u_short из сетевого порядка байтов TCP/IP в порядок байтов хоста.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoINetP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_29",
+        "type": "Specification",
+        "content": "Интерфейс IEcoINetP02  \n4.1.5. Функция inet_addr  \n\nФункция преобразует строку, содержащую десятичный адрес IPv4 с точками, в правильный адрес для структуры IN_ADDR.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoINetP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_30",
+        "type": "Specification",
+        "content": "Интерфейс IEcoINetP02  \n4.1.6. Функция inet_ntoa  \n\nФункция преобразует интернет-адрес (Ipv4) в строку ASCII в стандартном интернет-десятичном формате.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoINetP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_31",
+        "type": "Specification",
+        "content": "Интерфейс IEcoINetP02  \n4.1.7. Функция inet_ntop  \n\nФункция преобразует интернет-адрес IPv4 или IPv6 в строку в стандартном формате Интернета.",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoINetP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_32",
+        "type": "Specification",
+        "content": "Интерфейс IEcoINetP02  \n4.1.8. Функция inet_pton  \n\nФункция преобразует сетевой адрес IPv4 или IPv6 в стандартной форме представления текста в числовую двоичную форму.  \n",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": "IEcoINetP02  ",
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "1CE95396008F46EAB4374010C8B58383.md_chunk_33",
+        "type": "Specification",
+        "content": "5. Коды ошибок  \n\nСледующая таблица содержит коды ошибок  \n\n|Код ошибки|Значение|Описание|\n| --- | --- | --- |\n|ERR_ECO_SUCCESES|0x0000|Выполнено успешно. Ошибок нет.|\n|ERR_ECO_UNEXPECTED|0xFFFF|Непредвиденное условие.|\n|ERR_ECO_POINTER|0xFFEE|Было передано неправильное значение указателя.|\n|ERR_ECO_NOINTERFACE|0xFFED|Такой интерфейс не поддерживается.|\n|ERR_ECO_COMPONENT_NOTFOUND|0xFFE9|Компонент не найден.|\n||||\n||||",
+        "metadata": {
+            "fileName": "1CE95396008F46EAB4374010C8B58383.md",
+            "title": "Спецификация программного компонента Eco.SocketP02",
+            "component": "Eco.SocketP02",
+            "description": "",
+            "interface": null,
+            "cid": "1CE95396008F46EAB4374010C8B58383",
+            "tags": "Socket, Network, Communication",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/1CE95396008F46EAB4374010C8B58383/RU.ECO.00005-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_1",
+        "type": "Specification",
+        "content": "1.\tОбзор  \nДанный документ описывает требования к реализации компонента Eco.List1 (Компонент список).  \n\n1.1. Введение  \nОписание.  \n\n1.2. Примечание  \n- Ключевые слова в документе  \n\n1.3. Ссылки  \nДанный параграф содержит ссылки компонент в маркетплейсе и на другую информацию, помогающую понять данный документ:   \nДоступен по: <u>https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2</u>",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": null,
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_2",
+        "type": "Specification",
+        "content": "2. Компонент Eco.List1  \n\nКомпонент списка представляет собой последовательный список, который разрешает эффективные вставки и удаления в любом расположении в последовательности.   \nКомпонент, имеет следующие описание:",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": null,
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_3",
+        "type": "Specification",
+        "content": "3. IEcoList1 Interface  \n\n3.1. Интерфейс IEcoList1, описание на ECO IDL  \n\n```cpp\nimport \"IEcoBase1.h\"  \n[  \nobject,  \nuguid(5AADBCB4-846C-4576-827B-287B5E67A152),  \n]  \ninterface IEcoList1 : IEcoUnknown {  \n\nuint32_t\tCount\t();   \n\nvoidptr_t\tItem\t([in] void* value1,\t[in] void* value2);  \n\nuint32_t\tAdd\t([in] void* value1,\t[in] void* value2);  \n\nuint32_t\tIndexOf\t([in] void* value1,\t[in] void* value2);  \n\nvoid\tInsertAt\t([in] uint32_t index,\t[in] voidptr_t value);  \n\nvoid\tRemove\t([in] voidptr_t value);   \n\nvoid\tRemoveAt\t([in] uint32_t index);   \n\nvoid\tClear\t();   \n\n}\t\t  \n```",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": "IEcoList1",
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_4",
+        "type": "Specification",
+        "content": "Interface IEcoList1\n3.1.1. Функция Count  \nФункция возвращает количество элементов списка.",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": "IEcoList1",
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_5",
+        "type": "Specification",
+        "content": "Interface IEcoList1\n3.1.2.\tФункция Item  \nФункция возвращает элемент списка по индексу.",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": "IEcoList1",
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_6",
+        "type": "Specification",
+        "content": "Interface IEcoList1\n3.1.3.\tФункция Add  \nФункция добавляет элемент в конец списка и возвращает его индекс.",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": "IEcoList1",
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_7",
+        "type": "Specification",
+        "content": "Interface IEcoList1\n3.1.4.\tФункция IndexOf  \nФункция возвращает индекс элемента в списке.",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": "IEcoList1",
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_8",
+        "type": "Specification",
+        "content": "Interface IEcoList1\n3.1.5. Функция InsertAt  \nФункция вставляет элемент по указанному индексу.",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": "IEcoList1",
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_9",
+        "type": "Specification",
+        "content": "Interface IEcoList1\n3.1.6. Функция Remove  \nФункция удаляет элемент из списка.",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": "IEcoList1",
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_10",
+        "type": "Specification",
+        "content": "Interface IEcoList1\n3.1.7. Функция RemoveAt  \nФункция удаляет элемент по индексу.",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": "IEcoList1",
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_11",
+        "type": "Specification",
+        "content": "Interface IEcoList1\n3.1.8. Функция Clear  \nФункция очищает список элементов.",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": "IEcoList1",
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "53884AFC93C448ECAA929C8D3A562281.md_chunk_12",
+        "type": "Specification",
+        "content": "4. Коды ошибок  \n\nСледующая таблица содержит коды ошибок.  \n\n|Код ошибки|Значение|Описание|\n| --- | --- | --- |\n|ERR_ECO_SUCCESES|0x0000|Выполнено успешно. Ошибок нет.|\n|ERR_ECO_UNEXPECTED|0xFFFF|Непредвиденное условие.|\n|ERR_ECO_POINTER|0xFFEE|Было передано неправильное значение указателя.|\n|ERR_ECO_NOINTERFACE|0xFFED|Такой интерфейс не поддерживается.|\n|ERR_ECO_COMPONENT_NOTFOUND|0xFFE9|Компонент не найден.|\n||||\n||||",
+        "metadata": {
+            "fileName": "53884AFC93C448ECAA929C8D3A562281.md",
+            "title": "Eco.List1 Software Component Specification",
+            "component": "Eco.List1",
+            "description": "реализует структуру данных «List” (Список)",
+            "interface": null,
+            "cid": "53884AFC93C448ECAA929C8D3A562281",
+            "tags": "Data structure, List, Collection, Set",
+            "registryUrl": "https://ecoos.dev/product/1ff4db73-ffd3-4d27-a520-af72ca68f3a2",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/53884AFC93C448ECAA929C8D3A562281/RU.ECO.00029-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_1",
+        "type": "Specification",
+        "content": "1. Обзор  \nДанный документ описывает требования к реализации компонента Eco.Tree1.  \n\n1.1. Введение  \nОписание. Древовидная структура данных — это нелинейная иерархическая структура данных, которая организует элементы данных, называемые узлами, соединенные ребрами. В отличие от линейных структур данных, таких как массивы и связанные списки, деревья позволяют элементам разветвляться, представляя отношения, как в файловой системе или генеалогическом древе.  \nКлючевые термины  \nКорень: Самый верхний узел в дереве. Это единственный узел, не имеющий родителя.  \nУзел: Каждый элемент в дереве, содержащий данные и связанный с другими узлами.  \nРебро: Связь между двумя узлами, представляющая их отношение «родитель-потомок».  \nРодитель: Узел, имеющий один или несколько узлов, непосредственно связанных с ним.  \nПотомок: Узел, непосредственно связанный с родительским узлом.  \nЛист: Узел, не имеющий дочерних узлов.  \nПоддерево: Набор узлов и ребер, включающий родителя и всех его потомков.  \nВысота: Длина самого длинного пути от конкретного узла до листа.  \nГлубина: Длина пути от корневого узла до конкретного узла.  \n\n1.2. Примечание  \n\nКлючевые слова в документе  \n\n1.3. Ссылки  \nДанный параграф содержит ссылки на компонент в маркетплейсе (регистри) и на другую полезную информацию, помогающую понять данный документ:   \n\nДоступен в маркетплейсе: https://ecoos.dev/product/8049727a-1332-46c7-bfd2-7e72b8c43f5a  \n<u></u>  \n<u></u>  \n<u></u>",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": null,
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_2",
+        "type": "Specification",
+        "content": "2. Компонент Eco.Tree1  \n\nКомпонент Eco.Tree1   \nКомпонент, имеет следующее описание:",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": null,
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_3",
+        "type": "Specification",
+        "content": "3. Интерфейс IEcoTree1  \n\n3.1. IEcoTree1 IDL  \n\n```cpp\nECO IDL  \nimport \"IEcoBase1.h\"  \nimport \"IEcoList1.hpp\"  \n[  \nobject,  \nuguid(1D5C328E-BC90-4364-8DB7-F40A664A9D3E),  \n]  \ninterface IEcoTree1: IEcoUnknown {  \n\nIEcoTree1Node*\tCreateNode\t([in] IEcoUnknown* pIUnkOuter,  \n [in] voidptr_t data,  \n [in] char_t* name);  \n\nIEcoTree1Node*\tInsertNode\t([in] IEcoTree1Node* parent,  \n [in] IEcoTree1Node* child);  \n\nIEcoTree1Node*\tInsertNodeByData\t([in] IEcoTree1Node* parent,  \n [in] voidptr_t data,  \n [in] char_t* name);  \n\nint16_t\tDeleteNode\t([in] IEcoTree1Node* node);  \n\nIEcoList1*\tget_Forest\t([in] void);  \n\nIEcoTree1Node*\tget_LeastCommonAncestor\t([in] IEcoTree1Node* node1,  \n [in] IEcoTree1Node* node2);  \n\nIEcoTree1Node*\tget_LeastCommonAncestorByList\t([in] IEcoList1* node_list);  \n\nint16_t\tClear\t([in] void);  \n}\t\t\t\t  \n```",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_4",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1  \n3.1.1. Функция CreateNode  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_5",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1  \n3.1.2. Функция InsertNode  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_6",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1  \n3.1.3. Функция InsertNodeByData  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_7",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1  \n4.1.4. Функция DeleteNode  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_8",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1  \n3.1.5. Функция get_Forest  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_9",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1  \n3.1.6. Функция get_LeastCommonAncestor  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_10",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1  \n3.1.7. Функция get_LeastCommonAncestorByList  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_11",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1  \n3.1.8. Функция Clear  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_12",
+        "type": "Specification",
+        "content": "4. Интерфейс IEcoTree1Node  \n\n4.1.  IEcoTree1Node описание на ECO IDL  \n\n```cpp\nECO IDL  \nimport \"IEcoBase1.h\"  \nimport \"IEcoList1.hpp\"  \n[  \nobject,  \nuguid(0D328339-654B-4C0B-B4D2-61C07732757A),  \n]  \ninterface IEcoTree1Node : IEcoUnknown {  \n\nvoidptr_t\tget_Data\t([in] void);  \n\nvoid\tset_Data\t([in] void value);  \n\nchar_t*\tget_Name\t([in] void);  \n\nvoid\tset_Name\t([in] char_t* value);  \n\nIEcoTree1Node*\tget_Parent\t([in] void);  \n\nvoid\tset_Parent\t([in] IEcoTree1Node* parent);  \n\nIEcoTree1Node*\tget_PrevSibling\t([in] void);  \n\nvoid\tset_PrevSibling\t([in] IEcoTree1Node* sibling);  \n\nIEcoTree1Node*\tget_NextSibling\t([in] void);  \n\nvoid\tset_NextSibling\t([in] IEcoTree1Node* sibling);  \n\nIEcoList1*\tget_Childrens\t([in] void);  \n\nuint32_t\tget_Degree\t([in] void);  \n\nuint32_t\tget_Depth\t([in] void);  \n\nbool_t\tIsRoot\t([in] void);  \n\nbool_t\tIsLeaf\t([in] void);  \n\nbool_t\tIsInternalNode\t([in] void);  \n\nIEcoTree1Node*\tAddChild\t([in] IEcoTree1Node* child);  \n\nIEcoTree1Node*\tAddChildByData\t([in] voidptr_t data);  \n}\t\t  \n```",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_13",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.1. Функция get_Data  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_14",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.2. Функция set_Data  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_15",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.3. Функция get_Name  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_16",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.4. Функция set_Name  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_17",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.5. Функция get_Parent  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_18",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.6. Функция set_Parent  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_19",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.7. Функция get_PrevSibling  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_20",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.8. Функция set_PrevSibling  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_21",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.9. Функция get_NextSibling  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_22",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.10. Функция set_NextSibling  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_23",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.11. Функция get_Childrens  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_24",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.12. Функция get_Degree  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_25",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.13. Функция get_Depth  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_26",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.14. Функция IsRoot  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_27",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.15. Функция IsLeaf  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_28",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.16. Функция IsInternalNode  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_29",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.17. Функция AddChild  \n\nФункция",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_30",
+        "type": "Specification",
+        "content": "Интерфейс IEcoTree1Node  \n4.1.18. Функция AddChildByData  \n\nФункция  \n",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": "IEcoTree1Node  ",
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    },
+    {
+        "chunk_id": "82F73722057E47F3A2931ED27087694D.md_chunk_31",
+        "type": "Specification",
+        "content": "5. Коды ошибок  \n\nСледующая таблица содержит коды ошибок  \n\n|Код ошибки|Значение|Описание|\n| --- | --- | --- |\n|ERR_ECO_SUCCESES|0x0000|Выполнено успешно. Ошибок нет.|\n|ERR_ECO_UNEXPECTED|0xFFFF|Непредвиденное условие.|\n|ERR_ECO_POINTER|0xFFEE|Было передано неправильное значение указателя.|\n|ERR_ECO_NOINTERFACE|0xFFED|Такой интерфейс не поддерживается.|\n|ERR_ECO_COMPONENT_NOTFOUND|0xFFE9|Компонент не найден.|\n||||\n||||",
+        "metadata": {
+            "fileName": "82F73722057E47F3A2931ED27087694D.md",
+            "title": "Спецификация программного компонента Eco.Tree1",
+            "component": "Eco.Tree1",
+            "description": "",
+            "interface": null,
+            "cid": "82F73722057E47F3A2931ED27087694D",
+            "tags": "Data structure, Tree data, Tree",
+            "registryUrl": "n/a",
+            "source": "https://github.com/peerf-eco/EcoDocs/blob/de83488033cd14a21e76c773ffd1f8a9c630e536/components/82F73722057E47F3A2931ED27087694D/RU.ECO.00008-01_90.fodt",
+            "version": "1.0",
+            "lastModified": "2025-12-14",
+            "language": "RU"
+        }
+    }
+]
