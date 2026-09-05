@@ -206,22 +206,28 @@ jobs:
             mkdir -p "$DEST"
             TMP_ZIP=$(mktemp --suffix=.zip)
             
-            # Try primary asset name first, then fallback to macOS alternative naming
+            # Resolve asset name: try primary, fall back to macOS alternative naming
             ASSET_TO_TRY="$ASSET"
-            if [[ "$OS" == "darwin" && -n "${MACOS_ALT_ASSETS[$PLATFORM]}" ]]; then
-              # Try both naming patterns
+            if [[ "$OS" == "darwin" && -n "${MACOS_ALT_ASSETS[$PLATFORM]:-}" ]]; then
               if ! gh release download "$VERSION" --repo "$REPO" \
                   --pattern "$ASSET" --output "$TMP_ZIP" 2>/dev/null; then
+                rm -f "$TMP_ZIP"
                 ASSET_TO_TRY="${MACOS_ALT_ASSETS[$PLATFORM]}"
+                gh release download "$VERSION" --repo "$REPO" \
+                  --pattern "$ASSET_TO_TRY" --output "$TMP_ZIP" 2>/dev/null || true
               fi
+            else
+              gh release download "$VERSION" --repo "$REPO" \
+                --pattern "$ASSET_TO_TRY" --output "$TMP_ZIP" 2>/dev/null || true
             fi
-            
-            if gh release download "$VERSION" --repo "$REPO" \
-                --pattern "$ASSET_TO_TRY" --output "$TMP_ZIP" 2>/dev/null; then
+
+            if [ -s "$TMP_ZIP" ]; then
               # Extract all files from the zip flat into the platform dir.
               # eco-cli zip contains: eco-cli (or eco-cli.exe), libaws-crt-jni.so, SKILL.md, ...
               unzip -o -j "$TMP_ZIP" -d "$DEST"
-              chmod +x "$DEST"/* 2>/dev/null || true
+              # chmod only extracted files, before copying the zip in
+              find "$DEST" -maxdepth 1 -type f ! -name '*.zip' ! -name '.version' \
+                -exec chmod +x {} + 2>/dev/null || true
               # Keep the zip in staging so S3 hosts it for update.py downloads.
               cp "$TMP_ZIP" "$DEST/$ASSET_TO_TRY"
               # Write version marker so build_manifest.py records it.
@@ -275,20 +281,26 @@ jobs:
             mkdir -p "$DEST"
             TMP_ZIP=$(mktemp --suffix=.zip)
             
-            # Try primary asset name first, then fallback to macOS alternative naming
+            # Resolve asset name: try primary, fall back to macOS alternative naming
             ASSET_TO_TRY="$ASSET"
-            if [[ "$OS" == "darwin" && -n "${MACOS_ALT_ASSETS[$PLATFORM]}" ]]; then
-              # Try both naming patterns
+            if [[ "$OS" == "darwin" && -n "${MACOS_ALT_ASSETS[$PLATFORM]:-}" ]]; then
               if ! gh release download "$VERSION" --repo "$REPO" \
                   --pattern "$ASSET" --output "$TMP_ZIP" 2>/dev/null; then
+                rm -f "$TMP_ZIP"
                 ASSET_TO_TRY="${MACOS_ALT_ASSETS[$PLATFORM]}"
+                gh release download "$VERSION" --repo "$REPO" \
+                  --pattern "$ASSET_TO_TRY" --output "$TMP_ZIP" 2>/dev/null || true
               fi
+            else
+              gh release download "$VERSION" --repo "$REPO" \
+                --pattern "$ASSET_TO_TRY" --output "$TMP_ZIP" 2>/dev/null || true
             fi
-            
-            if gh release download "$VERSION" --repo "$REPO" \
-                --pattern "$ASSET_TO_TRY" --output "$TMP_ZIP" 2>/dev/null; then
+
+            if [ -s "$TMP_ZIP" ]; then
               unzip -o -j "$TMP_ZIP" -d "$DEST"
-              chmod +x "$DEST"/* 2>/dev/null || true
+              # chmod only extracted files, before copying the zip in
+              find "$DEST" -maxdepth 1 -type f ! -name '*.zip' ! -name '.version' \
+                -exec chmod +x {} + 2>/dev/null || true
               cp "$TMP_ZIP" "$DEST/$ASSET_TO_TRY"
               echo "$VERSION" > "$DEST/.version"
               echo "  extracted $(ls $DEST | grep -v '^\.version$' | tr '\n' ' ')"
@@ -344,7 +356,7 @@ jobs:
   publish-image:
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
     steps:
       - uses: actions/checkout@v4
 
@@ -394,7 +406,7 @@ jobs:
     # waits for or triggers an image rebuild.
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
     steps:
       - uses: actions/checkout@v4
 
