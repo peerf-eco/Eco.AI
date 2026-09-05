@@ -102,7 +102,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -136,7 +136,8 @@ jobs:
       #
       # Expected zip asset names per platform:
       #   eco-cli-linux-amd64.zip, eco-cli-linux-arm64.zip,
-      #   eco-cli-darwin-amd64.zip, eco-cli-darwin-arm64.zip,
+      #   eco-cli-darwin-amd64.zip or eco-cli-macos-amd64.zip,
+      #   eco-cli-darwin-arm64.zip or eco-cli-macos-arm64.zip,
       #   eco-cli-windows-amd64.zip
       #   eco-wizard-linux-amd64.zip, eco-wizard-linux-arm64.zip, ...
       - name: Fetch eco-cli binaries from GitHub Releases
@@ -164,6 +165,11 @@ jobs:
             ["darwin/arm64"]="eco-cli-darwin-arm64.zip"
             ["windows/amd64"]="eco-cli-windows-amd64.zip"
           )
+          # Support both -darwin- and -macos- naming patterns
+          declare -A MACOS_ALT_ASSETS=(
+            ["darwin/amd64"]="eco-cli-macos-amd64.zip"
+            ["darwin/arm64"]="eco-cli-macos-arm64.zip"
+          )
           FETCHED=0
           for PLATFORM in "${!ASSETS[@]}"; do
             ASSET="${ASSETS[$PLATFORM]}"
@@ -172,20 +178,31 @@ jobs:
             DEST="release-staging/binaries/eco-cli/$OS/$ARCH"
             mkdir -p "$DEST"
             TMP_ZIP=$(mktemp --suffix=.zip)
+            
+            # Try primary asset name first, then fallback to macOS alternative naming
+            ASSET_TO_TRY="$ASSET"
+            if [[ "$OS" == "darwin" && -n "${MACOS_ALT_ASSETS[$PLATFORM]}" ]]; then
+              # Try both naming patterns
+              if ! gh release download "$VERSION" --repo "$REPO" \
+                  --pattern "$ASSET" --output "$TMP_ZIP" 2>/dev/null; then
+                ASSET_TO_TRY="${MACOS_ALT_ASSETS[$PLATFORM]}"
+              fi
+            fi
+            
             if gh release download "$VERSION" --repo "$REPO" \
-                --pattern "$ASSET" --output "$TMP_ZIP" 2>/dev/null; then
+                --pattern "$ASSET_TO_TRY" --output "$TMP_ZIP" 2>/dev/null; then
               # Extract all files from the zip flat into the platform dir.
               # eco-cli zip contains: eco-cli (or eco-cli.exe), libaws-crt-jni.so, SKILL.md, ...
               unzip -o -j "$TMP_ZIP" -d "$DEST"
               chmod +x "$DEST"/* 2>/dev/null || true
               # Keep the zip in staging so S3 hosts it for update.py downloads.
-              cp "$TMP_ZIP" "$DEST/$ASSET"
+              cp "$TMP_ZIP" "$DEST/$ASSET_TO_TRY"
               # Write version marker so build_manifest.py records it.
               echo "$VERSION" > "$DEST/.version"
               echo "  extracted $(ls $DEST | grep -v '^\.version$' | tr '\n' ' ')"
               FETCHED=$((FETCHED + 1))
             else
-              echo "::warning::eco-cli asset '$ASSET' not found in $REPO@$VERSION — skipping $PLATFORM"
+              echo "::warning::eco-cli asset '$ASSET_TO_TRY' not found in $REPO@$VERSION — skipping $PLATFORM"
             fi
             rm -f "$TMP_ZIP"
           done
@@ -217,6 +234,11 @@ jobs:
             ["darwin/arm64"]="eco-wizard-darwin-arm64.zip"
             ["windows/amd64"]="eco-wizard-windows-amd64.zip"
           )
+          # Support both -darwin- and -macos- naming patterns
+          declare -A MACOS_ALT_ASSETS=(
+            ["darwin/amd64"]="eco-wizard-macos-amd64.zip"
+            ["darwin/arm64"]="eco-wizard-macos-arm64.zip"
+          )
           FETCHED=0
           for PLATFORM in "${!ASSETS[@]}"; do
             ASSET="${ASSETS[$PLATFORM]}"
@@ -225,16 +247,27 @@ jobs:
             DEST="release-staging/binaries/eco-wizard/$OS/$ARCH"
             mkdir -p "$DEST"
             TMP_ZIP=$(mktemp --suffix=.zip)
+            
+            # Try primary asset name first, then fallback to macOS alternative naming
+            ASSET_TO_TRY="$ASSET"
+            if [[ "$OS" == "darwin" && -n "${MACOS_ALT_ASSETS[$PLATFORM]}" ]]; then
+              # Try both naming patterns
+              if ! gh release download "$VERSION" --repo "$REPO" \
+                  --pattern "$ASSET" --output "$TMP_ZIP" 2>/dev/null; then
+                ASSET_TO_TRY="${MACOS_ALT_ASSETS[$PLATFORM]}"
+              fi
+            fi
+            
             if gh release download "$VERSION" --repo "$REPO" \
-                --pattern "$ASSET" --output "$TMP_ZIP" 2>/dev/null; then
+                --pattern "$ASSET_TO_TRY" --output "$TMP_ZIP" 2>/dev/null; then
               unzip -o -j "$TMP_ZIP" -d "$DEST"
               chmod +x "$DEST"/* 2>/dev/null || true
-              cp "$TMP_ZIP" "$DEST/$ASSET"
+              cp "$TMP_ZIP" "$DEST/$ASSET_TO_TRY"
               echo "$VERSION" > "$DEST/.version"
               echo "  extracted $(ls $DEST | grep -v '^\.version$' | tr '\n' ' ')"
               FETCHED=$((FETCHED + 1))
             else
-              echo "::warning::eco-wizard asset '$ASSET' not found in $REPO@$VERSION — skipping $PLATFORM"
+              echo "::warning::eco-wizard asset '$ASSET_TO_TRY' not found in $REPO@$VERSION — skipping $PLATFORM"
             fi
             rm -f "$TMP_ZIP"
           done
