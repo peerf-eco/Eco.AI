@@ -5,7 +5,7 @@ temperature: 0.7
 description: "Агент для генерации различных вариантов алгоритмов и реализации функций на языке C"
 assembly:
   - Common/constraints.md
-  - Roles/coder.md
+  - Roles/coder-с.md
   - Skills/eco-code-gen.md
   - Stack/acom.md
   - Stack/c.md

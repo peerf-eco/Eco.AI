@@ -1,3 +1,9 @@
+---
+name: Advanced Eco Patterns
+description: Расширенные шаблоны проектирования: точки подключения, агрегация и включение в модели Eco
+version: 1.1.0
+---
+
 # SKILL: ADVANCED ECO PATTERNS
 
 ## 1. CONNECTION POINTS (Events)

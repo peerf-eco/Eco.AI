@@ -1,0 +1,9 @@
+import "IEcoBase1.idl"; 
+
+[
+    uuid([!output GUID_IID])
+]
+interface I[!output FIX_PROJECT_NAME] : IEcoUnknown {
+
+    int16_t MyFunction([in] char_t* Name, [out] char_t** CopyName);
+};
