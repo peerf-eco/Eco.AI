@@ -103,19 +103,26 @@ jobs:
             type=semver,pattern={{version}}
             type=ref,event=tag
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=dev-${{ github.sha }},enable=${{ !startsWith(github.ref, 'refs/tags/v') }}
 
+      # Defensive guard: with the dev-<sha> fallback above, tags can never be
+      # empty — if this fires, the metadata-action config itself is broken.
       - name: Fail on empty tag resolution
         run: |
           if [ -z "${{ steps.meta.outputs.tags }}" ]; then
-            echo "::error::No image tags resolved — push a v* tag (workflow_dispatch runs are dry-run only)"
+            echo "::error::No image tags resolved — metadata-action tags config is broken (expected semver+latest on v* tags, dev-<sha> otherwise)"
             exit 1
           fi
 
+      # Only meaningful on tag pushes: on workflow_dispatch GITHUB_REF_NAME is
+      # a branch name and comparing it against the wheel version would always
+      # fail. Non-tag runs publish a dev-<sha> image instead.
       - name: Verify tag consistency (wheel version vs git tag)
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           WHEEL_VERSION="$(basename ${{ env.ASSEMBLY_DIR }}/release-staging/dist/eco_harness-*.whl | head -1 | cut -d- -f2)"
           GIT_TAG="${GITHUB_REF_NAME#v}"
-          if [ "${{ inputs.dry_run }}" != "true" ] && [ -n "$GIT_TAG" ] && [ "$WHEEL_VERSION" != "$GIT_TAG" ]; then
+          if [ "$WHEEL_VERSION" != "$GIT_TAG" ]; then
             echo "::error::pyproject version ($WHEEL_VERSION) != git tag ($GITHUB_REF_NAME) — bump the wheel before tagging"
             exit 1
           fi
