@@ -1157,9 +1157,14 @@ Version resolution order: `workflow_dispatch` input → `ECO_CLI_VERSION` /
 | Trigger | `publish-image` | `publish-manifest` | Image tag |
 |---|---|---|---|
 | `git push origin v<x.y.z>` (tag on main) | yes | yes — public release | `<x.y.z>` + `latest` |
-| `push` to `main` (no tag) | yes (`dev-<sha>` image) | no — build only | `dev-<sha>` |
+| `push` to a branch (e.g. `main`) | — | — | — (no run; see note) |
 | `workflow_dispatch` `dry_run=true` (default) | no — build only | no — build only | — |
 | `workflow_dispatch` `dry_run=false` | yes | no — build only | `dev-<sha>` |
+
+Branch pushes deliberately trigger nothing (fail fast): a tagless build's
+GHA artifacts are run-scoped and would never be reused by a later tag run,
+so every tagless build is throwaway work. Use `workflow_dispatch` to verify
+a build.
 
 ### Automatic release (recommended)
 

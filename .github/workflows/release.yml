@@ -18,9 +18,12 @@
 #
 # ── Triggers ────────────────────────────────────────────────────────────────
 #   push v* tag (must be on main branch)  →  image + public release publish
-#   push to main branch  →  build only + dev-<sha> image (nothing published)
 #   workflow_dispatch (manual)  →  dry_run=true by default (build only);
 #     dry_run=false additionally pushes a dev-<sha> image to ghcr
+#   Branch pushes trigger NOTHING — fail fast by design: a tagless build's
+#     GHA artifacts are run-scoped and would never be reused by a later tag
+#     run, so every tagless build is throwaway work; use workflow_dispatch
+#     to verify a build.
 #
 # ── Why binaries and RAG artifacts use permanent storage, not GHA artifacts ──
 #   GHA artifacts are ephemeral (expire after retention period) and tied to a
@@ -75,8 +78,6 @@ name: release
 
 on:
   push:
-    branches:
-      - main
     tags: ["v*"]
   workflow_dispatch:
     inputs:
@@ -402,10 +403,10 @@ jobs:
   publish-manifest:
     # GitHub-only publish: on v* tag pushes, the manifest + installers + wheel
     # + per-platform zips + RAG index are uploaded as release assets of the
-    # public eco-coder-releases repo — the only install channel. Tagless main
-    # pushes and dispatch runs stop at the build job (no coherent version tag
-    # to publish under; dev images still go to ghcr via publish-image).
-    # Independent of publish-image: runs in parallel after build.
+    # public eco-coder-releases repo — the only install channel. Dispatch
+    # runs stop at the build job / dev image (no coherent version tag to
+    # publish under). Independent of publish-image: runs in parallel after
+    # build.
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')

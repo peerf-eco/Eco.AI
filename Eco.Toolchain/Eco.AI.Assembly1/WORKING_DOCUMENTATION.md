@@ -937,10 +937,11 @@ a warning; a manifest whose `binaries`/`index` sections end up empty fails
   `releases/latest/download/` (guards the README one-liners).
 
 Triggers: `v*` tag pushes (tag commit must be on `main`) publish the image
-and the public release; pushes to `main` run the build + a `dev-<sha>`
-image only; `workflow_dispatch` defaults to `dry_run=true` (build only;
-`dry_run=false` also pushes the `dev-<sha>` image — no public release
-without a tag).
+and the public release; branch pushes trigger NOTHING (fail fast — a
+tagless build's GHA artifacts are run-scoped and never reused by a later
+tag run, so use `workflow_dispatch` to verify a build); `workflow_dispatch`
+defaults to `dry_run=true` (build only; `dry_run=false` also pushes the
+`dev-<sha>` image — no public release without a tag).
 
 Required repo configuration: secret `ECO_PUBLIC_RELEASE_TOKEN` (release
 write on `peerf-eco/eco-coder-releases`); variable `RAG_INDEX_URL` (public
@@ -1341,14 +1342,17 @@ container either.
 | Event | dry_run | What happens |
 |---|---|---|
 | `git push origin v1.2.3` (tag commit on main) | false (implicit) | build + image (`1.2.3` + `latest`) + public release publish |
-| `git push` to `main` | — | build + `dev-<sha>` image only; nothing published |
+| `git push` to a branch | — | no run at all — fail fast (throwaway artifacts otherwise) |
 | `gh workflow run release.yml` | true (default) | build only, nothing published — safe to test |
 | `gh workflow run release.yml -f dry_run=false` | false | build + `dev-<sha>` image; no public release (no version tag) |
 | `gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0` | false | build + `dev-<sha>` image, pin specific eco-cli version |
 
 Only `v*` tags whose commit is reachable from `main` publish the public
 release (the build job validates reachability and fails otherwise).
-Tagless runs never produce a versioned image tag or a public release.
+Tagless runs never produce a versioned image tag or a public release, and
+branch pushes do not even start the workflow: GHA artifacts are run-scoped
+(a tag run rebuilds everything from scratch; only the Docker layer cache
+carries over), so automatic tagless builds would be pure throwaway cost.
 
 ### 19.6 publish-image vs publish-manifest — independence and caching
 
