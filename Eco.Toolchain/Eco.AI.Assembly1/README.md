@@ -18,10 +18,10 @@ wizard (or later in `~/.eco-harness/.env`).
 ### Linux
 
 ```bash
-curl -fsSL https://downloads.ecoos.dev/eco-harness/install.sh | sh
+curl -fsSL https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.sh | sh
 ```
 
-or download and inspect first: `curl -fsSLO <url> && sh install.sh`.
+or download and inspect first: `curl -fsSLO https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.sh && sh install.sh`.
 
 - Requires `curl` or `wget` (everything else — including Python 3.11 — is
   provided by `uv` automatically, per-user, no sudo).
@@ -32,7 +32,7 @@ or download and inspect first: `curl -fsSLO <url> && sh install.sh`.
 ### macOS
 
 ```bash
-curl -fsSL https://downloads.ecoos.dev/eco-harness/install.sh | sh
+curl -fsSL https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.sh | sh
 ```
 
 Same as Linux; downloaded binaries are Apple-Silicon/Intel native (arm64 /
@@ -44,7 +44,7 @@ System Settings → Privacy & Security → Allow.
 ### Windows
 
 ```powershell
-irm https://downloads.ecoos.dev/eco-harness/install.ps1 | iex
+irm https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.ps1 | iex
 ```
 
 or download and run: `powershell -ExecutionPolicy Bypass -File install.ps1`.
@@ -83,18 +83,30 @@ and the shim files / user-PATH entry.
 ### Docker (any host with Docker)
 
 ```bash
-sh install.sh --docker        # or: powershell -File install.ps1 -Docker
+# Linux / macOS (note `-s --` to pass flags through the pipe):
+curl -fsSL https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.sh | sh -s -- --docker
+```
+
+```powershell
+# Windows — irm | iex cannot take flags; download first, then run:
+curl.exe -fsSLO https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.ps1
+powershell -ExecutionPolicy Bypass -File install.ps1 -Docker
 ```
 
 Writes `~/.eco-harness/docker-compose.yml` with your absolute host paths,
 pulls the prebuilt multi-arch image (linux/amd64 + linux/arm64) from
-ghcr.io, starts it, then downloads the native binaries and RAG index into
-the mounted `~/.eco-harness` (visible to the container as `/data`).
+ghcr.io, starts it, then downloads the native binaries and RAG index from
+the same public GitHub release (sha256-verified, exactly like the native
+flow) into the mounted `~/.eco-harness` (visible to the container as
+`/data`). The in-container update uses the public release manifest by
+default — no S3 or extra configuration involved.
 
 ```bash
-# update:
+# update the image:
 docker compose -f ~/.eco-harness/docker-compose.yml pull && \
 docker compose -f ~/.eco-harness/docker-compose.yml up -d
+# update the binaries + RAG index (re-runs the manifest-driven download):
+docker compose -f ~/.eco-harness/docker-compose.yml exec eco-harness python -m eco_harness update
 # health:
 docker compose -f ~/.eco-harness/docker-compose.yml exec eco-harness python -m eco_harness doctor
 ```
@@ -1061,6 +1073,130 @@ full `auto` pipeline with plan approval.
 boundaries for future CLI products, MCP servers, AST endpoints, and UI
 panels. The current FastAPI server is an optional interface over those
 boundaries, not the domain core.
+
+## Release
+
+## Release
+
+The release workflow (`.github/workflows/release.yml`) publishes the
+multi-arch container image to ghcr.io, and on `v*` tag pushes uploads ALL
+consumer assets (manifest + installers + wheel + per-platform binary zips +
+RAG index) to the public releases repo
+[`peerf-eco/eco-coder-releases`](https://github.com/peerf-eco/eco-coder-releases)
+— the only install channel. The install one-liners in `## Install` fetch
+everything from that repo's `releases/latest/download/` URLs; no S3 or other
+hosting is involved in installs. (S3 is used only internally, as storage for
+the prebuilt RAG index that the build job downloads and ships as a release
+asset.)
+
+### Artifact layout
+
+All build artifacts are staged under a `tag/` directory before upload:
+
+```text
+release-staging/
+└── tag/
+    ├── dist/                  # Python wheel (eco_harness-<ver>-py3-none-any.whl)
+    ├── install/               # install.sh + install.ps1
+    ├── binaries/
+    │   ├── eco-cli/
+    │   │   ├── linux/amd64/   # extracted binary + original .zip
+    │   │   ├── linux/arm64/
+    │   │   ├── darwin/amd64/
+    │   │   ├── darwin/arm64/
+    │   │   └── windows/amd64/
+    │   └── eco-wizard/        # same layout
+    └── index/
+        └── marketplace_index.zip
+```
+
+Binaries are fetched from the source repos' public release-asset URLs:
+
+```
+https://github.com/{owner}/{repo}/releases/download/<tag>/<asset>.zip
+```
+
+For example:
+
+```
+https://github.com/peerf-eco/eco-cli-releases/releases/download/<tag>/eco-cli-linux-amd64.zip
+https://github.com/peerf-eco/eco-wizard/releases/download/<tag>/eco-wizard-windows-amd64.zip
+```
+
+Version resolution order: `workflow_dispatch` input → `ECO_CLI_VERSION` /
+`ECO_WIZARD_VERSION` repo variable → latest release tag from the source repo.
+
+### Trigger paths
+
+| Trigger | `publish-image` | `publish-manifest` | Image tag |
+|---|---|---|---|
+| `git push origin v<x.y.z>` (tag on main) | yes | yes — public release | `<x.y.z>` + `latest` |
+| `push` to `main` (no tag) | yes (`dev-<sha>` image) | no — build only | `dev-<sha>` |
+| `workflow_dispatch` `dry_run=true` (default) | no — build only | no — build only | — |
+| `workflow_dispatch` `dry_run=false` | yes | no — build only | `dev-<sha>` |
+
+### Automatic release (recommended)
+
+The canonical path — creates a versioned image and a sha256-checksummed
+manifest, published to `eco-coder-releases`:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub sees `refs/tags/v0.1.0`, the workflow validates the tag is on `main`,
+builds the wheel, fetches binaries from the source repos' release-asset URLs,
+downloads the RAG index from S3, then publishes the image as
+`ghcr.io/<org>/Eco.AI:0.1.0` and `latest` and uploads every consumer asset
+(manifest + installers + wheel + zips + index) to the `v0.1.0` release of
+`eco-coder-releases`. From that moment `releases/latest/download/...` serves
+the new version to all users.
+
+### Manual trigger (workflow_dispatch)
+
+Open **Actions → release → Run workflow** in the GitHub UI.
+
+- `dry_run=true` (default) — runs the `build` job only. Builds the wheel,
+  fetches binaries, downloads the RAG index, and uploads the GHA artifact
+  `release-assets` for inspection. Nothing is published. Use this to verify
+  the build before cutting a real release.
+- `dry_run=false` — additionally pushes the image tagged `dev-<sha>`
+  (not a semver tag) to ghcr for testing the image build without cutting a
+  release. No public release or manifest update happens outside `v*` tags.
+- `eco_cli_version` / `eco_wizard_version` — optional version pins
+  (e.g. `v2.1.0`). Leave blank to use the `ECO_CLI_VERSION` repo variable
+  or the latest release from the source repo.
+
+Equivalent CLI invocation:
+
+```bash
+# dry run (build only, default):
+gh workflow run release.yml
+
+# build + dev-<sha> image, no public release (releases require a v* tag):
+gh workflow run release.yml -f dry_run=false
+
+# same, pinning the bundled eco-cli version:
+gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0
+
+# a real release (publishes to eco-coder-releases):
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+### Pinning binary versions
+
+```bash
+# Pin permanently (all future releases use this version until changed):
+gh variable set ECO_CLI_VERSION --body "v2.1.0"
+gh variable set ECO_WIZARD_VERSION --body "v1.0.0"
+
+# One-off override without changing the repo variable:
+gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0
+
+# Always latest (default when variable is unset):
+gh variable delete ECO_CLI_VERSION
+```
 
 ## Troubleshooting
 

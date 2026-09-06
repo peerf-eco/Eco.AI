@@ -9,11 +9,16 @@ Inputs (release staging dir, default ./release-staging):
   binaries/<tool>/<os>/<arch>/<artifact>   native eco-cli / eco-wizard builds
                                            (extracted from per-platform .zip releases;
                                            multiple files per dir are supported —
-                                           first alphabetically is the manifest entry)
+                                           the primary entry is the first
+                                           non-document file alphabetically;
+                                           zip bundles like SKILL.md byte-sort
+                                           before the tool binary)
   index/marketplace_index.zip             prebuilt RAG index + cache zip
   dist/eco_harness-<ver>-py3-none-any.whl  wheel
   --image <repo:tag>                       published container image
-  --base-url <url>                         public download root (S3/CDN)
+  --base-url <url>                         public download root (GitHub
+                                            Releases asset root; URLs are
+                                            emitted flat by asset basename)
 
 Output: manifest.json (next to the staging dir, or --output).
 """
@@ -34,18 +39,38 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def entry(path: Path, base_url: str, relative: Path) -> dict:
+def entry(path: Path, base_url: str) -> dict:
+    # Flat release-asset URL: GitHub Releases address assets by basename only
+    # (no nested paths), so the manifest must reference asset names, not the
+    # staging-relative path.
     return {
-        "url": f"{base_url.rstrip('/')}/{relative.as_posix()}",
+        "url": f"{base_url.rstrip('/')}/{path.name}",
         "sha256": sha256(path),
         "size": path.stat().st_size,
     }
 
 
+# Doc/metadata files that ship inside the tool zips (e.g. eco-cli's bundle is
+# eco-cli + libaws-crt-jni.so + SKILL.md). In strict ASCII order SKILL.md
+# (uppercase 'S', 0x53) sorts before eco-cli (lowercase 'e', 0x65) even though
+# the binary is packed first in namelist order, so a byte-sorted listing would
+# pick the doc as the manifest primary. These are never the primary entry.
+DOC_NAMES = frozenset(
+    {"skill.md", "skill", "readme", "license", "copying", "notice", "changelog", "contributors"}
+)
+DOC_SUFFIXES = frozenset(
+    {".md", ".txt", ".rst", ".json", ".yml", ".yaml", ".toml", ".sig", ".pem"}
+)
+
+
+def is_doc(path: Path) -> bool:
+    return path.name.lower() in DOC_NAMES or path.suffix.lower() in DOC_SUFFIXES
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--staging", default="release-staging", type=Path)
-    parser.add_argument("--base-url", default="https://downloads.ecoos.dev/eco-harness")
+    parser.add_argument("--base-url", default="https://github.com/peerf-eco/eco-coder-releases/releases/latest/download")
     parser.add_argument("--image", default="ghcr.io/peerf-eco/eco.ai:latest")
     parser.add_argument("--output", default=None, type=Path)
     parser.add_argument(
@@ -85,19 +110,19 @@ def main() -> int:
                     if not artifacts:
                         continue
                     # The .zip is the download unit for update.py; the primary
-                    # executable is the first non-zip file alphabetically.
+                    # executable is the first non-document file alphabetically
+                    # (bundled docs like SKILL.md must not win).
                     zip_files = [p for p in artifacts if p.suffix == ".zip"]
                     exe_files = [p for p in artifacts if p.suffix != ".zip"]
                     if not exe_files:
                         continue
-                    primary = exe_files[0]
-                    platform_entry = entry(
-                        primary, args.base_url, primary.relative_to(staging),
-                    )
+                    primary_candidates = [p for p in exe_files if not is_doc(p)]
+                    primary = (primary_candidates or exe_files)[0]
+                    platform_entry = entry(primary, args.base_url)
                     if zip_files:
                         z = zip_files[0]
                         platform_entry["zip_url"] = (
-                            f"{args.base_url.rstrip('/')}/{z.relative_to(staging).as_posix()}"
+                            f"{args.base_url.rstrip('/')}/{z.name}"
                         )
                         platform_entry["zip_sha256"] = sha256(z)
                     version_file = arch_dir / ".version"
@@ -108,9 +133,7 @@ def main() -> int:
 
     index_zip = staging / "index" / "marketplace_index.zip"
     if index_zip.is_file():
-        manifest["index"] = entry(
-            index_zip, args.base_url, index_zip.relative_to(staging),
-        )
+        manifest["index"] = entry(index_zip, args.base_url)
 
     wheels = sorted((staging / "dist").glob("eco_harness-*.whl")) if (
         staging / "dist"
@@ -118,7 +141,7 @@ def main() -> int:
     if wheels:
         wheel = wheels[-1]
         manifest["wheel"] = {
-            **entry(wheel, args.base_url, wheel.relative_to(staging)),
+            **entry(wheel, args.base_url),
             "version": wheel.name.split("-")[1],
         }
         manifest["image"] = {"repo": args.image.split(":")[0], "tag": args.image.split(":", 1)[-1]}

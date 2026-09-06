@@ -3,9 +3,12 @@
 # Eco.AI Harness — native installer (Linux / macOS)
 #
 # One-command install, no source checkout:
-#   curl -fsSL https://downloads.ecoos.dev/eco-harness/install.sh | sh
+#   curl -fsSL https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.sh | sh
 # or download and run:
 #   sh install.sh [--docker] [--update] [--project-dir <dir>]
+#
+# GitHub-only install: the manifest, wheel, binaries, and RAG index all come
+# from public release assets of peerf-eco/eco-coder-releases (no auth).
 #
 # Native flow: uv installs Python 3.11 if missing → venv at $ECO_HOME/venv →
 # wheel from the release manifest → native eco-cli/eco-wizard binaries for the
@@ -18,7 +21,7 @@
 set -euo pipefail
 
 ECO_HOME="${ECO_HOME:-$HOME/.eco-harness}"
-MANIFEST_URL="${ECO_MANIFEST_URL:-https://downloads.ecoos.dev/eco-harness/manifest.json}"
+MANIFEST_URL="${ECO_MANIFEST_URL:-https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/manifest.json}"
 IMAGE_REPO="${ECO_HARNESS_IMAGE:-ghcr.io/peerf-eco/eco.ai}"
 PROJECT_DIR_ARG=""
 MODE="native"

@@ -2,9 +2,12 @@
 # Eco.AI Harness — native installer (Windows PowerShell)
 #
 # One-command install, no source checkout:
-#   irm https://downloads.ecoos.dev/eco-harness/install.ps1 | iex
+#   irm https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.ps1 | iex
 # or download and run:
 #   powershell -ExecutionPolicy Bypass -File install.ps1 [-Docker]
+#
+# GitHub-only install: the manifest, wheel, binaries, and RAG index all come
+# from public release assets of peerf-eco/eco-coder-releases (no auth).
 #
 # Native flow: uv installs Python 3.11 if missing → venv at $ECO_HOME\venv →
 # wheel from the release manifest → native eco-cli.exe / eco-wizard.exe
@@ -40,7 +43,7 @@ function Write-EnvSeed {
 }
 
 $ECO_HOME     = if ($env:ECO_HOME) { $env:ECO_HOME } else { Join-Path $env:USERPROFILE ".eco-harness" }
-$MANIFEST_URL = if ($env:ECO_MANIFEST_URL) { $env:ECO_MANIFEST_URL } else { "https://downloads.ecoos.dev/eco-harness/manifest.json" }
+$MANIFEST_URL = if ($env:ECO_MANIFEST_URL) { $env:ECO_MANIFEST_URL } else { "https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/manifest.json" }
 $IMAGE_REPO   = if ($env:ECO_HARNESS_IMAGE) { $env:ECO_HARNESS_IMAGE } else { "ghcr.io/peerf-eco/eco.ai" }
 
 function Write-Log { param([string]$Message) Write-Host "[eco-harness] $Message" -ForegroundColor Green }

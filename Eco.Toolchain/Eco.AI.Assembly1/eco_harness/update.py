@@ -27,7 +27,7 @@ from eco_harness.agent.internal.tools.paths import eco_home
 
 DEFAULT_MANIFEST_URL = os.getenv(
     "ECO_MANIFEST_URL",
-    "https://downloads.ecoos.dev/eco-harness/manifest.json",
+    "https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/manifest.json",
 )
 
 # Manifest keys become filesystem paths and install specs — constrain them to
