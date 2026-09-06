@@ -6,8 +6,9 @@
 #   - .env                      (cp env.example .env; set OPENAI_API_KEY)
 #   - marketplace_index.sqlite  (build: python scripts/build_marketplace_index.py)
 #   - marketplace_cache/        (python scripts/fetch_marketplace.py)
-# Binaries are bind-mounted straight into <repo>/bin/ — the canonical home
-# resolve_binary probes after ECO_<NAME>_PATH (see
+# Binaries are consumed from <repo>/bin/ — the canonical gitignored home
+# resolve_binary probes after ECO_<NAME>_PATH — through the monorepo
+# bind-mount at /app (no dedicated binary mounts; see
 # agent/internal/tools/binaries.py). See docs/RAG_SETUP.md.
 #
 # This is a DEV compose: api = uvicorn --reload with ./agent + ./backend mounted;
@@ -65,17 +66,13 @@ services:
       # = <monorepo>.worktrees sibling dir (same default the harness uses on
       # the host). Override per machine via .env: ECO_WORKTREE_HOST_DIR=/abs/path
       - ${ECO_WORKTREE_HOST_DIR:-../../../Eco.AI.worktrees}:/repo-worktrees:rw
-      # eco-cli / eco-wizard bind-mounted straight into <repo>/bin/ — the
-      # canonical gitignored home resolve_binary probes (ECO_<NAME>_PATH →
-      # <repo>/bin → PATH). The in-container mount shadows only the
-      # container's view, so a host Windows eco-cli.exe next to it stays
-      # untouched while the container runs the Linux build.
-      # libaws-crt-jni.so must sit NEXT TO the eco-cli executable (JNI loads
-      # it relative to the binary).
-      - ../../../../Dist/eco-cli/eco-cli:/app/Eco.Toolchain/Eco.AI.Assembly1/bin/eco-cli:ro
-      - ../../../../Dist/eco-cli/libaws-crt-jni.so:/app/Eco.Toolchain/Eco.AI.Assembly1/bin/libaws-crt-jni.so:ro
-      # eco-wizard mount — same policy as eco-cli above.
-      - ../../../../Dist/eco-wizard/eco-wizard:/app/Eco.Toolchain/Eco.AI.Assembly1/bin/eco-wizard:ro
+      # eco-cli / eco-wizard (and their sidecar JNI libraries) are consumed
+      # straight from <repo>/bin/ — the canonical gitignored home that
+      # resolve_binary probes (ECO_<NAME>_PATH → <repo>/bin → PATH) — through
+      # the monorepo bind-mount above, so NO dedicated binary mounts exist.
+      # Place the Linux ELF builds there for the container (next to the host
+      # eco-cli.exe / aws-crt-jni.dll on Windows checkouts); JNI libraries
+      # must sit NEXT TO the executables.
     ports:
       - "127.0.0.1:8100:8000"
     command: ["uvicorn", "eco_harness.backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

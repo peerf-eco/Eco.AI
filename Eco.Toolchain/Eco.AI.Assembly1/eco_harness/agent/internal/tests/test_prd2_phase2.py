@@ -77,6 +77,18 @@ def test_resolve_binary_windows_exe_suffix(tmp_path: Path, monkeypatch):
     assert binaries.resolve_binary("eco-cli", repo=tmp_path) == binary
 
 
+def test_resolve_binary_windows_prefers_exe_over_elf(tmp_path: Path, monkeypatch):
+    """Host Windows runs must not pick the container's extensionless ELF."""
+    monkeypatch.delenv("ECO_CLI_PATH", raising=False)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "eco-cli").touch()      # Linux ELF, e.g. for the container
+    exe = bin_dir / "eco-cli.exe"
+    exe.touch()
+    monkeypatch.setattr(binaries.sys, "platform", "win32")
+    assert binaries.resolve_binary("eco-cli", repo=tmp_path) == exe
+
+
 def test_resolve_binary_none_when_missing(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("ECO_CLI_PATH", raising=False)
     assert binaries.resolve_binary("definitely-not-a-tool", repo=tmp_path) is None

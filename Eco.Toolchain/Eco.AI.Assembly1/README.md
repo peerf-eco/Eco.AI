@@ -166,6 +166,9 @@ cp env.example .env
 mkdir -p bin
 cp /path/to/eco-cli bin/
 cp /path/to/eco-wizard bin/
+#    On a Windows host ALSO drop the Linux ELF builds (extensionless
+#    eco-cli / eco-wizard + libaws-crt-jni.so) into bin/ — the dev container
+#    consumes them through the monorepo bind-mount.
 #    Or skip this and set ECO_CLI_PATH / ECO_WIZARD_PATH in .env (see step 2).
 
 # 4. Set up the host Python environment for the initialization scripts
@@ -266,10 +269,10 @@ sub-agents) are resolved by one shared policy —
    `$ECO_HOME/bin/` resolve through this same candidate
 4. System `PATH` (called as-is)
 
-No other locations are probed. The dev compose mounts the vendored Linux
-ELFs straight into the container's `<repo>/bin/` (the same canonical home),
-so neither host nor container needs env vars; use `ECO_CLI_PATH` /
-`ECO_WIZARD_PATH` in `.env` only for custom locations.
+No other locations are probed. The dev container reads `<repo>/bin/` (the
+same canonical home) through the monorepo bind-mount at `/app`, so neither
+host nor container needs env vars; use `ECO_CLI_PATH` / `ECO_WIZARD_PATH`
+in `.env` only for custom locations.
 
 Native installs never need wine: the installer always downloads the
 target-OS build into `$ECO_HOME/bin`. `ECO_CLI_PREFIX` / `ECO_WIZARD_PREFIX`
@@ -382,15 +385,19 @@ Place the binaries in the canonical gitignored home relative to project root:
 
 ```
 bin/
-├── eco-cli(.exe)       # native build for the host OS
-└── eco-wizard(.exe)
+├── eco-cli(.exe)          # host-OS build for host-run scripts/agents
+├── eco-wizard(.exe)         (eco-cli.exe / aws-crt-jni.dll on Windows)
+├── eco-cli                # Linux ELF — used inside the dev container
+├── eco-wizard             # (same files serve both on Linux/macOS hosts)
+└── libaws-crt-jni.so      # Linux sidecar JNI lib, next to the ELF binaries
 ```
 
-Docker Compose bind-mounts the vendored Linux ELF files directly into the
-container's `<repo>/bin/` (`/app/Eco.Toolchain/Eco.AI.Assembly1/bin/`) —
-the same canonical home `resolve_binary` probes — so both host and container
-resolve them without any env vars. The container-side mounts shadow only the
-in-container view; a Windows `eco-cli.exe` next to them stays untouched.
+Both platform flavors may sit side by side: Windows host runs resolve
+`eco-cli.exe` first, the dev container resolves the extensionless Linux ELF
+through the monorepo bind-mount at `/app` (`<repo>/bin/` is visible
+in-container at `/app/Eco.Toolchain/Eco.AI.Assembly1/bin/`) — so both host
+and container resolve without any env vars and without dedicated mounts.
+JNI sidecar libraries must sit NEXT TO their executables.
 
 ### Docker Compose Deployment
 
@@ -398,9 +405,10 @@ in-container view; a Windows `eco-cli.exe` next to them stays untouched.
 1. `.env` file configured
 2. `marketplace_index.sqlite` created (via `build_marketplace_index.py`)
 3. `marketplace_cache/` directory populated (via `fetch_marketplace.py`)
-4. Binaries placed in `<repo>/bin/` (`eco-cli(.exe)` / `eco-wizard(.exe)`;
-   the compose mounts the Linux ELFs straight into the container's
-   `<repo>/bin/` — no env vars needed)
+4. Binaries placed in `<repo>/bin/` (host build `eco-cli(.exe)` /
+   `eco-wizard(.exe)` plus the Linux ELFs for the container; the container
+   reads them through the monorepo bind-mount — no env vars, no dedicated
+   mounts)
 
 **Start the application:**
 ```bash
@@ -429,9 +437,9 @@ docker compose up --build
   top of the monorepo mount (`config/:ro` keeps agent write tools away from
   prompts/permission baselines; the UI settings pane writes
   `.eco-harness/workspace.yaml`, which stays writable).
-- `../../../../Dist/eco-cli/eco-cli:/app/Eco.Toolchain/Eco.AI.Assembly1/bin/eco-cli:ro` - eco-cli Linux ELF, mounted into the canonical `<repo>/bin/` home
-- `../../../../Dist/eco-cli/libaws-crt-jni.so:/app/Eco.Toolchain/Eco.AI.Assembly1/bin/libaws-crt-jni.so:ro` - AWS CRT JNI library for eco-cli, mounted next to the executable (no space before the colon)
-- `../../../../Dist/eco-wizard/eco-wizard:/app/Eco.Toolchain/Eco.AI.Assembly1/bin/eco-wizard:ro` - eco-wizard Linux ELF, same policy
+- eco-cli / eco-wizard (and their JNI sidecar libraries) have **no dedicated
+  mounts**: they are consumed from `<repo>/bin/` — the canonical gitignored
+  home — through the monorepo mount above
 - `api.environment` also sets `GIT_CONFIG_*=safe.directory=/app` so
   root-in-container can operate on the host-owned repo (alternatively run as
   your host uid — see the commented `user:` line in the compose).
@@ -458,8 +466,8 @@ handles every external binary, host and container alike:
 export ECO_CLI_PATH=$PWD/bin/eco-cli
 export ECO_WIZARD_PATH=$PWD/bin/eco-wizard
 
-# Docker: no env vars needed — the compose mounts the vendored Linux ELFs
-# straight into <repo>/bin/ inside the container (see docker-compose.yml).
+# Docker: no env vars needed — the container reads <repo>/bin/ (Linux ELF
+# builds) through the monorepo bind-mount (see docker-compose.yml).
 
 # Windows executable via wine:
 export ECO_CLI_PATH=/path/to/eco-cli.exe
@@ -473,7 +481,7 @@ export ECO_WIZARD_PATH=/home/user/tools/eco-wizard
 **Default `.env` configuration:**
 ```
 # Host and container: leave unset when the binaries are in <repo>/bin/ or on
-# PATH (the compose mounts them into <repo>/bin/ in-container).
+# PATH (the container reads <repo>/bin/ through the monorepo mount).
 # Override only for custom locations:
 # ECO_CLI_PATH=/usr/local/bin/eco-cli
 # ECO_WIZARD_PATH=/home/user/tools/eco-wizard
@@ -1224,9 +1232,9 @@ gh variable delete ECO_CLI_VERSION
 1. **"eco-cli not found" error:**
    - Place the binary at `<repo>/bin/eco-cli` (canonical home; `eco-cli.exe`
      on Windows)
-   - In Docker, verify the compose mounts the Linux ELFs into the container's
-     `<repo>/bin/` (see `docker-compose.yml`); `ECO_CLI_PATH` /
-     `ECO_WIZARD_PATH` are only for custom locations
+   - In Docker, verify the Linux ELF builds sit in `<repo>/bin/` (reached
+     via the monorepo bind-mount); `ECO_CLI_PATH` / `ECO_WIZARD_PATH` are
+     only for custom locations
    - Run `python scripts/dev_preflight.py --fix` for the full lookup order
 
 2. **GPG signature errors during Docker build:**

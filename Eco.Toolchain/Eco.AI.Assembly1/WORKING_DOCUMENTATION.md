@@ -241,9 +241,9 @@ gitignored; the `<name>.exe` spelling is probed as well on Windows) → bare
 `$ECO_HOME/bin` builds deposited by the installer resolve through the same
 `<repo>/bin` candidate. The former fallbacks — `/opt` container mounts and
 the legacy platform-suffixed sibling dirs — are deprecated and no longer
-probed. The dev compose mounts the vendored Linux ELFs straight into the
-container's `<repo>/bin/` (the canonical home), so neither host nor
-container needs env vars; `ECO_<NAME>_PATH` is reserved for custom
+probed. The dev container reads `<repo>/bin/` (the canonical home) through
+the monorepo bind-mount at `/app`, so neither host nor container needs env
+vars; `ECO_<NAME>_PATH` is reserved for custom
 locations (see `env.example`). All former per-consumer resolvers
 (server, eco_cli, eco_wizard, factory, scripts) delegate to it.
 

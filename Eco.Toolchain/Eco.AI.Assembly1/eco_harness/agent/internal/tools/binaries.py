@@ -23,10 +23,10 @@ Resolution order
      ``ECO_CLI_PATH`` / ``ECO_WIZARD_PATH`` are checked for the matching
      tools; external backends use ``ECO_<BACKEND>_PATH``)
   3. ``<repo>/bin/<name>`` — the canonical, gitignored home for vendored
-     binaries on a host checkout (the ``.exe`` spelling is probed as well
-     on Windows). In installed mode ``repo_root()`` IS ``$ECO_HOME``, so
-     the native installer's ``$ECO_HOME/bin`` builds resolve through this
-     same candidate
+     binaries on a host checkout (on Windows the ``.exe`` spelling is probed
+     first, then the extensionless name). In installed mode ``repo_root()``
+     IS ``$ECO_HOME``, so the native installer's ``$ECO_HOME/bin`` builds
+     resolve through this same candidate
   4. system ``PATH`` (``<name>``, then ``<name>.exe``)
 
 Deprecated locations — ``$ECO_HOME/bin`` as a standalone candidate, the
@@ -89,11 +89,14 @@ def resolve_binary(
 
     # Canonical gitignored home: <repo>/bin/<name>. In installed mode
     # repo_root() IS $ECO_HOME, so the builds the native installer deposits
-    # in $ECO_HOME/bin/ resolve through the same candidate. Vendored builds
-    # land as <name>.exe on Windows, so the suffixed name is probed too.
-    installed_suffix = ".exe" if sys.platform.startswith("win") else ""
+    # in $ECO_HOME/bin/ resolve through the same candidate. Both platform
+    # flavors may sit side by side (e.g. the Windows .exe for host runs and
+    # the Linux ELF that the dev container consumes via its monorepo mount),
+    # so Windows probes the .exe spelling FIRST: an extensionless file there
+    # is usually the container's ELF, not a host-executable binary.
+    if sys.platform.startswith("win"):
+        candidates.append(root / "bin" / f"{name}.exe")
     candidates.append(root / "bin" / name)
-    candidates.append(root / "bin" / f"{name}{installed_suffix}")
 
     for candidate in candidates:
         try:
@@ -115,5 +118,5 @@ def describe_search_order(name: str) -> str:
     return (
         f"{name} lookup order: "
         f"ECO_{_slug(name)}_PATH env (ECO_CLI_PATH / ECO_WIZARD_PATH) → "
-        f"<repo>/bin/{name} (.exe on Windows) → PATH"
+        f"<repo>/bin/{name} (.exe first on Windows) → PATH"
     )
