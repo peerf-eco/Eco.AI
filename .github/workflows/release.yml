@@ -352,6 +352,9 @@ jobs:
         id: meta
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # flavor's default latest=auto would add a second `latest` for
+          # semver tags (duplicate of the explicit raw tag below).
+          flavor: latest=false
           tags: |
             type=semver,pattern={{version}}
             type=ref,event=tag
