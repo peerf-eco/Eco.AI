@@ -80,10 +80,12 @@ hf_cache/
 *.cache
 token_analysis.json
 
-# RAG — large generated artifacts, regenerated via
-# scripts/build_marketplace_index.py
+# RAG — large generated artifacts, refreshed and published to S3/CloudFront via
+# scripts/publish_rag.py (which runs fetch_marketplace.py +
+# build_marketplace_index.py, then packages and uploads both)
 marketplace_index.sqlite
 marketplace_cache/
+marketplace_index.zip
 experiments/chunking_eval/artifacts/
 experiments/chunking_eval/*.log
 e2e_demo_project/

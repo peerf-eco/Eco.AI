@@ -1085,9 +1085,20 @@ RAG index) to the public releases repo
 [`peerf-eco/eco-coder-releases`](https://github.com/peerf-eco/eco-coder-releases)
 — the only install channel. The install one-liners in `## Install` fetch
 everything from that repo's `releases/latest/download/` URLs; no S3 or other
-hosting is involved in installs. (S3 is used only internally, as storage for
-the prebuilt RAG index that the build job downloads and ships as a release
-asset.)
+hosting is involved in installs. The prebuilt RAG bundle — **both**
+`marketplace_index.sqlite` and `marketplace_cache/` inside one zip; the
+installer never regenerates them locally — lives in a private S3 bucket
+served publicly via CloudFront. The build job downloads it with plain curl
+from the `RAG_INDEX_URL` repo variable, so CI carries no AWS credentials at
+all. Refresh the bundle from a machine with marketplace/embedding access:
+
+```bash
+python scripts/publish_rag.py    # fetch marketplace → build index → zip (index + cache) → upload
+```
+
+Credentials and upload target come from `.env` (`AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY` / `AWS_REGION`, `RAG_S3_BUCKET`, `RAG_S3_KEY` — see
+env.example).
 
 ### Artifact layout
 
@@ -1147,7 +1158,8 @@ git push origin v0.1.0
 
 GitHub sees `refs/tags/v0.1.0`, the workflow validates the tag is on `main`,
 builds the wheel, fetches binaries from the source repos' release-asset URLs,
-downloads the RAG index from S3, then publishes the image as
+downloads the RAG bundle from the public distribution URL (`RAG_INDEX_URL`),
+then publishes the image as
 `ghcr.io/<org>/Eco.AI:0.1.0` and `latest` and uploads every consumer asset
 (manifest + installers + wheel + zips + index) to the `v0.1.0` release of
 `eco-coder-releases`. From that moment `releases/latest/download/...` serves

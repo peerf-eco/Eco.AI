@@ -17,15 +17,16 @@
 #   workflow_dispatch (manual)  →  dry_run=true by default (build only);
 #     dry_run=false additionally pushes a dev-<sha> image to ghcr
 #
-# ── Why binaries and RAG index use permanent storage, not GHA artifacts ──────
+# ── Why binaries and RAG artifacts use permanent storage, not GHA artifacts ──
 #   GHA artifacts are ephemeral (expire after retention period) and tied to a
 #   specific run-id — you cannot upload to a completed run, and you cannot
 #   reference them across unrelated workflow runs without knowing the run-id.
 #   eco-cli / eco-wizard come from their source repos' GitHub Releases
-#   (permanent, versioned, addressable by tag name). The RAG index uses S3 as
-#   internal prebuilt storage (permanent, overwritten only when explicitly
-#   rebuilt); end-users receive it as a public release asset. Both are fetched
-#   by the build job at release time with no manual coordination needed.
+#   (permanent, versioned, addressable by tag name). The RAG bundle (index +
+#   marketplace cache) lives in a private S3 bucket exposed publicly through
+#   a CloudFront distribution — no CI credentials; end-users receive it as a
+#   public release asset. Both are fetched by the build job at release time
+#   with no manual coordination needed.
 #
 # ── Binary staging (eco-cli / eco-wizard) ───────────────────────────────────
 #   Fetched automatically from public GitHub Releases assets at build time
@@ -40,32 +41,23 @@
 #     Option B — always latest: just push a v* tag (ECO_CLI_VERSION unset)
 #     Option C — one-off: gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0
 #
-# ── RAG index ───────────────────────────────────────────────────────────────
-#   Stored permanently in S3 as a .zip (cross-platform; no tar required on Windows).
-#   Default path: s3://<RELEASE_S3_BUCKET>/index/marketplace_index.zip
-#   Override with repo variable RAG_INDEX_S3_URI.
-#   Build and upload once; every subsequent release fetches it automatically.
-#   Rebuild only when the marketplace snapshot changes:
+# ── RAG artifacts (index + marketplace cache) ────────────────────────────────
+#   The installer ships BOTH artifacts prebuilt into ~/.eco-harness/data —
+#   marketplace_index.sqlite AND marketplace_cache/ — inside one zip; it never
+#   regenerates them locally (that would need marketplace + embedding keys).
+#   Maintainer-only refresh (needs ECO_API_TOKEN, OPENAI_API_KEY, eco-cli,
+#   and AWS credentials with s3:PutObject — all from .env or your AWS profile):
 #
 #     source .venv/bin/activate          # Windows: .venv\Scripts\activate
-#     python scripts/build_marketplace_index.py
-#     zip -r marketplace_index.zip marketplace_index.sqlite marketplace_cache/
-#     aws s3 cp marketplace_index.zip \
-#       s3://<RELEASE_S3_BUCKET>/index/marketplace_index.zip
+#     python scripts/publish_rag.py      # fetch marketplace → build index →
+#                                        # zip (index + cache) → upload to S3
 #
-# ── AWS authentication (RAG index download only) ─────────────────────────────
-#   AWS credentials are used ONLY to read the prebuilt RAG index from S3 in
-#   the build job; release publishing itself is GitHub-only.
-#   Preferred — OIDC (no stored long-lived secrets):
-#     1. IAM → Identity providers → Add: OpenID Connect
-#        URL: https://token.actions.githubusercontent.com  Audience: sts.amazonaws.com
-#     2. Create IAM role, trust condition:
-#        token.actions.githubusercontent.com:sub = repo:<org>/<repo>:ref:refs/tags/v*
-#     3. Attach policy: s3:GetObject + s3:ListBucket
-#        on arn:aws:s3:::<RELEASE_S3_BUCKET> and arn:aws:s3:::<RELEASE_S3_BUCKET>/*
-#     4. Set repo variable RELEASE_AWS_ROLE_ARN to the role ARN.
-#   Fallback — static keys:
-#     Set secrets RELEASE_AWS_ACCESS_KEY_ID + RELEASE_AWS_SECRET_ACCESS_KEY.
+#   Upload target: s3://<RAG_S3_BUCKET>/<RAG_S3_KEY> (default key
+#   index/marketplace_index.zip), served publicly via your CloudFront
+#   distribution. Set the RAG_INDEX_URL repo variable to that public URL —
+#   the build job downloads it with plain curl, so CI needs NO AWS
+#   credentials. After overwriting an existing key, consider a CloudFront
+#   invalidation for that path (cached copies may serve until TTL).
 #
 # ── publish-image vs publish-manifest ───────────────────────────────────────
 #   Both jobs depend only on `build` and run in parallel.
@@ -99,12 +91,10 @@ on:
 permissions:
   contents: read
   packages: write
-  id-token: write   # required for OIDC AWS authentication
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  AWS_REGION: ${{ vars.RELEASE_AWS_REGION }}
   ECO_CLI_REPO: ${{ vars.ECO_CLI_RELEASE_REPO || 'peerf-eco/eco-cli-releases' }}
   ECO_WIZARD_REPO: ${{ vars.ECO_WIZARD_RELEASE_REPO || 'peerf-eco/eco-wizard' }}
 
@@ -295,38 +285,27 @@ jobs:
           echo "fetched=$FETCHED" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      # ── RAG index from S3 ─────────────────────────────────────────────────
-      # Stored permanently in S3 as a .zip (cross-platform, no tar required).
-      # Upload once after building locally (see workflow header comment).
-      # Every release fetches the current zip; rebuild and re-upload only
-      # when the marketplace snapshot changes.
-      - name: Configure AWS credentials for RAG index download (OIDC)
-        if: ${{ vars.RELEASE_AWS_ROLE_ARN != '' }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Configure AWS credentials for RAG index download (static keys fallback)
-        if: ${{ vars.RELEASE_AWS_ROLE_ARN == '' }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.RELEASE_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.RELEASE_AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download RAG index from S3
+      # ── RAG artifacts from the public distribution ───────────────────────
+      # The prebuilt zip (marketplace_index.sqlite + marketplace_cache/) is
+      # fetched from the public CloudFront/S3 distribution URL — plain curl,
+      # no AWS credentials in CI. Maintainers refresh it (and re-point
+      # RAG_INDEX_URL) via scripts/publish_rag.py when the marketplace
+      # snapshot changes.
+      - name: Download RAG artifacts from public distribution
         id: download-index
         run: |
-          INDEX_URI="${{ vars.RAG_INDEX_S3_URI || format('s3://{0}/index/marketplace_index.zip', vars.RELEASE_S3_BUCKET) }}"
+          INDEX_URL="${{ vars.RAG_INDEX_URL }}"
           mkdir -p release-staging/tag/index
-          if aws s3 cp "$INDEX_URI" release-staging/tag/index/marketplace_index.zip; then
+          if [ -z "$INDEX_URL" ]; then
+            echo "::warning::RAG_INDEX_URL repo variable is not set — set it to the CloudFront URL of marketplace_index.zip (refresh and upload once: python scripts/publish_rag.py)."
+            echo "fetched=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if curl -fsSL "$INDEX_URL" -o release-staging/tag/index/marketplace_index.zip; then
             echo "fetched=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::RAG index not found at $INDEX_URI." \
-                 "Build and upload it once: python scripts/build_marketplace_index.py &&" \
-                 "zip -r marketplace_index.zip marketplace_index.sqlite marketplace_cache/ &&" \
-                 "aws s3 cp marketplace_index.zip $INDEX_URI"
+            echo "::warning::RAG artifacts not found at $INDEX_URL." \
+                 "Refresh and upload them once: python scripts/publish_rag.py"
             echo "fetched=false" >> "$GITHUB_OUTPUT"
           fi
 
