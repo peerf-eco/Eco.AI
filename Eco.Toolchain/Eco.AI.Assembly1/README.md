@@ -117,7 +117,7 @@ docker compose -f ~/.eco-harness/docker-compose.yml exec eco-harness python -m e
 |---|---|
 | App home (`ECO_HOME`) | `~/.eco-harness` (`bin/`, `data/`, `.env`, `output/`, `traces/`) |
 | User project (`ECO_PROJECT_DIR`) | picked in the UI folder browser (or pre-set with `--project-dir`); worktrees and generated artifacts live under it |
-| Binary lookup order | explicit → `ECO_<NAME>_PATH` → `<repo>/bin` → `$ECO_HOME/bin` (`.exe` on Windows) → `/opt` → legacy siblings → `PATH` |
+| Binary lookup order | explicit → `ECO_<NAME>_PATH` → `<repo>/bin` (in installed mode `<repo>` IS `$ECO_HOME/bin`; `.exe` probed on Windows) → `PATH` |
 | Prebuilt index | `~/.eco-harness/data/marketplace_index.sqlite` (refreshed by `eco-harness update`) |
 | Config file | `~/.eco-harness/.env` (or `~/.eco-harness/workspace.yaml` for UI settings) |
 
@@ -176,10 +176,11 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r eco_harness/agent/requirements.txt
 
 # 5. Export the variables the host scripts read from the shell, then run them
-#    (fetch_marketplace.py reads ECO_API_TOKEN/ECO_CLI_PATH from the shell env,
-#     so export them; build_marketplace_index.py loads .env itself via dotenv)
+#    (fetch_marketplace.py reads ECO_API_TOKEN/ECO_CLI_PATH from the shell env;
+#     ECO_CLI_PATH is optional when bin/eco-cli(.exe) is in place,
+#     build_marketplace_index.py loads .env itself via dotenv)
 export ECO_API_TOKEN="token generated in ecoos.dev marketplace (component registry)"
-export ECO_CLI_PATH="path to eco-cli on this PC"
+# export ECO_CLI_PATH="path to eco-cli on this PC"   # only outside <repo>/bin/
 
 python scripts/fetch_marketplace.py
 python scripts/build_marketplace_index.py
@@ -199,7 +200,8 @@ docker compose up --build
 ```bash
 # 1. Set up Python environment
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate or in GitBash use: source .venv/Scripts/activate
+
 pip install -r eco_harness/agent/requirements.txt
 
 # 2. Set up Node.js frontend
@@ -258,21 +260,28 @@ sub-agents) are resolved by one shared policy —
 
 1. explicit argument (harness.yaml `eco_*_path` settings, tool args)
 2. `ECO_CLI_PATH` / `ECO_WIZARD_PATH` / `ECO_<NAME>_PATH` environment variable
-3. `<repo>/bin/<name>` — the canonical, gitignored home (place binaries here)
-4. `$ECO_HOME/bin/<name>` (default `~/.eco-harness/bin`) — where the native
-   installer deposits the downloaded per-OS builds
-5. `/opt/<name>` — container bind-mount location (docker-compose.yml)
-6. Legacy platform-suffixed siblings (`<repo>/eco-cli-linux/eco-cli`,
-   `<repo>/eco-cli-windows/eco-cli.exe`) — kept for backwards compatibility
-7. System `PATH`
+3. `<repo>/bin/<name>` — the canonical, gitignored home (place binaries
+   here; the Windows `.exe` spelling is probed as well). In installed mode
+   `<repo>` IS `$ECO_HOME`, so builds the native installer deposits into
+   `$ECO_HOME/bin/` resolve through this same candidate
+4. System `PATH` (called as-is)
+
+No other locations are probed. The dev compose mounts the vendored Linux
+ELFs straight into the container's `<repo>/bin/` (the same canonical home),
+so neither host nor container needs env vars; use `ECO_CLI_PATH` /
+`ECO_WIZARD_PATH` in `.env` only for custom locations.
 
 Native installs never need wine: the installer always downloads the
 target-OS build into `$ECO_HOME/bin`. `ECO_CLI_PREFIX` / `ECO_WIZARD_PREFIX`
 wine wrappers remain available only as a legacy override.
 
 **When to use the env vars:** custom executable locations or pinning a
-specific version. For normal setups just drop the binaries into `<repo>/bin/`
-(dev) or let the installer fill `$ECO_HOME/bin/` (native) — no config needed.
+specific version. Values must be **absolute** paths (no `~` expansion, no
+repo-root anchoring) and are interpreted by the resolving process — a host
+path for host runs, a container path (e.g. `/app/...`) inside the api
+container. For normal setups just drop the binaries into `<repo>/bin/`
+(dev) or let the installer fill `$ECO_HOME/bin/` (native) — no config
+needed.
 
 ## Setup Details
 
@@ -300,8 +309,8 @@ does not override already-set variables).
 | `OPENROUTER_URL` | providers | `https://openrouter.ai/api/v1` | OpenRouter endpoint |
 | `LLM_MODEL` | config loader | `tencent/hy3-preview` | Default model id (sets/overrides the `default` profile) |
 | `ECO_API_TOKEN` | fetch_marketplace.py, eco-cli | — | Eco marketplace token |
-| `ECO_CLI_PATH` | binary resolution | `<repo>/bin/eco-cli` → `/opt/eco-cli` → PATH | eco-cli binary location |
-| `ECO_WIZARD_PATH` | binary resolution | `<repo>/bin/eco-wizard` → `/opt/eco-wizard` → PATH | eco-wizard binary location |
+| `ECO_CLI_PATH` | binary resolution | `<repo>/bin/eco-cli` → PATH | eco-cli binary location |
+| `ECO_WIZARD_PATH` | binary resolution | `<repo>/bin/eco-wizard` → PATH | eco-wizard binary location |
 | `ECO_CLI_PREFIX` | eco_cli tool | — | Wrapper command for Windows binaries under Linux (e.g. `wine64`) |
 | `ECO_WIZARD_PREFIX` | eco_wizard tool | — | Same, for eco-wizard |
 | `ECO_WIZARD_TIMEOUT_S` | eco_wizard tool | `180` | Scaffold generation timeout |
@@ -373,13 +382,15 @@ Place the binaries in the canonical gitignored home relative to project root:
 
 ```
 bin/
-├── eco-cli       # Linux ELF (preferred)
-└── eco-wizard    # Linux ELF (preferred)
+├── eco-cli(.exe)       # native build for the host OS
+└── eco-wizard(.exe)
 ```
 
-Docker Compose bind-mounts the vendored ELF files directly into the
-container at `/opt/eco-cli` and `/opt/eco-wizard`; both locations are found
-automatically by `resolve_binary`.
+Docker Compose bind-mounts the vendored Linux ELF files directly into the
+container's `<repo>/bin/` (`/app/Eco.Toolchain/Eco.AI.Assembly1/bin/`) —
+the same canonical home `resolve_binary` probes — so both host and container
+resolve them without any env vars. The container-side mounts shadow only the
+in-container view; a Windows `eco-cli.exe` next to them stays untouched.
 
 ### Docker Compose Deployment
 
@@ -387,8 +398,9 @@ automatically by `resolve_binary`.
 1. `.env` file configured
 2. `marketplace_index.sqlite` created (via `build_marketplace_index.py`)
 3. `marketplace_cache/` directory populated (via `fetch_marketplace.py`)
-4. Binaries placed in `<repo>/bin/eco-cli` and `<repo>/bin/eco-wizard`
-   (or available at the `/opt/...` mount points)
+4. Binaries placed in `<repo>/bin/` (`eco-cli(.exe)` / `eco-wizard(.exe)`;
+   the compose mounts the Linux ELFs straight into the container's
+   `<repo>/bin/` — no env vars needed)
 
 **Start the application:**
 ```bash
@@ -417,9 +429,9 @@ docker compose up --build
   top of the monorepo mount (`config/:ro` keeps agent write tools away from
   prompts/permission baselines; the UI settings pane writes
   `.eco-harness/workspace.yaml`, which stays writable).
-- `../../../../Dist/eco-cli/eco-cli:/opt/eco-cli:ro` - eco-cli executable
-- `../../../../Dist/eco-cli/libaws-crt-jni.so:/opt/libaws-crt-jni.so:ro` - AWS CRT JNI library for eco-cli (no space before the colon)
-- `../../../../Dist/eco-wizard/eco-wizard:/opt/eco-wizard:ro` - eco-wizard executable
+- `../../../../Dist/eco-cli/eco-cli:/app/Eco.Toolchain/Eco.AI.Assembly1/bin/eco-cli:ro` - eco-cli Linux ELF, mounted into the canonical `<repo>/bin/` home
+- `../../../../Dist/eco-cli/libaws-crt-jni.so:/app/Eco.Toolchain/Eco.AI.Assembly1/bin/libaws-crt-jni.so:ro` - AWS CRT JNI library for eco-cli, mounted next to the executable (no space before the colon)
+- `../../../../Dist/eco-wizard/eco-wizard:/app/Eco.Toolchain/Eco.AI.Assembly1/bin/eco-wizard:ro` - eco-wizard Linux ELF, same policy
 - `api.environment` also sets `GIT_CONFIG_*=safe.directory=/app` so
   root-in-container can operate on the host-owned repo (alternatively run as
   your host uid — see the commented `user:` line in the compose).
@@ -437,13 +449,8 @@ handles every external binary, host and container alike:
 
 1. Explicit config (e.g. `harness.yaml` `eco_cli_path` / `eco_wizard_path`)
 2. `ECO_CLI_PATH` / `ECO_WIZARD_PATH` / `ECO_<NAME>_PATH` environment variable
-3. `<repo>/bin/<name>` (canonical, gitignored)
-4. `$ECO_HOME/bin/<name>` (`~/.eco-harness/bin`, `.exe` on Windows) — where
-   the native installer deposits the per-OS builds
-5. `/opt/<name>` (Docker bind-mount point)
-6. Legacy platform-suffixed siblings (`<repo>/eco-cli-linux/eco-cli`,
-   `<repo>/eco-cli-windows/eco-cli.exe`) — backwards compatibility only
-7. System `PATH`
+3. `<repo>/bin/<name>` (canonical, gitignored; `.exe` on Windows)
+4. System `PATH`
 
 **Environment Variable Examples:**
 ```bash
@@ -451,9 +458,8 @@ handles every external binary, host and container alike:
 export ECO_CLI_PATH=$PWD/bin/eco-cli
 export ECO_WIZARD_PATH=$PWD/bin/eco-wizard
 
-# Docker mount points:
-export ECO_CLI_PATH=/opt/eco-cli
-export ECO_WIZARD_PATH=/opt/eco-wizard
+# Docker: no env vars needed — the compose mounts the vendored Linux ELFs
+# straight into <repo>/bin/ inside the container (see docker-compose.yml).
 
 # Windows executable via wine:
 export ECO_CLI_PATH=/path/to/eco-cli.exe
@@ -466,7 +472,8 @@ export ECO_WIZARD_PATH=/home/user/tools/eco-wizard
 
 **Default `.env` configuration:**
 ```
-# Leave unset when the binaries are in <repo>/bin/ or at the /opt mounts.
+# Host and container: leave unset when the binaries are in <repo>/bin/ or on
+# PATH (the compose mounts them into <repo>/bin/ in-container).
 # Override only for custom locations:
 # ECO_CLI_PATH=/usr/local/bin/eco-cli
 # ECO_WIZARD_PATH=/home/user/tools/eco-wizard
@@ -877,7 +884,7 @@ Supporting changes that keep the architect fast and on-policy:
   `GetIEcoComponentFactoryPtr_<CID>` factory symbol, vtable method names, and the
   `SharedFiles/` layout in one structured call, avoiding large raw header reads.
 - **`eco_cli`** now auto-resolves the binary via the shared resolver
-  (`ECO_*_PATH` → `<repo>/bin/` → `/opt/` mount → legacy siblings → `PATH`) and,
+  (`ECO_*_PATH` → `<repo>/bin/` → `PATH`) and,
   when none is found, returns an actionable error noting the read-only
   `marketplace_cache` already holds the needed headers.
 
@@ -1215,9 +1222,11 @@ gh variable delete ECO_CLI_VERSION
 ### Common Issues
 
 1. **"eco-cli not found" error:**
-   - Place the binary at `<repo>/bin/eco-cli` (canonical home)
-   - Check Docker volume mounts in `docker-compose.yml` (`/opt/eco-cli`)
-   - Verify `ECO_CLI_PATH` in `.env` if using a custom location
+   - Place the binary at `<repo>/bin/eco-cli` (canonical home; `eco-cli.exe`
+     on Windows)
+   - In Docker, verify the compose mounts the Linux ELFs into the container's
+     `<repo>/bin/` (see `docker-compose.yml`); `ECO_CLI_PATH` /
+     `ECO_WIZARD_PATH` are only for custom locations
    - Run `python scripts/dev_preflight.py --fix` for the full lookup order
 
 2. **GPG signature errors during Docker build:**
@@ -1246,8 +1255,8 @@ gh variable delete ECO_CLI_VERSION
 
 - Check container logs: `docker compose logs api`
 - Enter container shell: `docker compose exec api bash`
-- Test eco-cli in container: `docker compose exec api eco-cli --version`
-- Verify volume mounts: `docker compose exec api ls -la /opt/`
+- Test eco-cli in container: `docker compose exec api bin/eco-cli --version`
+- Verify volume mounts: `docker compose exec api ls -la bin/`
 
 ## Testing
 

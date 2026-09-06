@@ -234,10 +234,17 @@ installed-mode candidates).
 
 External tool binaries (eco-cli, eco-wizard, external sub-agents) resolve via
 `eco_harness/agent/internal/tools/binaries.py::resolve_binary` — the single policy since
-PRD_2 Phase 2: explicit config → `ECO_<NAME>_PATH` env → `<repo>/bin/<name>`
-(canonical, gitignored) → `$ECO_HOME/bin/<name>` (installed home,
-`<name>.exe` on Windows) → `/opt/<name>` (container mounts) → legacy
-platform-suffixed siblings → `PATH`. All former per-consumer resolvers
+PRD_2 Phase 2, narrowed to three steps: explicit config → `ECO_<NAME>_PATH`
+env (`ECO_CLI_PATH` / `ECO_WIZARD_PATH`) → `<repo>/bin/<name>` (canonical,
+gitignored; the `<name>.exe` spelling is probed as well on Windows) → bare
+`PATH` call. In installed mode `repo_root()` IS `$ECO_HOME`, so the
+`$ECO_HOME/bin` builds deposited by the installer resolve through the same
+`<repo>/bin` candidate. The former fallbacks — `/opt` container mounts and
+the legacy platform-suffixed sibling dirs — are deprecated and no longer
+probed. The dev compose mounts the vendored Linux ELFs straight into the
+container's `<repo>/bin/` (the canonical home), so neither host nor
+container needs env vars; `ECO_<NAME>_PATH` is reserved for custom
+locations (see `env.example`). All former per-consumer resolvers
 (server, eco_cli, eco_wizard, factory, scripts) delegate to it.
 
 ### Cache utilization rules
@@ -400,7 +407,7 @@ grok -p "<prompt>"
 
 The adapter resolves the executable via the shared `resolve_binary` policy
 (`ECO_CODEX_PATH`, `ECO_PI_PATH`, `ECO_CLAUDE_PATH`, `ECO_GROK_PATH` →
-`<repo>/bin/<name>` → `/opt` → `PATH`). The invocation flag comes from
+`<repo>/bin/<name>` → `PATH`). The invocation flag comes from
 `config/agents/external/<name>.yaml` (`flag:`), wired into
 `ExternalCliBackend` in PRD_2 Phase 2. Missing executables produce an
 explicit role failure. There is no silent fallback.
@@ -444,8 +451,7 @@ invent those layouts.
 The generator tool exposes the generator with:
 
 - executable lookup via the shared `resolve_binary` policy
-  (`ECO_WIZARD_PATH` → `<repo>/bin/eco-wizard` → `$ECO_HOME/bin/eco-wizard`
-  → `/opt` → legacy siblings → `PATH`)
+  (`ECO_WIZARD_PATH` → `<repo>/bin/eco-wizard` → `PATH`)
 - `eco-wizard new`
 - language, type, output, environment, and option arguments
 - bounded output
@@ -862,18 +868,22 @@ root — GitHub only loads root-level workflows; all steps run with
 
 `scripts/release/build_manifest.py` walks a staging dir and emits
 `manifest.json`. Every consumer (installers, `eco-harness update`) resolves
-everything through it:
+everything through it. `<BASE>` is the GitHub Releases asset root
+(`https://github.com/peerf-eco/eco-coder-releases/releases/download/v<ver>`);
+GitHub addresses release assets by basename only, so every URL is FLAT:
 
 ```jsonc
 {
   "schema_version": 1,
   "updated_at": "…",
-  "wheel":   {"version": "1.0.0", "url": "<BASE>/dist/eco_harness-1.0.0-py3-none-any.whl", "sha256": "…", "size": 1905612},
+  "wheel":   {"version": "1.0.0", "url": "<BASE>/eco_harness-1.0.0-py3-none-any.whl", "sha256": "…", "size": 1905612},
   "binaries": {
-    "eco-cli":  {"linux": {"x86_64": {"url": "<BASE>/binaries/eco-cli/linux/x86_64/eco-cli", "sha256": "…"}}, "darwin": {"x86_64": …, "arm64": …}, "windows": {"x86_64": …}},
+    "eco-cli":  {"linux": {"amd64": {"url": "<BASE>/eco-cli", "sha256": "…",
+                                     "zip_url": "<BASE>/eco-cli-linux-amd64.zip", "zip_sha256": "…", "version": "v2.1.0"}},
+                 "darwin": {"amd64": …, "arm64": …}, "windows": {"amd64": …}},
     "eco-wizard": {…}
   },
-  "index": {"url": "<BASE>/index/marketplace_index.tar.gz", "sha256": "…"},
+  "index": {"url": "<BASE>/marketplace_index.zip", "sha256": "…"},
   "image": {"repo": "ghcr.io/<owner>/<name>", "tag": "1.0.0"}
 }
 ```
@@ -881,44 +891,65 @@ everything through it:
 Staging layout (before `build_manifest.py` runs):
 
 ```text
-release-staging/
+release-staging/tag/
 ├── dist/eco_harness-<ver>-py3-none-any.whl
-├── binaries/<tool>/<os>/<arch>/<artifact>   ← EcoCLI pipeline contract
-├── index/marketplace_index.tar.gz           ← prebuilt RAG index + cache
-└── install/install.sh, install.ps1          ← hosted for stable curl|sh URLs
+├── binaries/<tool>/<os>/<arch>/<artifact> + .zip + .version   ← fetched by CI
+├── index/marketplace_index.zip           ← prebuilt RAG index + cache
+└── install/install.sh, install.ps1       ← hosted for stable curl|sh URLs
 ```
 
 Hard rule: `build_manifest.py` exits non-zero unless `binaries`, `index` and
 `wheel` are all present (`--allow-empty` is for local testing only) — an
 empty manifest would ship installs with no eco-cli and no RAG data.
 
-The `binaries/` and `index/` assets are owned by the EcoCLI pipeline
-(binaries) and the index build job (tarball of `marketplace_index.sqlite` +
-`marketplace_cache/`). They must be staged into `release-staging/` before
-the manifest job runs — via the `ECOCLI_STAGING_URL` repo variable (fetched
-by the workflow) or by dispatching this workflow from the EcoCLI pipeline
-with the artifacts merged in. There is no implicit fallback: missing assets
-fail the release.
+Asset ownership (all fetched automatically by the workflow's `build` job —
+no manual staging): the per-platform binary zips come from the public
+GitHub Releases of `ECO_CLI_RELEASE_REPO` / `ECO_WIZARD_RELEASE_REPO`
+(version resolution: dispatch input → `ECO_CLI_VERSION` / `ECO_WIZARD_VERSION`
+vars → latest release, see §19.2); the RAG zip (index +
+`marketplace_cache/`) comes from the public distribution URL in the
+`RAG_INDEX_URL` repo variable (refreshed by maintainers via
+`scripts/publish_rag.py`, see §19.3). A missing binary platform skips with
+a warning; a manifest whose `binaries`/`index` sections end up empty fails
+`build_manifest.py` (no implicit fallback).
 
 ### 18.4 CI release workflow (monorepo root `.github/workflows/release.yml`)
 
-- `build` — wheel build (frontend export baked in), stages wheel + installer
-  scripts, uploads `release-assets`.
+- `build` — validates a pushed tag is reachable from `main`, wheel build
+  (frontend export baked in), stages wheel + installer scripts under
+  `release-staging/tag/`, fetches eco-cli/eco-wizard binary zips from public
+  GitHub Releases, downloads the RAG zip from `RAG_INDEX_URL` (plain curl),
+  uploads `release-assets`.
 - `publish-image` — `docker/setup-qemu-action` (arm64 emulation) +
   buildx multi-arch (`linux/amd64`, `linux/arm64`) of `docker/Dockerfile`
   (wheel staged into `docker/wheel/` inside the build context), pushed to
-  ghcr with `type=semver` + `latest` tags; fails fast if no tag resolves or
-  the wheel version ≠ git tag.
-- `publish-manifest` — validates `RELEASE_BASE_URL`/`RELEASE_S3_BUCKET`,
-  stages EcoCLI assets, builds + validates the manifest, `aws s3 sync`s
-  manifest, installers, binaries, index, wheel.
+  ghcr: on `v*` tags → `type=semver` + `latest`; on main pushes and dispatch
+  runs → `dev-<sha>` (the fallback guarantees tags are never empty; the
+  empty-tags guard only fires if the metadata-action config itself breaks).
+  The wheel version ≠ git tag check runs on tag pushes only.
+- `publish-manifest` — tag pushes only, runs in parallel with
+  `publish-image` (needs only `build`): resolves the public tag + image
+  tag, builds + validates the manifest, uploads manifest, installers,
+  wheel, binary zips and RAG zip as release assets of the public
+  `peerf-eco/eco-coder-releases` repo (`softprops/action-gh-release`,
+  pinned to a full commit SHA, `ECO_PUBLIC_RELEASE_TOKEN` secret), then
+  verifies `install.sh` / `install.ps1` / `manifest.json` resolve from
+  `releases/latest/download/` (guards the README one-liners).
 
-Required repo configuration: variables `RELEASE_BASE_URL`,
-`RELEASE_S3_BUCKET`, `ECOCLI_STAGING_URL` (set when the EcoCLI pipeline
-publishes), `RELEASE_AWS_REGION`; secrets `RELEASE_AWS_ACCESS_KEY_ID`,
-`RELEASE_AWS_SECRET_ACCESS_KEY`. ghcr push uses the built-in
-`GITHUB_TOKEN` with `packages: write`. The image repo must match what the
-installers default to (`ghcr.io/<owner>/<repo>`, lowercased) — the
+Triggers: `v*` tag pushes (tag commit must be on `main`) publish the image
+and the public release; pushes to `main` run the build + a `dev-<sha>`
+image only; `workflow_dispatch` defaults to `dry_run=true` (build only;
+`dry_run=false` also pushes the `dev-<sha>` image — no public release
+without a tag).
+
+Required repo configuration: secret `ECO_PUBLIC_RELEASE_TOKEN` (release
+write on `peerf-eco/eco-coder-releases`); variable `RAG_INDEX_URL` (public
+URL of `marketplace_index.zip`); optional variables `ECO_CLI_RELEASE_REPO`,
+`ECO_WIZARD_RELEASE_REPO`, `ECO_CLI_VERSION`, `ECO_WIZARD_VERSION`
+(§19.7). NO AWS credentials exist anywhere in CI — the only S3 writer is
+the maintainer-side `scripts/publish_rag.py` (§19.3). ghcr push uses the
+built-in `GITHUB_TOKEN` with `packages: write`. The image repo must match
+what the installers default to (`ghcr.io/<owner>/<repo>`, lowercased) — the
 installers override from `manifest.image.repo` whenever the manifest is
 reachable.
 
@@ -978,7 +1009,8 @@ inside `ECO_HOME` fails loudly with a WorktreeError instead.
 
 `update` (`eco_harness/update.py`), manifest-driven, idempotent:
 
-1. fetch manifest (defaults: `$ECO_MANIFEST_URL` → the S3 base URL)
+1. fetch manifest (defaults: `$ECO_MANIFEST_URL` →
+   `eco-coder-releases/releases/latest/download/manifest.json`)
 2. wheel: if `manifest.wheel.version != installed`, download → sha256
    verify → `uv pip install --python <venv>` (pip fallback), report
    "restart to apply"
@@ -1020,38 +1052,42 @@ order = execution order.
 
 #### A. Shared — required for BOTH native and Docker installs
 
-- [ ] **A1. Provision artifact hosting.** Create the S3 bucket (+ CDN in
-      front) and set the public base URL. Expected object layout (matches
-      `build_manifest.py --base-url` and `_download`):
-      `manifest.json`, `dist/eco_harness-<ver>-py3-none-any.whl`,
-      `binaries/<tool>/<os>/<arch>/<artifact>`,
-      `index/marketplace_index.tar.gz`, `install/install.sh`,
-      `install/install.ps1`.
+- [ ] **A1. Provision artifact hosting.** Two pieces:
+      1. Create the public `peerf-eco/eco-coder-releases` repo — its tagged
+         releases are the ONLY install channel. Expected asset layout (flat,
+         matches `build_manifest.py --base-url`): `manifest.json`,
+         `eco_harness-<ver>-py3-none-any.whl`, `install.sh`, `install.ps1`,
+         `eco-cli-<os>-<arch>.zip` / `eco-wizard-<os>-<arch>.zip`,
+         `marketplace_index.zip`.
+      2. Host the RAG bundle: private S3 bucket + public CloudFront
+         distribution; upload `marketplace_index.zip` via
+         `scripts/publish_rag.py` (§19.3) and set the public URL as the
+         `RAG_INDEX_URL` repo variable.
 - [ ] **A2. Commit & push the release workflow** to the MONOREPO root
       (`.github/workflows/release.yml` — GitHub ignores nested workflow
-      dirs; it currently exists only in the working tree).
+      dirs; the Assembly1 copy is an inert reference).
 - [ ] **A3. Configure GitHub repo variables/secrets** (Settings → Secrets
-      and variables → Actions): vars `RELEASE_BASE_URL`,
-      `RELEASE_S3_BUCKET`, `RELEASE_AWS_REGION`, `ECOCLI_STAGING_URL`;
-      secrets `RELEASE_AWS_ACCESS_KEY_ID`, `RELEASE_AWS_SECRET_ACCESS_KEY`.
-      No ghcr secret needed (`GITHUB_TOKEN` + `packages: write`).
-- [ ] **A4. Wire the EcoCLI pipeline contract (§18.3).** Build/stage
-      per-OS/arch `eco-cli` + `eco-wizard` artifacts under
-      `release-staging/binaries/<tool>/<os>/<arch>/` for
-      `linux/x86_64`, `linux/arm64`, `darwin/x86_64`, `darwin/arm64`,
-      `windows/x86_64` (no wine builds anywhere), and the prebuilt RAG
-      tarball under `release-staging/index/`. Publish via
-      `ECOCLI_STAGING_URL` (tarball that extracts into `release-staging/`)
-      or by dispatching the release workflow from the EcoCLI pipeline with
-      assets merged.
-- [ ] **A5. Build the prebuilt RAG index** exactly the way
-      `update._refresh_index` expects: tarball root contains
+      and variables → Actions): secret `ECO_PUBLIC_RELEASE_TOKEN` (release
+      write on `peerf-eco/eco-coder-releases`); var `RAG_INDEX_URL`;
+      optional vars `ECO_CLI_RELEASE_REPO`, `ECO_WIZARD_RELEASE_REPO`,
+      `ECO_CLI_VERSION`, `ECO_WIZARD_VERSION` (§19.7). No AWS secrets in
+      CI; no ghcr secret needed (`GITHUB_TOKEN` + `packages: write`).
+- [ ] **A4. Ensure the binary release repos exist (§19.2).** The workflow
+      fetches `eco-cli` + `eco-wizard` zips from the public GitHub Releases
+      of `ECO_CLI_RELEASE_REPO` / `ECO_WIZARD_RELEASE_REPO` (defaults:
+      `peerf-eco/eco-cli-releases`, `peerf-eco/eco-wizard`) for
+      `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`,
+      `windows/amd64` (no wine builds anywhere). Missing assets skip that
+      platform with a warning; an empty `binaries` section fails
+      `build_manifest.py`.
+- [ ] **A5. Build and publish the RAG bundle** exactly the way
+      `update._refresh_index` expects: zip root contains
       `marketplace_index.sqlite` + `marketplace_cache/` (extracting into
       `$ECO_HOME/data/` must yield `data/marketplace_index.sqlite` and
-      `data/marketplace_cache/`). Rebuild via
-      `scripts/build_marketplace_index.py` (tokens in `.env`), tar with
-      those two entries at the root, record its sha256 (the manifest step
-      computes it).
+      `data/marketplace_cache/`). One command refreshes and uploads:
+      `python scripts/publish_rag.py` (index-build tokens + AWS creds in
+      `.env`, §19.3). Then set `RAG_INDEX_URL` to the public CloudFront
+      URL of the uploaded key (sha256 is computed by the manifest step).
 - [ ] **A6. Decide PyPI publication.** Both `_pip_upgrade` and the
       installers fall back to the bare `eco-harness` name when the manifest
       is unreachable — register the project on PyPI (or accept that the
@@ -1088,9 +1124,10 @@ order = execution order.
       binaries) to remove the right-click→Open dance (optional but
       recommended).
 - [ ] **B4. Verify Windows specifics:** `update._refresh_binaries` downloads
-      `eco-cli.exe`/`eco-wizard.exe` and `resolve_binary`'s
-      `$ECO_HOME/bin/<name>.exe` candidate resolves them; `.env` ends up
-      user-only (icacls); `--project-dir` seeds `ECO_PROJECT_DIR`.
+      `eco-cli.exe`/`eco-wizard.exe` into `$ECO_HOME/bin/` and
+      `resolve_binary` resolves them through its `<repo>/bin/<name>.exe`
+      candidate (`repo_root()` IS `$ECO_HOME` in installed mode); `.env`
+      ends up user-only (icacls); `--project-dir` seeds `ECO_PROJECT_DIR`.
 - [ ] **B5. Verify the verified-wheel install path on each OS:** the
       sha256-checked local wheel is installed via `uv pip install --python
       <venv>` (uv venvs have no pip; pip fallback only for non-uv venvs).
@@ -1144,7 +1181,8 @@ order = execution order.
 
 This section covers the day-to-day operations for the release pipeline
 introduced/revised in the current session. The canonical workflow file is
-`.github/workflows/release.yml`.
+`.github/workflows/release.yml` at the MONOREPO root (GitHub ignores nested
+workflow dirs; the Assembly1 copy is an inert reference).
 
 ### 19.1 What a GitHub Actions run-id is
 
@@ -1170,9 +1208,9 @@ gh run view 12345678901 --log
 
 `gh run upload` only works while a run is **in progress** (waiting at a
 `continue-on-error` step or a job that hasn't started yet). You cannot
-upload artifacts to a completed run. The correct pattern for the RAG index
-is a dedicated workflow that builds and uploads the artifact before the
-release run needs it — see §19.3.
+upload artifacts to a completed run. The RAG bundle therefore never flows
+through run artifacts: maintainers refresh it out-of-band with
+`scripts/publish_rag.py` and CI reads it from the public URL — §19.3.
 
 ### 19.2 Binary staging — automatic fetch from GitHub Releases
 
@@ -1187,30 +1225,31 @@ directly from GitHub Releases. No manual file placement is needed.
 3. latest release           gh release view --repo <ECO_CLI_RELEASE_REPO>
 ```
 
-**Expected zip asset names per platform** in the EcoCLI GitHub Release:
+**Expected zip asset names per platform** in the EcoCLI GitHub Release
+(macOS tries `macos-*` first, falls back to `darwin`-spelled assets):
 
 ```text
 eco-cli-linux-amd64.zip       # contains: eco-cli, libaws-crt-jni.so, ...
 eco-cli-linux-arm64.zip
-eco-cli-darwin-amd64.zip
-eco-cli-darwin-arm64.zip
+eco-cli-macos-amd64.zip       # eco-cli-darwin-amd64.zip accepted as fallback
+eco-cli-macos-arm64.zip       # eco-cli-darwin-arm64.zip accepted as fallback
 eco-cli-windows-amd64.zip     # contains: eco-cli.exe, *.dll, ...
 eco-wizard-linux-amd64.zip
 eco-wizard-linux-arm64.zip
-eco-wizard-darwin-amd64.zip
-eco-wizard-darwin-arm64.zip
+eco-wizard-macos-amd64.zip    # eco-wizard-darwin-amd64.zip accepted as fallback
+eco-wizard-macos-arm64.zip    # eco-wizard-darwin-arm64.zip accepted as fallback
 eco-wizard-windows-amd64.zip
 ```
 
 The workflow extracts every file from each zip flat into
-`release-staging/binaries/<tool>/<os>/<arch>/` (no subdirectory nesting).
+`release-staging/tag/binaries/<tool>/<os>/<arch>/` (no subdirectory nesting).
 This means the executable AND any dynamic libraries (e.g. `libaws-crt-jni.so`
 for eco-cli) land in the same directory. `build_manifest.py` picks the first
-file alphabetically as the manifest entry for that platform — name your
-executable so it sorts before any libraries (e.g. `eco-cli` sorts before
-`libaws-crt-jni.so`). `update.py::_refresh_binaries` downloads only that
-primary file; the dynamic libraries are bundled inside the zip that S3 hosts
-and are available to the Docker container via the bind-mount.
+non-document file alphabetically as the manifest entry for that platform —
+name your executable so it sorts before any libraries (e.g. `eco-cli` sorts
+before `libaws-crt-jni.so`). `update.py::_refresh_binaries` downloads only
+the zip; the dynamic libraries are bundled inside the zip that the GitHub
+release hosts and are available to the Docker container via the bind-mount.
 
 **To update the installation package after a new eco-cli release:**
 
@@ -1229,37 +1268,35 @@ gh workflow run release.yml \
   -f eco_wizard_version=v1.8.0
 ```
 
-### 19.3 RAG index — building and uploading to S3
+### 19.3 RAG index — building and uploading to the public distribution
 
-The RAG index is stored permanently in S3 as a `.zip`. Use the dedicated
-script `scripts/push_marketplace_index.py` — it is separate from the basic
-marketplace scripts (`fetch_marketplace.py`, `build_marketplace_index.py`)
-which are used frequently without needing an S3 upload.
+The RAG bundle (index + marketplace cache) lives in a private S3 bucket
+exposed publicly through a CloudFront distribution. Maintainers refresh it
+with `scripts/publish_rag.py`; CI and the installers only ever READ it via
+the public URL — no AWS credentials exist in CI.
 
 ```bash
-# Build the index first (needs OPENAI_API_KEY and ECO_API_TOKEN in .env):
-python scripts/build_marketplace_index.py
+# One command: fetch marketplace → build index → zip (index + cache) → upload.
+# Credentials and targets come from the environment or .env (see env.example):
+#   ECO_API_TOKEN, OPENAI_API_KEY            (index build)
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION or AWS_PROFILE
+#   RAG_S3_BUCKET, RAG_S3_KEY                (upload; default key index/marketplace_index.zip)
+python scripts/publish_rag.py
 
-# Upload index + cache to S3 (reads RELEASE_S3_BUCKET from .env or env):
-python scripts/push_marketplace_index.py
-
-# Index only (skip marketplace_cache/, smaller upload):
-python scripts/push_marketplace_index.py --index-only
-
-# Dry run — builds the zip locally, no upload:
-python scripts/push_marketplace_index.py --dry-run
-
-# Explicit bucket / prefix override:
-python scripts/push_marketplace_index.py --bucket my-bucket --prefix index/
+# Dry run — fetch, build and zip locally, no upload:
+python scripts/publish_rag.py --no-upload
 ```
 
-The script uses `boto3` if installed, falls back to the `aws` CLI. The zip
-extracts flat: `marketplace_index.sqlite` and `marketplace_cache/` at the
-root, which is what `eco_harness.update._refresh_index` expects when it
-extracts into `$ECO_HOME/data/`.
+The zip extracts flat: `marketplace_index.sqlite` and `marketplace_cache/`
+at the root, which is what `eco_harness.update._refresh_index` expects when
+it extracts into `$ECO_HOME/data/`.
 
 Rebuild and re-upload only when the marketplace snapshot changes. Every
-subsequent release fetches the current zip from S3 automatically.
+subsequent release fetches the current zip from the public URL
+(`RAG_INDEX_URL` repo variable) automatically. After overwriting an
+existing key, consider a CloudFront invalidation for that path (cached
+copies may serve until TTL). (`scripts/push_marketplace_index.py` is the
+older single-purpose uploader, superseded by `publish_rag.py`.)
 
 ### 19.4 Binary versioning and update behavior
 
@@ -1299,19 +1336,21 @@ runs inside the container at startup and applies the same version-skip logic
 — so if only the wheel changed, binaries are not re-downloaded in the
 container either.
 
-### 19.4 Workflow triggers
+### 19.5 Workflow triggers
 
 | Event | dry_run | What happens |
 |---|---|---|
-| `git push origin v1.2.3` | false (implicit) | full build + publish-image + publish-manifest |
+| `git push origin v1.2.3` (tag commit on main) | false (implicit) | build + image (`1.2.3` + `latest`) + public release publish |
+| `git push` to `main` | — | build + `dev-<sha>` image only; nothing published |
 | `gh workflow run release.yml` | true (default) | build only, nothing published — safe to test |
-| `gh workflow run release.yml -f dry_run=false` | false | full publish without a new tag |
-| `gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0` | false | full publish, pin specific eco-cli version |
+| `gh workflow run release.yml -f dry_run=false` | false | build + `dev-<sha>` image; no public release (no version tag) |
+| `gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0` | false | build + `dev-<sha>` image, pin specific eco-cli version |
 
-The workflow does NOT trigger on branch pushes. Only `v*` tags trigger
-automatic publishing.
+Only `v*` tags whose commit is reachable from `main` publish the public
+release (the build job validates reachability and fails otherwise).
+Tagless runs never produce a versioned image tag or a public release.
 
-### 19.5 publish-image vs publish-manifest — independence and caching
+### 19.6 publish-image vs publish-manifest — independence and caching
 
 Both `publish-image` and `publish-manifest` depend only on the `build` job
 and run in parallel. `publish-manifest` does NOT wait for `publish-image`.
@@ -1329,57 +1368,28 @@ and run in parallel. `publish-manifest` does NOT wait for `publish-image`.
 This means you can publish a new eco-cli version or a refreshed RAG index
 without triggering any Docker build work.
 
-### 19.6 AWS authentication
-
-**Preferred — OIDC (no stored long-lived secrets):**
-
-One-time AWS setup:
-1. IAM → Identity providers → Add provider → OpenID Connect
-   - URL: `https://token.actions.githubusercontent.com`
-   - Audience: `sts.amazonaws.com`
-2. Create IAM role. Trust policy condition:
-   `token.actions.githubusercontent.com:sub` =
-   `repo:<org>/<repo>:ref:refs/tags/v*`
-3. Attach inline policy:
-   ```json
-   {
-     "Effect": "Allow",
-     "Action": ["s3:PutObject", "s3:GetObject", "s3:ListBucket"],
-     "Resource": [
-       "arn:aws:s3:::<RELEASE_S3_BUCKET>",
-       "arn:aws:s3:::<RELEASE_S3_BUCKET>/*"
-     ]
-   }
-   ```
-4. Set repo variable `RELEASE_AWS_ROLE_ARN` to the role ARN.
-
-The workflow uses OIDC when `RELEASE_AWS_ROLE_ARN` is set, and falls back
-to static key secrets (`RELEASE_AWS_ACCESS_KEY_ID` +
-`RELEASE_AWS_SECRET_ACCESS_KEY`) when it is not.
-
 ### 19.7 Required GitHub repository configuration
 
 **Variables** (Settings → Secrets and variables → Actions → Variables):
 
 | Variable | Purpose | Example |
 |---|---|---|
-| `RELEASE_BASE_URL` | Public URL prefix for manifest download URLs | `https://downloads.ecoos.dev/eco-harness` |
-| `RELEASE_S3_BUCKET` | S3 bucket name | `eco-harness-releases` |
-| `RELEASE_AWS_REGION` | S3 bucket region | `us-east-1` |
-| `RELEASE_AWS_ROLE_ARN` | OIDC role ARN (blank → use static keys) | `arn:aws:iam::123456789:role/eco-release` |
-| `ECO_CLI_RELEASE_REPO` | GitHub repo for eco-cli releases | `peerf-eco/eco-cli` |
-| `ECO_WIZARD_RELEASE_REPO` | GitHub repo for eco-wizard releases | `peerf-eco/eco-wizard` |
+| `RAG_INDEX_URL` | Public (CloudFront) URL of the RAG bundle zip — CI fetches it with plain `curl`, no credentials | `https://d123.cloudfront.net/index/marketplace_index.zip` |
+| `ECO_CLI_RELEASE_REPO` | Source repo for eco-cli binary zips (blank → `peerf-eco/eco-cli-releases`) | `peerf-eco/eco-cli-releases` |
+| `ECO_WIZARD_RELEASE_REPO` | Source repo for eco-wizard binary zips (blank → `peerf-eco/eco-wizard`) | `peerf-eco/eco-wizard` |
 | `ECO_CLI_VERSION` | Pinned eco-cli version (blank → latest) | `v2.1.0` |
 | `ECO_WIZARD_VERSION` | Pinned eco-wizard version (blank → latest) | `v1.8.0` |
-| `RAG_INDEX_S3_URI` | Override default RAG index S3 path (blank → `s3://<bucket>/index/marketplace_index.tar.gz`) | `s3://my-bucket/index/marketplace_index.tar.gz` |
 
 **Secrets** (Settings → Secrets and variables → Actions → Secrets):
 
 | Secret | When needed |
 |---|---|
-| `RELEASE_AWS_ACCESS_KEY_ID` | Only when `RELEASE_AWS_ROLE_ARN` is not set |
-| `RELEASE_AWS_SECRET_ACCESS_KEY` | Only when `RELEASE_AWS_ROLE_ARN` is not set |
+| `ECO_PUBLIC_RELEASE_TOKEN` | Always for tagged releases — a token with release-write access to the public `peerf-eco/eco-coder-releases` repo |
 
 `GITHUB_TOKEN` is provided automatically by GitHub — no configuration needed.
-It is used for ghcr.io image push (`packages: write`) and for `gh release
-download` to fetch eco-cli/eco-wizard assets from GitHub Releases.
+It is used for the ghcr.io image push (`packages: write`) and for resolving
+the latest release tags of the binary repos (`gh release view`). CI carries
+NO AWS credentials: the RAG bundle is fetched with plain `curl` from
+`RAG_INDEX_URL`, and the only S3 writer is the maintainer-side
+`scripts/publish_rag.py` (§19.3) whose credentials live in the maintainer's
+`.env`/AWS profile.

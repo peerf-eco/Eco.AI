@@ -93,8 +93,8 @@ def _truncate(text: str, label: str) -> str:
 def _resolve_cli_path(cli_path: Optional[Path]) -> Optional[Path]:
     """Resolve a usable eco-cli binary via the shared binary-resolution policy.
 
-    Order: explicit arg → ECO_CLI_PATH env → <repo>/bin/eco-cli → legacy
-    eco-cli-linux/windows siblings → PATH. Returns None only if nothing is
+    Order: explicit arg → ECO_CLI_PATH env → <repo>/bin/eco-cli → PATH.
+    Returns None only if nothing is
     found, in which case the tool still returns an actionable error (the
     marketplace_cache already holds the DEVKITs read-only, so a pull is often
     unnecessary).

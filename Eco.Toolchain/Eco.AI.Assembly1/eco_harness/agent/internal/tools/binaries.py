@@ -23,14 +23,17 @@ Resolution order
      ``ECO_CLI_PATH`` / ``ECO_WIZARD_PATH`` are checked for the matching
      tools; external backends use ``ECO_<BACKEND>_PATH``)
   3. ``<repo>/bin/<name>`` — the canonical, gitignored home for vendored
-     binaries on a host checkout
-  4. ``$ECO_HOME/bin/<name>`` (default ``~/.eco-harness/bin``) — where the
-     native installer deposits the downloaded builds
-  5. ``/opt/<name>`` — container bind-mount location (docker-compose.yml)
-  6. platform-suffixed legacy siblings next to the repo root:
-     ``<repo>/<name>-linux/<name>`` then ``<repo>/<name>-windows/<name>.exe``
-     (kept for backwards compatibility with the old layout)
-  7. system ``PATH`` (``<name>``, then ``<name>.exe``)
+     binaries on a host checkout (the ``.exe`` spelling is probed as well
+     on Windows). In installed mode ``repo_root()`` IS ``$ECO_HOME``, so
+     the native installer's ``$ECO_HOME/bin`` builds resolve through this
+     same candidate
+  4. system ``PATH`` (``<name>``, then ``<name>.exe``)
+
+Deprecated locations — ``$ECO_HOME/bin`` as a standalone candidate, the
+``/opt`` container bind-mounts, and the platform-suffixed sibling dirs —
+are intentionally NOT probed. Call them via the env vars instead: the
+compose ``/opt`` mounts are consumed through ``ECO_CLI_PATH`` /
+``ECO_WIZARD_PATH`` (see ``env.example``).
 
 Returns ``None`` when nothing is found; callers are expected to raise or
 return an actionable error message naming the tried locations.
@@ -44,7 +47,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from eco_harness.agent.internal.tools.paths import eco_home, repo_root
+from eco_harness.agent.internal.tools.paths import repo_root
 
 logger = logging.getLogger(__name__)
 
@@ -84,24 +87,13 @@ def resolve_binary(
         candidates.append(Path(explicit))
     candidates.extend(Path(value) for value in _env_candidates(name))
 
-    # Canonical gitignored home: <repo>/bin/<name>.
-    candidates.append(root / "bin" / name)
-
-    # Installed-app home: $ECO_HOME/bin/<name> (~/.eco-harness/bin) — where
-    # the native installer deposits the downloaded eco-cli / eco-wizard
-    # builds (named <name>.exe on Windows, matching update._refresh_binaries).
-    # Checked ahead of /opt so an installed home wins over a stale container
-    # mount.
+    # Canonical gitignored home: <repo>/bin/<name>. In installed mode
+    # repo_root() IS $ECO_HOME, so the builds the native installer deposits
+    # in $ECO_HOME/bin/ resolve through the same candidate. Vendored builds
+    # land as <name>.exe on Windows, so the suffixed name is probed too.
     installed_suffix = ".exe" if sys.platform.startswith("win") else ""
-    candidates.append(eco_home() / "bin" / f"{name}{installed_suffix}")
-
-    # Container bind-mount locations (docker-compose.yml mounts the ELF
-    # directly at /opt/<name>).
-    candidates.append(Path("/opt") / name)
-
-    # Legacy platform-suffixed siblings (old vendored layout).
-    candidates.append(root / f"{name}-linux" / name)
-    candidates.append(root / f"{name}-windows" / f"{name}.exe")
+    candidates.append(root / "bin" / name)
+    candidates.append(root / "bin" / f"{name}{installed_suffix}")
 
     for candidate in candidates:
         try:
@@ -122,7 +114,6 @@ def describe_search_order(name: str) -> str:
     """Human-readable search order for actionable 'not found' errors."""
     return (
         f"{name} lookup order: "
-        f"ECO_{_slug(name)}_PATH env → <repo>/bin/{name} → "
-        f"$ECO_HOME/bin/{name} (~/.eco-harness/bin) → /opt/{name} → "
-        f"<repo>/{name}-linux/{name} → <repo>/{name}-windows/{name}.exe → PATH"
+        f"ECO_{_slug(name)}_PATH env (ECO_CLI_PATH / ECO_WIZARD_PATH) → "
+        f"<repo>/bin/{name} (.exe on Windows) → PATH"
     )

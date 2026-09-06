@@ -58,12 +58,23 @@ def test_resolve_binary_canonical_bin_home(tmp_path: Path, monkeypatch):
     assert binaries.resolve_binary("eco-cli", repo=tmp_path) == binary
 
 
-def test_resolve_binary_legacy_siblings(tmp_path: Path, monkeypatch):
+def test_resolve_binary_ignores_legacy_siblings(tmp_path: Path, monkeypatch):
+    """Deprecated <repo>/<name>-{linux,windows}/ sibling dirs are not probed."""
     monkeypatch.delenv("ECO_CLI_PATH", raising=False)
     sibling = tmp_path / "eco-cli-linux" / "eco-cli"
     sibling.parent.mkdir(parents=True)
     sibling.touch()
-    assert binaries.resolve_binary("eco-cli", repo=tmp_path) == sibling
+    assert binaries.resolve_binary("eco-cli", repo=tmp_path) is None
+
+
+def test_resolve_binary_windows_exe_suffix(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("ECO_CLI_PATH", raising=False)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    binary = bin_dir / "eco-cli.exe"
+    binary.touch()
+    monkeypatch.setattr(binaries.sys, "platform", "win32")
+    assert binaries.resolve_binary("eco-cli", repo=tmp_path) == binary
 
 
 def test_resolve_binary_none_when_missing(tmp_path: Path, monkeypatch):
