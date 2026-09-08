@@ -117,6 +117,22 @@ def _resolve_inside_any(allowed_roots: list[Path], rel_or_abs: str) -> Optional[
     return None
 
 
+def _is_marketplace_path(p: Path, allowed_roots: list[Path]) -> bool:
+    """True when `p` lives under one of the read-only extra roots (the
+    marketplace cache et al.), not under project_dir."""
+    try:
+        rp = p.resolve(strict=False)
+    except OSError:
+        return False
+    for extra in allowed_roots[1:]:
+        try:
+            rp.relative_to(extra.resolve(strict=False))
+            return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def _outside_msg(args_path: str, allowed_roots: list[Path]) -> str:
     """Standard 'outside whitelist' error message — echoes the allowed
     roots so the model can self-correct on the next iteration."""
@@ -445,6 +461,24 @@ def _read(args: _ReadArgs, allowed_roots: list[Path]) -> ToolResult:
         body += (
             f"\n\n... (truncated: {size - args.offset - len(data)} bytes "
             f"remain. Pass offset={args.offset + len(data)} to continue.)"
+        )
+    # Large-read hint (ses-a6ddf3c8 lesson): the coder read a full 116 KB
+    # marketplace Id header to extract two symbols. That payload is
+    # replayed on EVERY later LLM call of the run (+29K tokens), blew the
+    # history into the summarizer, and cost 3 failed-build cycles of
+    # context churn. A grep for the specific symbol would have returned
+    # ~10 lines. Nudge toward the cheap path whenever a big page of a
+    # read-only marketplace header is about to enter the history.
+    if (
+        len(data) > 65_536
+        and p.suffix.lower() in (".h", ".hpp")
+        and _is_marketplace_path(p, allowed_roots)
+    ):
+        body += (
+            "\n\nhint: you just pulled a large marketplace header into the "
+            "conversation history (replayed on every later call). For "
+            "CID/factory-symbol lookups prefer: grep(pattern=\"CID_<Name>\", "
+            "path=<this dir>) — it returns the exact lines you need."
         )
     return ToolResult(
         content=f"{header}\n{body}",

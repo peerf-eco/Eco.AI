@@ -284,6 +284,7 @@ class EcoAgent:
         self.max_iters = max_iters
         self.trace_dir = trace_dir
         self.trace_label = trace_label
+        self.trace_error: str | None = None
         self._call_no = 0   # per-instance LLM-call counter (trace metadata)
         self._iter = 0      # current run() iteration (trace metadata)
         self.prepare_arguments = prepare_arguments
@@ -408,7 +409,7 @@ class EcoAgent:
             raise
         finally:
             if self.trace_dir is not None:
-                write_call_trace(
+                trace_path = write_call_trace(
                     trace_dir=self.trace_dir,
                     label=self.trace_label,
                     call_no=call_no,
@@ -419,10 +420,15 @@ class EcoAgent:
                     error=error_str,
                     tool_durations=self._pending_tool_durations,
                 )
+                if trace_path is None:
+                    self.trace_error = (
+                        f"{self.trace_label} trace persistence failed"
+                    )
             self._pending_tool_durations = []
 
     # ── main entrypoint ────────────────────────────────────────────────────
     def run(self, seed) -> EcoAgentResult:
+        self.trace_error = None
         self._emit(EventType.START)
         history: list = list(_normalize_seed(seed))
 
@@ -829,5 +835,4 @@ class EcoAgent:
             + joined
         )
         return UserMessage(content=digest_text, timestamp=_now_ms())
-
 

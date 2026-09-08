@@ -243,6 +243,22 @@ def _check_new_component_specs(plan: str, project_dir: Path) -> Optional[str]:
     )
 
 
+def validate_plan_handoff(plan: str, project_dir: Path) -> Optional[str]:
+    """Run every validation layer required before a coder handoff.
+
+    This is shared by the architect stop-tool gate and the server-side HITL
+    approval path. Keeping the layers in one function prevents an edited plan
+    from bypassing checks that were applied to the original handoff.
+    """
+    reason = plan_block_reason(plan)
+    if reason is not None:
+        return reason
+    cid_reason = _check_cid_against_lib_filenames(plan, Path(project_dir))
+    if cid_reason is not None:
+        return cid_reason
+    return _check_new_component_specs(plan, Path(project_dir))
+
+
 # Identical repeated read-only calls are answered from a memo with a one-line
 # pointer (see EcoAgent.dedup_tools). eco_cli is excluded — pull mutates
 # project_dir. Kill-switch: HARNESS_TOOL_DEDUP=0.
@@ -367,10 +383,13 @@ def make_architect(
     def _plan_gate(name: str, args_obj):
         """Block `to_coder` when the plan violates ACOM closed-plan rules.
 
-        Two layers of validation, in order:
+        Three layers of validation, in order:
           1. plan_block_reason() — the text validator in plan_validator.py
-             (CIDs, bootstrap, target triple, handoff size, Eco.System1).
-          2. Spec-file existence check — for every docs/specs/<Name>.md path
+             (CIDs, Id headers, bootstrap, target triple, handoff size,
+             Eco.System1).
+          2. Filesystem CID cross-check — every cited CID must resolve to a
+             real marketplace library for the selected target.
+          3. Spec-file existence check — for every docs/specs/<Name>.md path
              mentioned in the New Component table, the file must already
              exist on disk. The architect has only the sandboxed
              ``write_spec`` tool to author spec files; if the plan claims
@@ -386,18 +405,9 @@ def make_architect(
         else:
             dump = getattr(args_obj, "model_dump", lambda: {})()
             msg = (dump.get("message", "") if isinstance(dump, dict) else "") or ""
-        # Layer 1: text validator.
-        reason = plan_block_reason(msg)
+        reason = validate_plan_handoff(msg, Path(project_dir))
         if reason is not None:
             return {"block": True, "reason": reason}
-        # Layer 2: filesystem CID cross-check (chat-8fc99e0c regression).
-        cid_reason = _check_cid_against_lib_filenames(msg, Path(project_dir))
-        if cid_reason is not None:
-            return {"block": True, "reason": cid_reason}
-        # Layer 3: spec-file existence check.
-        spec_reason = _check_new_component_specs(msg, Path(project_dir))
-        if spec_reason is not None:
-            return {"block": True, "reason": spec_reason}
         # Valid -> persist plan.md to the project root for human review.
         try:
             Path(project_dir).mkdir(parents=True, exist_ok=True)

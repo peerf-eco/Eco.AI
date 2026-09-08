@@ -32,6 +32,7 @@ from eco_harness.agent.config.loader import (
     load_role_config,
 )
 from eco_harness.agent.internal.tools import binaries, paths
+from eco_harness.agent.internal.agents.architect import validate_plan_handoff
 from eco_harness.backend.session_export import (
     build_project_export,
     default_traces_root,
@@ -1912,9 +1913,36 @@ async def setup_config(payload: SetupConfigRequest):
 _MERMAID_FENCE_RE = re.compile(
     r"```mermaid\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE,
 )
+_TRACE_SEQUENCE_RE = re.compile(r"^(?P<sequence>\d+)-")
 
 
-def _collect_run_metrics(trace_dir) -> dict:
+def _trace_sequence(path: Path) -> int | None:
+    match = _TRACE_SEQUENCE_RE.match(path.name)
+    if match is None:
+        return None
+    try:
+        return int(match.group("sequence"))
+    except ValueError:
+        return None
+
+
+def _trace_sequence_boundary(trace_dir: Path) -> int:
+    """Return the highest persisted trace sequence before a new run."""
+    try:
+        return max(
+            (sequence for path in trace_dir.glob("*.json")
+             if (sequence := _trace_sequence(path)) is not None),
+            default=0,
+        )
+    except OSError:
+        return 0
+
+
+def _collect_run_metrics(
+    trace_dir: Path,
+    start_sequence: int = 0,
+    trace_errors: list[str] | None = None,
+) -> dict:
     """Aggregate per-call KPIs from the run's trace files.
 
     One trace file per LLM call; each carries meta.tool_durations (P4) and
@@ -1929,9 +1957,25 @@ def _collect_run_metrics(trace_dir) -> dict:
         "output_tokens": 0,
         "cache_read_tokens": 0,
         "tool_seconds": 0.0,
+        "cache_unknown_calls": 0,
+        "cache_unknown_tokens": 0,
+        # Full-price misses on BIG calls: input >= 60K with explicitly
+        # reported cacheRead == 0. Unknown provider telemetry is tracked
+        # separately instead of being mislabeled as eviction.
+        # Session a6ddf3c8 showed one such call (67.6K input, 0 cached) on
+        # an append-only history — i.e. provider-side cache eviction, not a
+        # harness prefix break. Surfacing the count + token cost per run
+        # makes the flakiness measurable instead of anecdotal.
+        "full_miss_calls": 0,
+        "full_miss_tokens": 0,
+        "trace_available": not trace_errors,
+        "trace_errors": list(trace_errors or []),
     }
     try:
         for path in sorted(trace_dir.glob("*.json")):
+            sequence = _trace_sequence(path)
+            if start_sequence and (sequence is None or sequence <= start_sequence):
+                continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -1957,6 +2001,20 @@ def _collect_run_metrics(trace_dir) -> dict:
             metrics["input_tokens"] += _int(usage.get("input"))
             metrics["output_tokens"] += _int(usage.get("output"))
             metrics["cache_read_tokens"] += _int(usage.get("cacheRead"))
+            call_input = _int(usage.get("input"))
+            call_cached = _int(usage.get("cacheRead"))
+            if call_input >= 60_000 and call_cached == 0:
+                if usage.get("cacheReadReported") is True:
+                    metrics["full_miss_calls"] += 1
+                    metrics["full_miss_tokens"] += call_input
+                else:
+                    metrics["cache_unknown_calls"] += 1
+                    metrics["cache_unknown_tokens"] += call_input
+        if metrics["calls"] == 0 and not metrics["trace_errors"]:
+            metrics["trace_available"] = False
+            metrics["trace_errors"].append(
+                "no trace files recorded for pipeline"
+            )
         total_in = metrics["input_tokens"]
         if total_in > 0:
             metrics["cache_hit_rate"] = round(
@@ -2845,7 +2903,12 @@ async def chat_endpoint(websocket: WebSocket):
     # have nested traces/ under traces/chat-9257ff60/--app/.../traces/chat-*.
     traces_base = _traces_root()
     trace_dir = traces_base / f"ses-{thread_id[:8]}"
-    trace_dir.mkdir(parents=True, exist_ok=True)
+    # NOTE: the dir is NOT pre-created here. write_call_trace mkdirs on the
+    # first real trace write, so a pipeline that aborts before the first
+    # LLM call (user abort, intent-gate rejection, provider failure) no
+    # longer leaves an empty ses-* folder behind — the post-a6ddf3c8 sweep
+    # found two such empty dirs (ses-a6ddf3c8, ses-b5a2f4c2) that suggested
+    # "lost traces" when the runs had simply never reached the model.
 
     logger.info(
         f"[CHAT WS] connected thread_id={thread_id} "
@@ -3115,6 +3178,7 @@ async def chat_endpoint(websocket: WebSocket):
             attached_block = _build_attached_block(
                 payload.get("attached_files"), project_dir
             )
+            run_trace_start_sequence = _trace_sequence_boundary(trace_dir)
 
             # ── One-shot modes: no automatic pipeline (test / review / code / plan) ──
             if mode in {"test", "review", "code", "plan"}:
@@ -3219,6 +3283,7 @@ async def chat_endpoint(websocket: WebSocket):
             planner_seed = workspace + attached_block + user_req
             approved_plan_md: str | None = None
             terminate_chat = False
+            pipeline_agents: list = []
 
             while True:
                 ev_queue: asyncio.Queue = asyncio.Queue()
@@ -3244,6 +3309,7 @@ async def chat_endpoint(websocket: WebSocket):
                     trace_dir=trace_dir,
                     on_event=_make_on_event(ev_queue, "architect"),
                 )
+                pipeline_agents.append(planner)
                 try:
                     planner_result = await _run_agent(planner.run, ev_queue, planner_seed)
                 except Exception as e:
@@ -3342,7 +3408,40 @@ async def chat_endpoint(websocket: WebSocket):
                             # ignore stale events
                             continue
                         if bool(p2.get("approved")):
-                            approved_plan_md = p2.get("modified_plan_md") or plan_md
+                            candidate_plan_md = p2.get("modified_plan_md") or plan_md
+                            validation_error = validate_plan_handoff(
+                                candidate_plan_md,
+                                Path(project_dir),
+                            )
+                            if validation_error is not None:
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "content": (
+                                        "Approved plan failed closed-plan validation; "
+                                        "revise it before approval.\n\n"
+                                        + validation_error
+                                    ),
+                                })
+                                await websocket.send_json({
+                                    "type": "plan_review_required",
+                                    "plan_md": candidate_plan_md,
+                                    "components": [],
+                                    "project_name": "",
+                                })
+                                continue
+                            approved_plan_md = candidate_plan_md
+                            try:
+                                Path(project_dir).mkdir(parents=True, exist_ok=True)
+                                (Path(project_dir) / "plan.md").write_text(
+                                    approved_plan_md,
+                                    encoding="utf-8",
+                                )
+                            except OSError:
+                                logger.warning(
+                                    "approved plan could not be persisted for thread_id=%s",
+                                    thread_id,
+                                    exc_info=True,
+                                )
                             decision_received = True
                             break
                         # Rejected — re-run planner with feedback appended.
@@ -3458,6 +3557,7 @@ async def chat_endpoint(websocket: WebSocket):
                 trace_dir=trace_dir,
                 on_event=_make_on_event(ev_queue, "tester"),
             )
+            trace_agents = [*pipeline_agents, coder, tester]
             # Shared post-approval topology (agent/internal/entry.py):
             # coder.to_architect is terminated — we don't restart the planner
             # from inside the sub-orchestrator (user already approved the plan;
@@ -3498,6 +3598,7 @@ async def chat_endpoint(websocket: WebSocket):
                     trace_dir=trace_dir,
                     on_event=_make_on_event(ev_queue, "reviewer"),
                 )
+                trace_agents.append(reviewer)
                 sub_agents = {
                     "coder": coder,
                     "reviewer": reviewer,
@@ -3580,7 +3681,14 @@ async def chat_endpoint(websocket: WebSocket):
                     "build_artifact":   build_artifact,
                     "tester_report_md": result.last_message
                                         + f"\n\n(orchestrator: {result.status}, hops={len(result.hops)})",
-                    "metrics":          _collect_run_metrics(trace_dir),
+                    "metrics":          _collect_run_metrics(
+                        trace_dir,
+                        start_sequence=run_trace_start_sequence,
+                        trace_errors=[
+                            agent.trace_error for agent in trace_agents
+                            if getattr(agent, "trace_error", None)
+                        ],
+                    ),
                 })
                 break
 
@@ -3649,7 +3757,14 @@ async def chat_endpoint(websocket: WebSocket):
                     "status":           "failed",
                     "build_artifact":   build_artifact,
                     "tester_report_md": result.last_message,
-                    "metrics":          _collect_run_metrics(trace_dir),
+                    "metrics":          _collect_run_metrics(
+                        trace_dir,
+                        start_sequence=run_trace_start_sequence,
+                        trace_errors=[
+                            agent.trace_error for agent in trace_agents
+                            if getattr(agent, "trace_error", None)
+                        ],
+                    ),
                 })
             break
 

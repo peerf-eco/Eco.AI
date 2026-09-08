@@ -5,11 +5,14 @@ modes:
     prompt: prompts/modes/auto.md
     roles: [architect, coder, tester]
     pipeline: true
-    # HITL plan approval is the biggest wall-clock item in an unattended
-    # auto run (session 8c3431c2: 291s of 431s = 67% waiting on the gate).
-    # auto_approve emits plan_review_required for visibility but proceeds
-    # immediately. Override per run with HARNESS_PLAN_GATE=hitl.
-    plan_gate: auto_approve
+    # The plan handoff REQUIRES human approval (HITL) before the coder
+    # starts — the user reviews plan.md and approves/rejects in the panel.
+    # This is the default and intended behavior. For fully unattended
+    # batch runs an operator may override per process with
+    # HARNESS_PLAN_GATE=auto_approve (the mechanism stays supported; the
+    # a6ddf3c8 verification run measured 291s→9s handoff with it, but the
+    # product decision is that auto mode keeps the human in the loop).
+    plan_gate: hitl
     capabilities:
       - marketplace_assembly
       - eco_wizard_generation

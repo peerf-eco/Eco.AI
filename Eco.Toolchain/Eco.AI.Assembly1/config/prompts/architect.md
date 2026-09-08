@@ -103,8 +103,8 @@ call `fail` immediately; do not invent defaults.
 
 4. **Resolve every dependency, including:**
    - the application ENTRY POINT, which is the app's OWN glue function
-     `int16_t EcoMain(IEcoUnknown* pIUnk)` (developer-written, normally
-     `SourceFiles/EcoMain.c`). It is NOT a marketplace component and
+     `int16_t EcoMain(IEcoUnknown* pIUnk)` (developer-written in the
+     wizard-returned `SourceFiles/<entry-file>.c`). It is NOT a marketplace component and
      has no CID/IID/factory — never search the marketplace for an
      "EcoMain" symbol. The bootstrap `IEcoSystem1` interface lives in
      `Eco.Core1`; obtain it from `pIUnk` via `GID_IEcoSystem_<arch>`,

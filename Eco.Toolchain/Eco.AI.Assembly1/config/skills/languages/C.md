@@ -58,7 +58,7 @@ are the distilled, MUST-FOLLOW subset. Load them in full for every C task.
 - `SharedFiles/Eco[Name].idl`, `SharedFiles/IEco[Name].h`, `SharedFiles/IdEco[Name].h`
 - `SourceFiles/CEco[Name].c` + `HeaderFiles/CEco[Name].h`
 - `SourceFiles/CEco[Name]Factory.c` + `HeaderFiles/CEco[Name]Factory.h`
-- App entry: `SourceFiles/EcoMain.c` defining
+- App entry: the wizard-returned `SourceFiles/<entry-file>.c` defining
   `int16_t EcoMain(IEcoUnknown* pIUnk)` (application projects only; statically
   linked with the platform `Eco.System1` library).
 - Unit tests: `UnitTestFiles/SourceFiles/Eco[Name].c`.

@@ -228,6 +228,11 @@ def _normalize_usage(raw: dict) -> Usage:
     if isinstance(details, dict):
         cache_read = int(details.get("cached_tokens") or 0)
     kwargs: dict = {}
+    kwargs["cacheReadReported"] = (
+        isinstance(details, dict)
+        or "cacheRead" in raw
+        or "cache_read" in raw
+    )
     # OpenRouter accounting (usage:{include:true}) sends "cost" as a plain
     # float — fold it into the structured Cost field instead of letting the
     # raw passthrough collide with it.
@@ -242,7 +247,7 @@ def _normalize_usage(raw: dict) -> Usage:
         **kwargs,
         **{k: v for k, v in raw.items() if k not in (
             "prompt_tokens", "completion_tokens", "total_tokens",
-            "prompt_tokens_details", "cost",
+            "prompt_tokens_details", "cost", "cacheRead", "cache_read",
         )},
     )
 

@@ -111,7 +111,7 @@ Do not manually author generated `BuildFiles` content.
 
 For an application consuming marketplace components, the entry point is the
 application's OWN `EcoMain(pIUnk)` function (developer-written glue, normally
-`SourceFiles/EcoMain.c`; exact signature per language skill). It is NOT a
+the wizard-returned `SourceFiles/<entry-file>.c`; exact signature per language skill). It is NOT a
 marketplace component and has no CID/IID/factory. The bootstrap flow is:
 
 ```text
