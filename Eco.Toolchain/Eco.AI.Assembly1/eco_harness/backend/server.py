@@ -298,6 +298,154 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _pipeline_state_path(project_dir: Path) -> Path:
+    """Return the durable continuation checkpoint for one project run."""
+    return Path(project_dir) / ".eco-harness" / "pipeline-state.json"
+
+
+def _load_pipeline_state(project_dir: Path) -> dict[str, Any] | None:
+    path = _pipeline_state_path(project_dir)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _save_pipeline_state(project_dir: Path, state: dict[str, Any]) -> None:
+    """Atomically persist resumable pipeline state without storing secrets."""
+    path = _pipeline_state_path(project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(state)
+    payload["updated_at"] = _now_iso()
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def _plan_checkpoint(
+    project_dir: Path,
+    *,
+    thread_id: str,
+    mode: str,
+    language: str,
+    plan_md: str,
+    completed_phases: list[str],
+    done_items: list[str],
+    status: str = "running",
+    phase: str = "coding",
+    attempt: int = 0,
+    max_attempts: int = 3,
+    failure_kind: str = "",
+    failure_message: str = "",
+) -> dict[str, Any]:
+    """Build and persist the small state needed to resume after a failure."""
+    plan_path = Path(project_dir) / "plan.md"
+    plan_hash = hashlib.sha256(plan_md.encode("utf-8", "replace")).hexdigest()
+    state = {
+        "version": 1,
+        "run_id": thread_id,
+        "thread_id": thread_id,
+        "project_dir": str(Path(project_dir).resolve()),
+        "mode": mode,
+        "language": language,
+        "status": status,
+        "phase": phase,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "plan_path": str(plan_path),
+        "plan_sha256": plan_hash,
+        "completed_phases": list(dict.fromkeys(completed_phases)),
+        "done_items": list(dict.fromkeys(done_items)),
+        "failure_kind": failure_kind,
+        "failure_message": failure_message,
+    }
+    _save_pipeline_state(project_dir, state)
+    return state
+
+
+def _read_checkpoint_plan(project_dir: Path, state: dict[str, Any]) -> str:
+    """Load the approved plan only from a path inside the project directory."""
+    plan_path = Path(state.get("plan_path") or (Path(project_dir) / "plan.md"))
+    project_root = Path(project_dir).resolve()
+    try:
+        plan_path = plan_path.resolve()
+        plan_path.relative_to(project_root)
+    except (OSError, ValueError):
+        return ""
+    try:
+        plan_md = plan_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    expected = str(state.get("plan_sha256") or "")
+    if expected and hashlib.sha256(plan_md.encode("utf-8", "replace")).hexdigest() != expected:
+        return ""
+    return plan_md
+
+
+def _pipeline_retry_limit(payload: dict, state: dict[str, Any] | None = None) -> int:
+    """Resolve a bounded execution retry count independent of handoff hops."""
+    raw = (
+        (state or {}).get("max_attempts")
+        or payload.get("max_retries")
+        or os.getenv("HARNESS_EXECUTION_RETRIES", "3")
+    )
+    try:
+        return max(1, min(20, int(raw)))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _recover_legacy_checkpoint(session: dict, project_dir: Path) -> dict[str, Any] | None:
+    """Migrate an approved plan from pre-checkpoint architect traces once."""
+    if str(session.get("status") or "") not in {"failed", "aborted"}:
+        return None
+    trace_root = _traces_root() / f"ses-{str(session.get('thread_id') or session.get('id') or '')[:8]}"
+    try:
+        trace_files = sorted(trace_root.glob("*-architect.json"), reverse=True)
+    except OSError:
+        return None
+    for trace_file in trace_files:
+        try:
+            record = json.loads(trace_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        content = (record.get("response") or {}).get("content") or []
+        for item in reversed(content):
+            if not isinstance(item, dict) or item.get("type") != "toolCall":
+                continue
+            if item.get("name") != "to_coder":
+                continue
+            plan_md = (item.get("arguments") or {}).get("message")
+            if not isinstance(plan_md, str) or not plan_md.strip():
+                continue
+            try:
+                project_dir.mkdir(parents=True, exist_ok=True)
+                (Path(project_dir) / "plan.md").write_text(plan_md, encoding="utf-8")
+                return _plan_checkpoint(
+                    project_dir,
+                    thread_id=str(session.get("thread_id") or session.get("id") or ""),
+                    mode="auto",
+                    language="C",
+                    plan_md=plan_md,
+                    completed_phases=["planning"],
+                    done_items=["plan_approved", "architect_handoff", "legacy_trace_recovered"],
+                    status="paused",
+                    phase="coder",
+                    attempt=0,
+                    max_attempts=3,
+                    failure_kind="legacy_session_recovered",
+                    failure_message="Recovered approved plan from architect trace.",
+                )
+            except OSError:
+                logger.exception("legacy pipeline checkpoint recovery failed")
+                return None
+    return None
+
+
 def _project_entry(path: Path) -> dict:
     """Registry entry for a whitelisted project folder.
 
@@ -980,6 +1128,40 @@ async def session_messages(session_id: str):
         },
         "messages": messages,
     }
+
+
+@app.get("/api/sessions/{session_id}/pipeline-state")
+async def session_pipeline_state(session_id: str):
+    """Return the durable continuation checkpoint for a session."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    session = _find_session(_load_registry(), session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+    project_path = Path(session.get("project_path") or "")
+    state = _load_pipeline_state(project_path) if project_path else None
+    if state is None and project_path:
+        state = _recover_legacy_checkpoint(session, project_path)
+    if state is None:
+        raise HTTPException(status_code=404, detail="No pipeline checkpoint exists")
+    thread_id = str(session.get("thread_id") or "")
+    if (
+        state.get("status") == "running"
+        and (
+            thread_id not in ACTIVE_SESSIONS
+            or str(session.get("status") or "") != "running"
+        )
+    ):
+        state.update({
+            "status": "paused",
+            "failure_kind": "stale_running_checkpoint",
+            "failure_message": "The previous pipeline connection ended before completion.",
+        })
+        try:
+            _save_pipeline_state(project_path, state)
+        except OSError:
+            logger.exception("failed to normalize stale pipeline checkpoint")
+    return {"state": state}
 
 
 @app.get("/api/sessions/{session_id}/trace")
@@ -2946,6 +3128,7 @@ async def chat_endpoint(websocket: WebSocket):
     }
 
     loop = asyncio.get_event_loop()
+    from eco_harness.agent.main import get_model as _get_model
 
     def _make_on_event(ev_queue: asyncio.Queue, agent_name: str):
         """Build an on_event callback for a specific agent name. Called from
@@ -3058,14 +3241,20 @@ async def chat_endpoint(websocket: WebSocket):
         result, _ = await asyncio.gather(run_task, drain_task)
         return result
 
+    pending_payload: dict[str, Any] | None = None
+    project_dir: Path | None = None
     try:
         while True:
-            raw = await websocket.receive_text()
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                await websocket.send_json({"type": "error", "content": "Invalid JSON"})
-                continue
+            if pending_payload is not None:
+                payload = pending_payload
+                pending_payload = None
+            else:
+                raw = await websocket.receive_text()
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    await websocket.send_json({"type": "error", "content": "Invalid JSON"})
+                    continue
 
             msg_type = payload.get("type", "user_request")
             if msg_type == "abort":
@@ -3076,13 +3265,14 @@ async def chat_endpoint(websocket: WebSocket):
                 # Stale message from a previous run with no active gate. Ignore.
                 continue
 
+            resume_pipeline = msg_type == "pipeline_resume"
             user_req = (
                 payload.get("user_request")
                 or payload.get("message")
                 or payload.get("content")
                 or ""
             )
-            if not user_req:
+            if not user_req and not resume_pipeline:
                 await websocket.send_json({"type": "error", "content": "Missing user_request"})
                 continue
 
@@ -3097,6 +3287,15 @@ async def chat_endpoint(websocket: WebSocket):
             # worktree-free follow-up never writes into a previous custom
             # project by accident.
             requested_project = str(payload.get("project_dir") or "").strip()
+            prior_session = _find_session(_load_registry(), thread_id[:8]) if resume_pipeline else None
+            if resume_pipeline and not requested_project:
+                requested_project = str((prior_session or {}).get("project_path") or "").strip()
+            if resume_pipeline and not requested_project:
+                await websocket.send_json({
+                    "type": "error",
+                    "content": "Cannot resume pipeline: project_dir is missing from the checkpoint.",
+                })
+                continue
             if requested_project:
                 # Tolerate a stale output-root prefix (cwd drift) — re-anchor to
                 # the current output root instead of rejecting the run before it
@@ -3191,7 +3390,6 @@ async def chat_endpoint(websocket: WebSocket):
                 _, role_spec, role_profile = load_role_config(
                     one_shot_role, connection_config.root,
                 )
-                from eco_harness.agent.main import get_model as _get_model
                 role_backend = role_spec.backend.removesuffix("_cli")
                 one_shot = make_role_agent(
                     one_shot_role,
@@ -3247,7 +3445,11 @@ async def chat_endpoint(websocket: WebSocket):
 
             # AUTO mode: a short intent gate keeps plain chat questions out of
             # the build loop. migrate is always a task, so it skips the gate.
-            if mode == "auto":
+            # A checkpoint resume is already an approved pipeline task. Do not
+            # send its empty transport payload through the plain-chat intent
+            # gate; that would answer an empty prompt and report success without
+            # ever entering the coder/tester orchestrator.
+            if mode == "auto" and not resume_pipeline:
                 gate_model = _build_chat_model(connection_config)
                 if gate_model is not None and not await _classify_intent(user_req, gate_model):
                     chat_call_no += 1  # per-connection plain-chat trace counter
@@ -3281,16 +3483,40 @@ async def chat_endpoint(websocket: WebSocket):
             # ── AUTO/MIGRATE: full plan→implement→verify pipeline ──
             workspace = _workspace_header(project_dir, marketplace_cache_root, target_triple)
             planner_seed = workspace + attached_block + user_req
-            approved_plan_md: str | None = None
+            resume_state = _load_pipeline_state(project_dir) if resume_pipeline else None
+            if resume_pipeline and resume_state is None and prior_session is not None:
+                resume_state = _recover_legacy_checkpoint(prior_session, project_dir)
+            if resume_pipeline and (
+                resume_state is None
+                or str(resume_state.get("status") or "") not in {"paused", "running"}
+            ):
+                await websocket.send_json({
+                    "type": "error",
+                    "content": "Cannot resume pipeline: no paused execution checkpoint exists.",
+                })
+                continue
+            execution_retry_limit = _pipeline_retry_limit(payload, resume_state)
+            approved_plan_md: str | None = (
+                _read_checkpoint_plan(project_dir, resume_state)
+                if resume_state is not None else None
+            )
+            if resume_pipeline and not approved_plan_md:
+                await websocket.send_json({
+                    "type": "error",
+                    "content": (
+                        "Cannot resume pipeline: approved plan is missing or its "
+                        "checkpoint hash no longer matches plan.md."
+                    ),
+                })
+                continue
             terminate_chat = False
             pipeline_agents: list = []
 
-            while True:
+            while not resume_pipeline:
                 ev_queue: asyncio.Queue = asyncio.Queue()
                 _, architect_spec, architect_profile = load_role_config(
                     "architect", connection_config.root,
                 )
-                from eco_harness.agent.main import get_model as _get_model
                 architect_backend = architect_spec.backend.removesuffix("_cli")
                 planner = make_role_agent(
                     "architect",
@@ -3463,6 +3689,61 @@ async def chat_endpoint(websocket: WebSocket):
 
             if terminate_chat or approved_plan_md is None:
                 break  # exit per-message loop
+
+            execution_attempt = int((resume_state or {}).get("attempt") or 0)
+            completed_phases = list((resume_state or {}).get("completed_phases") or [])
+            done_items = list((resume_state or {}).get("done_items") or [])
+            if not resume_pipeline:
+                # Persist the approved plan for both HITL and auto_approve
+                # gates. This is the checkpoint used by a later coder retry.
+                try:
+                    Path(project_dir).mkdir(parents=True, exist_ok=True)
+                    (Path(project_dir) / "plan.md").write_text(
+                        approved_plan_md,
+                        encoding="utf-8",
+                    )
+                    completed_phases = ["planning"]
+                    done_items = ["plan_approved"]
+                    _plan_checkpoint(
+                        project_dir,
+                        thread_id=thread_id,
+                        mode=mode,
+                        language=language,
+                        plan_md=approved_plan_md,
+                        completed_phases=completed_phases,
+                        done_items=done_items,
+                        status="running",
+                        phase="coding",
+                        attempt=execution_attempt,
+                        max_attempts=execution_retry_limit,
+                    )
+                except OSError:
+                    logger.exception("pipeline checkpoint could not be persisted")
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": "Cannot persist approved plan checkpoint; pipeline stopped.",
+                    })
+                    finish_session("failed")
+                    break
+            else:
+                completed_phases = [p for p in completed_phases if p != "coding"]
+                done_items = list(dict.fromkeys(done_items + ["plan_approved"]))
+                try:
+                    _plan_checkpoint(
+                        project_dir,
+                        thread_id=thread_id,
+                        mode=mode,
+                        language=language,
+                        plan_md=approved_plan_md,
+                        completed_phases=completed_phases,
+                        done_items=done_items,
+                        status="running",
+                        phase="coding",
+                        attempt=execution_attempt,
+                        max_attempts=execution_retry_limit,
+                    )
+                except OSError:
+                    logger.exception("pipeline resume checkpoint could not be updated")
 
             # Persist any mermaid diagrams from the approved plan so the coder
             # (and post-mortem inspection) has them on disk under project_dir/docs/.
@@ -3664,7 +3945,10 @@ async def chat_endpoint(websocket: WebSocket):
                             "reason_md":   hop.message or "(tester gave no reason)",
                             "retry_count": test_retries,
                         })
-                    elif hop.agent == "coder" and (hop.edge == "fail" or hop.edge is None):
+                    # A missing edge can mean an LLM/network failure before
+                    # the coder ever invoked run_build. Only an explicit
+                    # coder fail edge represents an honest build failure.
+                    elif hop.agent == "coder" and hop.edge == "fail":
                         await websocket.send_json({
                             "type":        "build_fail",
                             "error_md":    hop.message or result.error or "(coder failed without a message)",
@@ -3674,6 +3958,26 @@ async def chat_endpoint(websocket: WebSocket):
             # Status is recorded only after the escalation gate resolves so
             # an abort here lands as "aborted", not "failed".
             if success:
+                completed_on_success = list(dict.fromkeys(completed_phases + ["coding", "testing"]))
+                done_on_success = list(dict.fromkeys(done_items + [
+                    "plan_approved", "coder_handoff", "tester_handoff", "pipeline_complete",
+                ]))
+                try:
+                    _plan_checkpoint(
+                        project_dir,
+                        thread_id=thread_id,
+                        mode=mode,
+                        language=language,
+                        plan_md=approved_plan_md or "",
+                        completed_phases=completed_on_success,
+                        done_items=done_on_success,
+                        status="completed",
+                        phase="completed",
+                        attempt=execution_attempt,
+                        max_attempts=execution_retry_limit,
+                    )
+                except OSError:
+                    logger.exception("completed pipeline checkpoint could not be persisted")
                 finish_session("success")
                 await websocket.send_json({
                     "type":             "pipeline_done",
@@ -3715,16 +4019,48 @@ async def chat_endpoint(websocket: WebSocket):
                 reason_code = f"{result.last_agent}_error"
             else:
                 reason_code = f"{result.last_agent}_fail"
+
+            failure_phase = result.last_agent or "coder"
+            resume_available = execution_attempt < execution_retry_limit
+            completed_on_failure = list(completed_phases)
+            done_on_failure = list(done_items)
+            if any(hop.agent == "coder" and hop.edge == "to_tester" for hop in result.hops):
+                completed_on_failure.append("coding")
+                done_on_failure.append("coder_handoff")
+            if any(hop.agent == "tester" and hop.edge == "done" for hop in result.hops):
+                completed_on_failure.append("testing")
+                done_on_failure.append("tester_handoff")
+            try:
+                _plan_checkpoint(
+                    project_dir,
+                    thread_id=thread_id,
+                    mode=mode,
+                    language=language,
+                    plan_md=approved_plan_md or "",
+                    completed_phases=completed_on_failure,
+                    done_items=done_on_failure,
+                        status="paused",
+                        phase=failure_phase,
+                        attempt=execution_attempt,
+                        max_attempts=execution_retry_limit,
+                    failure_kind=reason_code,
+                    failure_message=result.error or result.last_message,
+                )
+            except OSError:
+                logger.exception("pipeline failure checkpoint could not be persisted")
             await websocket.send_json({
                 "type":             "escalation_required",
                 "reason":           reason_code,
                 "failure_origin":   NODE_OF.get(result.last_agent, result.last_agent),
                 "retry_count":      test_retries,
-                "max_retries":      connection_config.max_hops,
+                "max_retries":      execution_retry_limit,
                 "build_log":        last_coder_msg[-4000:],
                 "tester_report_md": last_tester_msg[-8000:],
                 "plan_md":          approved_plan_md or "",
                 "coder_summary_md": last_coder_msg[-4000:],
+                "resume_phase":     "coder",
+                "resume_available": resume_available,
+                "done_items":       done_on_failure,
             })
 
             escalation_aborted = False
@@ -3745,35 +4081,91 @@ async def chat_endpoint(websocket: WebSocket):
                     # stale plan_decision / anything else — ignore
             except WebSocketDisconnect:
                 raise
-            if escalation_aborted:
-                finish_session("aborted")
-                await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
+            if escalation_aborted or not resume_available:
+                try:
+                    _plan_checkpoint(
+                        project_dir,
+                        thread_id=thread_id,
+                        mode=mode,
+                        language=language,
+                        plan_md=approved_plan_md or "",
+                        completed_phases=completed_on_failure,
+                        done_items=done_on_failure,
+                        status="aborted" if escalation_aborted else "failed",
+                        phase=failure_phase,
+                        attempt=execution_attempt,
+                        max_attempts=execution_retry_limit,
+                        failure_kind=reason_code,
+                        failure_message=result.error or result.last_message,
+                    )
+                except OSError:
+                    logger.exception("aborted pipeline checkpoint could not be persisted")
+                if escalation_aborted:
+                    finish_session("aborted")
+                    await websocket.send_json({"type": "pipeline_done", "status": "user_aborted"})
+                else:
+                    finish_session("failed")
+                    await websocket.send_json({
+                        "type": "pipeline_done",
+                        "status": "failed",
+                        "build_artifact": build_artifact,
+                        "tester_report_md": result.last_message,
+                    })
             else:
-                # Continue keeps the session open for a follow-up request;
-                # this run itself stays failed — the user drives what's next.
-                finish_session("failed")
-                await websocket.send_json({
-                    "type":             "pipeline_done",
-                    "status":           "failed",
-                    "build_artifact":   build_artifact,
-                    "tester_report_md": result.last_message,
-                    "metrics":          _collect_run_metrics(
-                        trace_dir,
-                        start_sequence=run_trace_start_sequence,
-                        trace_errors=[
-                            agent.trace_error for agent in trace_agents
-                            if getattr(agent, "trace_error", None)
-                        ],
-                    ),
-                })
-            break
+                next_attempt = execution_attempt + 1
+                try:
+                    _plan_checkpoint(
+                        project_dir,
+                        thread_id=thread_id,
+                        mode=mode,
+                        language=language,
+                        plan_md=approved_plan_md or "",
+                        completed_phases=completed_on_failure,
+                        done_items=done_on_failure,
+                        status="running",
+                        phase="coder",
+                        attempt=next_attempt,
+                        max_attempts=execution_retry_limit,
+                        failure_kind=reason_code,
+                        failure_message=result.error or result.last_message,
+                    )
+                except OSError:
+                    logger.exception("retry pipeline checkpoint could not be persisted")
+                # Re-enter the request loop with a private resume message. The
+                # planner is skipped and the approved plan is loaded from disk.
+                pending_payload = {
+                    "type": "pipeline_resume",
+                    "project_dir": str(project_dir),
+                    "mode": mode,
+                    "language": language,
+                    "target_os": target_triple.get("os"),
+                    "target_arch": target_triple.get("arch"),
+                    "target_triple": target_triple,
+                    "use_worktree": False,
+                }
+                continue
 
     except WebSocketDisconnect:
         finish_session("aborted")
         logger.info(f"[CHAT WS] disconnected thread_id={thread_id}")
-    except Exception:
+    except Exception as error:
         finish_session("failed")
         logger.exception(f"[CHAT WS] handler crashed thread_id={thread_id}")
+        # A server-side crash after a resume checkpoint was marked running
+        # must remain resumable. Otherwise the UI shows an indefinitely active
+        # run even though the WebSocket has already died.
+        if project_dir is not None:
+            try:
+                state = _load_pipeline_state(project_dir)
+                if state is not None and state.get("status") == "running":
+                    state.update({
+                        "status": "paused",
+                        "failure_kind": "server_error",
+                        "failure_message": f"{type(error).__name__}: {error}",
+                    })
+                    _save_pipeline_state(project_dir, state)
+            except OSError:
+                logger.exception("failed to pause checkpoint after handler crash")
         try:
             await websocket.close()
         except Exception:

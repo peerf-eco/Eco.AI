@@ -221,7 +221,30 @@ export interface EscalationBlock extends BlockBase {
   testerReportMd: string;
   planMd: string;
   coderSummaryMd: string;
+  resumePhase?: string;
+  resumeAvailable?: boolean;
+  doneItems?: string[];
   status: null | "continue" | "abort";
+}
+
+export interface PipelineCheckpoint {
+  version: number;
+  run_id: string;
+  thread_id: string;
+  project_dir: string;
+  mode: WorkingMode | string;
+  language: string;
+  status: "running" | "paused" | "completed" | "aborted" | "failed" | string;
+  phase: string;
+  attempt: number;
+  max_attempts: number;
+  plan_path: string;
+  plan_sha256: string;
+  completed_phases: string[];
+  done_items: string[];
+  failure_kind?: string;
+  failure_message?: string;
+  updated_at?: string;
 }
 
 export interface PipelineDoneBlock extends BlockBase {
@@ -386,6 +409,9 @@ export interface EscalationRequiredEvent extends ServerEventBase {
   tester_report_md: string;
   plan_md: string;
   coder_summary_md: string;
+  resume_phase?: string;
+  resume_available?: boolean;
+  done_items?: string[];
 }
 
 export interface PipelineDoneEvent extends ServerEventBase {
@@ -476,6 +502,11 @@ export interface EscalationDecisionMessage {
   continue: boolean;
 }
 
+export interface PipelineResumeMessage {
+  type: "pipeline_resume";
+  project_dir?: string;
+}
+
 export interface AbortMessage {
   type: "abort";
 }
@@ -484,6 +515,7 @@ export type ClientMessage =
   | UserRequestMessage
   | PlanDecisionMessage
   | EscalationDecisionMessage
+  | PipelineResumeMessage
   | AbortMessage;
 
 // ────────────────────────────────────────────────────────────────────────────

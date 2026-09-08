@@ -154,6 +154,7 @@ export interface UseHarnessSocketResult {
   ) => void;
   sendPlanDecision: (blockId: string, approved: boolean, opts?: { modifiedPlanMd?: string; reason?: string }) => void;
   sendEscalationDecision: (blockId: string, cont: boolean) => void;
+  sendPipelineResume: (projectDir?: string, completedPhases?: string[]) => void;
   sendAbort: () => void;
   clearMessages: () => void;
   // Load a reconstructed transcript (from /api/sessions/{id}/messages) into the
@@ -286,6 +287,9 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
           testerReportMd: ev.tester_report_md || "",
           planMd: ev.plan_md || "",
           coderSummaryMd: ev.coder_summary_md || "",
+          resumePhase: ev.resume_phase || "",
+          resumeAvailable: ev.resume_available !== false,
+          doneItems: ev.done_items || [],
           status: null,
         }));
         return;
@@ -655,6 +659,17 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     }
   }, [send]);
 
+  const sendPipelineResume = useCallback((projectDir?: string, completedPhases?: string[]) => {
+    setIsProcessing(true);
+    setCurrentPhase("coding");
+    setCompletedPhases(
+      (completedPhases || []).filter((phase): phase is HarnessPhase =>
+        phase === "planning" || phase === "coding" || phase === "testing" || phase === "review",
+      ),
+    );
+    send({ type: "pipeline_resume", project_dir: projectDir });
+  }, [send]);
+
   const sendAbort = useCallback(() => {
     send({ type: "abort" });
     setIsProcessing(false);
@@ -725,6 +740,7 @@ export function useHarnessSocket(wsBaseUrl: string): UseHarnessSocketResult {
     sendUserRequest,
     sendPlanDecision,
     sendEscalationDecision,
+    sendPipelineResume,
     sendAbort,
     clearMessages,
     loadMessages,
