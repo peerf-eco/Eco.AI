@@ -43,8 +43,16 @@ System Settings → Privacy & Security → Allow.
 
 ### Windows
 
+From PowerShell:
+
 ```powershell
 irm https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.ps1 | iex
+```
+
+or from cmd.exe:
+
+```bat
+powershell -Command "irm 'https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.ps1' | iex"
 ```
 
 or download and run: `powershell -ExecutionPolicy Bypass -File install.ps1`.

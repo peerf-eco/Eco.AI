@@ -169,11 +169,13 @@ if ($ProjectDir) {
 $shimDir = Join-Path $ECO_HOME "bin"
 New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
 $pythonExe = Join-Path $ECO_HOME "venv\Scripts\python.exe"
-"@echo off
+@"
+@echo off
 `"$pythonExe`" -m eco_harness serve %*
 "@ | Set-Content -Path (Join-Path $shimDir "eco-harness.cmd") -Encoding ASCII
 
-"@echo off
+@"
+@echo off
 `"$pythonExe`" -m eco_harness update %*
 "@ | Set-Content -Path (Join-Path $shimDir "eco-harness-update.cmd") -Encoding ASCII
 
