@@ -74,8 +74,14 @@ export function EscalationBlock({ block, disabled, onDecision }: EscalationBlock
       <div className="p-4 space-y-3">
         <p className="text-xs text-muted-foreground leading-relaxed">
           The pipeline paused. Review the diagnostics below and decide whether
-          to retry from the coder or stop the run.
+          to retry the current execution phase or stop the run.
         </p>
+
+        {block.doneItems && block.doneItems.length > 0 && (
+          <div className="text-[11px] text-emerald-300/80">
+            Preserved: {block.doneItems.join(", ")}
+          </div>
+        )}
 
         {block.buildLog && (
           <details className="rounded-lg bg-black/30 border border-white/[0.04]" open>
@@ -110,7 +116,7 @@ export function EscalationBlock({ block, disabled, onDecision }: EscalationBlock
           </details>
         )}
 
-        {!frozen && (
+        {!frozen && block.resumeAvailable !== false && (
           <div className="flex gap-2 pt-1">
             <Button
               type="button"
@@ -120,7 +126,7 @@ export function EscalationBlock({ block, disabled, onDecision }: EscalationBlock
               className="flex-1 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/15"
             >
               <Play className="h-3.5 w-3.5 mr-1.5" />
-              Continue
+              {block.resumePhase === "coder" ? "Retry coder" : "Retry phase"}
             </Button>
             <Button
               type="button"
@@ -135,8 +141,11 @@ export function EscalationBlock({ block, disabled, onDecision }: EscalationBlock
             </Button>
           </div>
         )}
+        {!frozen && block.resumeAvailable === false && (
+          <div className="text-xs text-red-300">Retry limit reached. Abort the run and inspect the saved checkpoint.</div>
+        )}
         {block.status === "continue" && (
-          <div className="text-xs text-blue-300">Continuing — retry counter reset.</div>
+          <div className="text-xs text-blue-300">Resuming from the saved checkpoint.</div>
         )}
         {block.status === "abort" && (
           <div className="text-xs text-red-300">Pipeline aborted.</div>

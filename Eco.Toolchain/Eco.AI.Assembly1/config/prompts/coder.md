@@ -116,11 +116,11 @@ STEP 1 — Absorb the handoff (no tool calls)
       IEco*.h, CEco*.c, factory). For each, the architect supplies the
       IDL or interface spec; you generate the .h/.c files per the C
       language skill's templates.
-    - "Glue / EcoMain / business logic" → the `SourceFiles/EcoMain.c`
-      body (and any helper files the business logic needs).
+     - "Glue / EcoMain / business logic" → the body of the wizard-returned
+       entry file (and any helper files the business logic needs).
     - "Project layout" → where to put files.
     - "Acceptance criteria" → what the tester will check.
-  Exit:   you can answer "what files do I write, in what directory" → STEP 2.
+   Exit:   you can answer "what files do I write, in what directory" → STEP 1.5.
 
 STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
 
@@ -131,17 +131,12 @@ STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
   <Name>/ subdirectory):
 
     <out_dir>/
-    ├── SourceFiles/<Name>.c        # ← THE entry-point file. eco-wizard
-    │                                  names it after the APPLICATION
-    │                                  (e.g. Eco.TrigTable.c), NOT
-    │                                  "EcoMain.c" — the ACOM standard
-    │                                  `int16_t EcoMain(IEcoUnknown* pIUnk)`
-    │                                  entry-point FUNCTION lives inside
-    │                                  it, with UTF-8 BOM, file header,
-    │                                  and the #include directives. If
-    │                                  you look for "EcoMain.c" you will
-    │                                  be wrong — open the file the tool
-    │                                  result names as the entry point.
+     ├── SourceFiles/<entry-file>.c  # ← the exact entry file named by the
+     │                                  tool result. Depending on the wizard
+     │                                  version it may be named after the
+     │                                  application or "EcoMain.c"; the
+     │                                  `int16_t EcoMain(IEcoUnknown* pIUnk)`
+     │                                  entry-point FUNCTION lives inside it.
     ├── AssemblyFiles/<OS>/<arch>/<toolchain>/MakefileExe   # the build
     │                                  script with ECO_FRAMEWORK detection
     │                                  and the .a link line you need.
@@ -154,6 +149,13 @@ STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
     eco_wizard(name=<ProjectName>, project_type="APP", language="C",
                out_dir=".", options=["pn"])
 
+  ENTRY-POINT NAMING (wizard-version dependent): the generated entry file
+  is `SourceFiles/<Name>.c` (newer eco-wizard versions — the file contains
+  the ACOM `int16_t EcoMain(IEcoUnknown*)` entry-point FUNCTION, the name
+  comes from the project) or `SourceFiles/EcoMain.c` (older wizard
+  builds). Either way: OPEN EXACTLY THE FILE THE TOOL RESULT NAMES AS THE
+  ENTRY POINT — do not assume either name.
+
   ZERO EXPLORATION AFTER THE WIZARD CALL. The tool result already lists
   the exact generated file tree, the entry-point file, and the
   `run_build project_subdir`. Use those values VERBATIM. Do NOT re-list
@@ -162,8 +164,8 @@ STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
   (session 8c3431c2: doubled run_build path, 6 recovery calls).
 
   After the wizard call, your only job is to:
-    1. write_file the final business logic INTO the entry-point file the
-       tool result named (SourceFiles/<Name>.c), exactly as the plan
+     1. write_file the final business logic INTO the entry-point file the
+        tool result named (SourceFiles/<entry-file>.c), exactly as the plan
        specifies. When the plan fully specifies the EcoMain body, write
        the complete file directly — do NOT read the wizard's template
        first; if the wizard's generated body diverges from the plan
@@ -171,15 +173,40 @@ STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
        the plan is the source of truth and your write overwrites it.
     2. run_build(project_subdir=<the subdir from the tool result>).
 
-  This is the documented behaviour of the wizard (docs/eco-wizard-reference.md)
-  and the same shape as the calculator prior-art the C language skill
-  shows. Do NOT skip the wizard call and try to write EcoMain.c from
-  scratch — you will spend tokens reinventing the file header, the
+   This is the documented behaviour of the wizard (docs/eco-wizard-reference.md)
+   and the same shape as the calculator prior-art the C language skill
+   shows. Do NOT skip the wizard call and try to write the entry file from
+   scratch — you will spend tokens reinventing the file header, the
   includes, the entry signature, and the C89 indentation that the wizard
   already does correctly.
 
-  Exit:   the tool result names the entry-point file and build_subdir
-          and your final business logic is written to the entry file. → STEP 2.
+   Exit:   the tool result names the entry-point file and build_subdir
+           and your final business logic is written to the entry file. → STEP 1.6.
+
+STEP 1.6 — VERIFY THE INCLUDE BLOCK BEFORE THE FIRST BUILD (zero calls)
+
+  Before your first run_build, mentally compile the entry file against
+  this rule: EVERY `RegisterComponent(pIBus, &CID_<X>, …)` and
+  `QueryComponent(…, &CID_<X>, …)` line requires
+
+    #include "Id<X>.h"
+
+  in the same translation unit — Id<X>.h is the header that declares
+  `extern const UGUID CID_<X>` and the `GetIEcoComponentFactoryPtr_<CID>`
+  extern. The wizard template and the plan's include block do not
+  always include every Id header your registrations need. A missing Id
+  include fails at COMPILE time with `'CID_<X>' undeclared` (bug history:
+  ses-a6ddf3c8 — 3 failed build cycles and a 116 KB header read to
+  recover what one include line would have prevented).
+
+  Check each registration in your final EcoMain against the plan's
+  component table: component registered → Id header included. Components
+  that are only LINKED (never registered/queried) do not need their Id
+  header — do not add unused includes.
+
+  Exit:   every CID_<X> referenced in the entry file has its Id<X>.h
+          include, including locally-authored components whose generated
+          Id header defines the CID. → STEP 2.
 
 STEP 2 — Inspect each marketplace component (1-2 reads per package,
           ONLY if you need a signature the handoff did not quote)
@@ -203,8 +230,8 @@ STEP 2 — Inspect each marketplace component (1-2 reads per package,
 
 STEP 3 — Author the source files (1 write_file per file)
   Write, in this order:
-    1. Each C source from "Glue / EcoMain / business logic". For
-       applications this is exactly one `SourceFiles/EcoMain.c`. The
+     1. Each C source from "Glue / EcoMain / business logic". For
+        applications this is exactly the wizard-returned entry file. The
        file header (UTF-8 BOM, author, summary) is MANDATORY.
     2. For each "Components to author" item, generate per the C
        language skill's prior-art templates:

@@ -111,6 +111,26 @@ _CID_FULL = re.compile(r"(?<![0-9A-Fa-f])0*([0-9A-Fa-f]{8})(?![0-9A-Fa-f])")
 _SPEC_PATH_RE = re.compile(
     r"docs/specs/(?P<name>[A-Za-z0-9_.\-]+)\.md"
 )
+# `CID_<Component>` symbol references in the plan body. When the plan
+# quotes a RegisterComponent/QueryComponent line (or any use of the CID
+# symbol), the CODER'S EcoMain.c will need the component's ID header
+# (`Id<Component>.h`) — it is the header that declares `extern const
+# UGUID CID_<Component>` and the factory-symbol extern. Bug history
+# (ses-a6ddf3c8, Eco.Calc run): the plan's capability mapping quoted
+# `RegisterComponent(pIBus, &CID_EcoFileSystemManagement1, …)` but never
+# mentioned `IdEcoFileSystemManagement1.h`; the coder copied the line,
+# the compile failed with "'CID_EcoFileSystemManagement1' undeclared",
+# and the recovery cost 2 failed builds, a 116 KB full read of the Id
+# header (+29 K tokens that triggered mid-run history compression) and
+# ~8 of the run's 20 coder calls.
+_CID_SYMBOL_USE = re.compile(r"\bCID_(Eco[A-Za-z0-9_]*)\b")
+# A positive include is required. Bare `IdEcoFoo` prose is not evidence that
+# the entry translation unit can see the CID declaration, and a local
+# component's generated Id header is subject to the same rule as a marketplace
+# header.
+_ID_HEADER_INCLUDE = re.compile(
+    r"#\s*include\s*[\"<]Id(?P<name>Eco[A-Za-z0-9_]*)\.h[\">]"
+)
 # Handoff budget. The provider limit is 262 144 tokens and the static
 # system prompt + tool contract + seed already occupy ~30K-40K; leaving
 # the architect <= plan_handoff_max_bytes of markdown is a safe ceiling
@@ -416,6 +436,35 @@ def validate_closed_plan(plan: str) -> list[Violation]:
                 "parallel-coder orchestrator routes by component name; non-"
                 "`Eco*` files would never be picked up.",
             ))
+
+    # --- Hard: every used CID_<X> symbol needs its Id<X> header plan ------
+    # The Id header (Id<X>.h) is what declares `extern const UGUID CID_X`
+    # and the factory-symbol extern the coder's RegisterComponent call
+    # needs. If the plan uses the CID symbol but never names the Id
+    # header, the coder will compile without it and fail with
+    # "'CID_X' undeclared" (ses-a6ddf3c8 bug history above).
+    cid_symbol_names: set[str] = {
+        m.group(1) for m in _CID_SYMBOL_USE.finditer(plan)
+        if m.group(1) != "EcoSystem1"  # handled by the dedicated rule above
+    }
+    id_includes = {m.group("name") for m in _ID_HEADER_INCLUDE.finditer(plan)}
+    for name in sorted(cid_symbol_names):
+        if name in id_includes:
+            continue  # plan quotes a positive #include "Id<name>.h"
+        vios.append(Violation(
+            "block",
+            f"Plan uses the symbol `CID_{name}` but never quotes a positive "
+            f"include for its ID "
+            f"header `Id{name}.h`. The Id header is what declares "
+            f"`extern const UGUID CID_{name}` and the factory-symbol extern "
+            f"the coder's RegisterComponent/QueryComponent call compiles "
+            f"against — without it the build fails with "
+            f"'CID_{name}' undeclared (bug history: ses-a6ddf3c8, 3 failed "
+            f"build cycles + a 116 KB header read to recover). Fix: quote "
+            f"`#include \"Id{name}.h\"` in the plan's include block for "
+            f"every component whose CID symbol the coder must reference, "
+            f"including components authored in-app.",
+        ))
 
     # --- Soft: ERR_ECO_SUCCES spelling regression ---------------------------
     if _SUCCESES_TYPO.search(plan):

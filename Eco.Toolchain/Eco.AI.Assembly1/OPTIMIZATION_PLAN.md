@@ -4,6 +4,32 @@
 **Analysis Date:** 2026-08-30  
 **Target:** Reduce turns, tokens, and total time for ACOM component assembly
 
+## ⚠️ v1.2 Addendum (2026-09-08) — a6ddf3c8 verification follow-up
+
+The second verification run (ses-a6ddf3c8, Eco.Calc — traces appended to
+`traces/ses-8c3431c2/020-044`) confirmed P0/P1/P2/P4 live: plan-gate wait
+291s→9s, cache hit 66%→82%, uncached −31%, per-call base −23%, tool time
+80s→8.7s. The run regressed on calls (13→20 coder calls, 3 failed builds)
+due to the **missing Id-header include trap** (`CID_X` used without
+`#include "Id<X>.h"` → compile fail → recovery incl. a 116 KB header read).
+Fixes implemented in this batch:
+
+| Fix | Files |
+|---|---|
+| Plan-gate Id-header rule: every `CID_<X>` symbol used in the plan must have a positive `#include "Id<X>.h"` line, including authored components → handoff BLOCKED | `eco_harness/agent/internal/tools/plan_validator.py` |
+| coder STEP 1.6: verify include block before first build; entry-file naming softened (wizard-version dependent — trust the tool result) | `config/prompts/coder.md` |
+| read() hint on oversized marketplace-header reads (>64KB page of a read-only `.h`) — prefer grep for the symbol | `eco_harness/agent/internal/tools/code_search.py` |
+| auto mode plan gate **restored to HITL** (user decision 2026-09-08); `HARNESS_PLAN_GATE=auto_approve` remains the operator opt-out | `config/modes.yaml` |
+| pipeline_done metrics now include explicit `full_miss_calls`/`full_miss_tokens` (input ≥ 60K with reported cacheRead 0), unknown-cache counters, and per-run trace boundaries | `eco_harness/backend/server.py` |
+| Trace dirs are no longer pre-created at WS connect — aborted runs leave no empty `ses-*` dirs (a6ddf3c8/b5a2f4c2 sweep) | `eco_harness/backend/server.py` |
+
+Regression tests: `eco_harness/agent/internal/tests/test_a6ddf3c8_fixes.py`
+(15 tests). Full suite: 312 passed. Note: trace dirs remain keyed by chat
+thread id (`ses-<thread8>`) because the session-export UI keys on it; the
+empty-dir fix removes the misleading artifact without a naming migration.
+
+---
+
 ## ⚠️ v1.1 Re-verification (2026-08-30) — READ FIRST
 
 The analysis below was re-verified directly against the raw traces

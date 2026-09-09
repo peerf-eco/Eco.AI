@@ -196,6 +196,26 @@ async def _drain_stream(
 _LLM_TRANSIENT_RETRIES = 3
 _LLM_RETRY_BACKOFF_S = 5  # 5s, 10s, 15s
 
+# These errors are transport failures, not model/tool failures. Keep the
+# markers broad enough to cover httpx/httpcore and OS resolver wording while
+# avoiding HTTP 4xx/auth/validation errors. In particular, glibc reports a
+# temporary DNS outage as "Temporary failure in name resolution"; the old
+# classifier only matched "temporarily" and incorrectly made that outage
+# terminal on the first planner/coder call.
+_NETWORK_ERROR_MARKERS = (
+    "connecterror", "connecttimeout", "connection", "connection reset",
+    "connection refused", "network is unreachable", "network unreachable",
+    "temporary failure", "temporarily unavailable", "name resolution",
+    "getaddrinfo", "gaierror", "eai_again", "dns", "enotfound",
+    "etimedout", "epipe",
+    # HTTP/provider transport failures.
+    "520", "502", "503", "504", "529", "provider returned error",
+    "overloaded", "timeout", "timed out",
+    # OpenSSL / TLS transport failures.
+    "ssl", "sslerror", "sslv3", "tlsv1", "alert_bad_record_mac",
+    "wrong_version_number", "record_overflow", "certificate_verify_failed",
+)
+
 # How much of a failed tool's textual result is forwarded to the UI in the
 # tool_call_end event. The full content still goes to the model; this preview
 # exists so the chat can surface *why* a call failed (allowlist denials,
@@ -204,8 +224,11 @@ _TOOL_ERROR_PREVIEW_CHARS = 500
 
 
 def _is_transient_llm_error(msg: Optional[str]) -> bool:
-    """Provider-side hiccups worth retrying: 5xx family, overload, timeouts.
-    Auth/validation errors (4xx) are NOT transient and fail immediately.
+    """Return whether an LLM error is a retryable network/provider failure.
+
+    Provider-side hiccups include 5xx responses, overloads, timeouts, and DNS
+    or socket failures. Auth/validation errors (4xx) are not transient and
+    fail immediately.
 
     The chat-9257ff60 run aborted on `SSL: SSLV3_ALERT_BAD_RECORD_MAC`
     even though this is a transient transport error from openrouter — the
@@ -221,20 +244,15 @@ def _is_transient_llm_error(msg: Optional[str]) -> bool:
     text = (msg or "").lower()
     if not text:
         return False
-    transport_markers = (
-        # HTTP status family — provider returned an error
-        "520", "502", "503", "504", "529",
-        # Provider / openrouter / generic
-        "provider returned error", "overloaded", "timeout", "timed out",
-        "connection", "temporarily",
-        # OpenSSL / ssl errors
-        "ssl", "sslerror", "sslv3", "tlsv1", "alert_bad_record_mac",
-        "wrong_version_number", "record_overflow", "certificate_verify_failed",
-        # OS-level transport errors
-        "econnreset", "econnrefused", "epipe", "etimedout", "enotfound",
-        "network is unreachable", "connection reset", "connection refused",
-    )
-    return any(token in text for token in transport_markers)
+    return any(token in text for token in _NETWORK_ERROR_MARKERS)
+
+
+def _display_llm_error(msg: Optional[str]) -> str:
+    """Make transport failures actionable without hiding the original error."""
+    text = (msg or "").strip()
+    if _is_transient_llm_error(text):
+        return f"Network connection error: {text}"
+    return text
 
 
 # ── Main agent ────────────────────────────────────────────────────────────────
@@ -284,6 +302,7 @@ class EcoAgent:
         self.max_iters = max_iters
         self.trace_dir = trace_dir
         self.trace_label = trace_label
+        self.trace_error: str | None = None
         self._call_no = 0   # per-instance LLM-call counter (trace metadata)
         self._iter = 0      # current run() iteration (trace metadata)
         self.prepare_arguments = prepare_arguments
@@ -408,7 +427,7 @@ class EcoAgent:
             raise
         finally:
             if self.trace_dir is not None:
-                write_call_trace(
+                trace_path = write_call_trace(
                     trace_dir=self.trace_dir,
                     label=self.trace_label,
                     call_no=call_no,
@@ -419,10 +438,15 @@ class EcoAgent:
                     error=error_str,
                     tool_durations=self._pending_tool_durations,
                 )
+                if trace_path is None:
+                    self.trace_error = (
+                        f"{self.trace_label} trace persistence failed"
+                    )
             self._pending_tool_durations = []
 
     # ── main entrypoint ────────────────────────────────────────────────────
     def run(self, seed) -> EcoAgentResult:
+        self.trace_error = None
         self._emit(EventType.START)
         history: list = list(_normalize_seed(seed))
 
@@ -446,10 +470,11 @@ class EcoAgent:
                     if attempt >= _LLM_TRANSIENT_RETRIES or not _is_transient_llm_error(str(exc)):
                         # Either non-transient (auth, validation, programmer
                         # error) or we have already retried max times.
-                        self._emit(EventType.ERROR, {"reason": str(exc)})
+                        display_error = _display_llm_error(str(exc))
+                        self._emit(EventType.ERROR, {"reason": display_error})
                         return EcoAgentResult(
                             status="error", stop_tool_name="", stop_payload={},
-                            history=history, error=str(exc),
+                            history=history, error=display_error,
                         )
                     # Transient — sleep then retry. Backoff matches the
                     # in-band retry path (5s, 10s, 15s) so the two are
@@ -476,10 +501,11 @@ class EcoAgent:
                 try:
                     resp = self._stream_llm(history)
                 except Exception as e:
-                    self._emit(EventType.ERROR, {"reason": str(e)})
+                    display_error = _display_llm_error(str(e))
+                    self._emit(EventType.ERROR, {"reason": display_error})
                     return EcoAgentResult(
                         status="error", stop_tool_name="", stop_payload={},
-                        history=history, error=str(e),
+                        history=history, error=display_error,
                     )
 
             # Append the assistant turn (even if it ended in error) to history.
@@ -508,10 +534,11 @@ class EcoAgent:
 
             # Stream-level error (HTTP fail, abort, etc.) — surface as agent error.
             if resp.stopReason in ("error", "aborted"):
-                self._emit(EventType.ERROR, {"reason": resp.errorMessage or resp.stopReason})
+                display_error = _display_llm_error(resp.errorMessage or resp.stopReason)
+                self._emit(EventType.ERROR, {"reason": display_error})
                 return EcoAgentResult(
                     status="error", stop_tool_name="", stop_payload={},
-                    history=history, error=resp.errorMessage or resp.stopReason,
+                    history=history, error=display_error,
                 )
 
             # Extract tool calls from the assistant content array.
@@ -829,5 +856,3 @@ class EcoAgent:
             + joined
         )
         return UserMessage(content=digest_text, timestamp=_now_ms())
-
-

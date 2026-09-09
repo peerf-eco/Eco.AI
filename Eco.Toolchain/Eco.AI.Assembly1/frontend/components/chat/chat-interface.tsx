@@ -23,7 +23,7 @@ import { EcoosLogo } from "./ecoos-logo";
 import { AgentSettings } from "./agent-settings";
 import type {
   Attachment, AttachmentKind, ChatMessage, FsEntry, ProjectInfo, SessionInfo,
-  TokenStat, WorkingMode,
+  PipelineCheckpoint, TokenStat, WorkingMode,
 } from "./types";
 import { API_URL, WS_BASE } from "@/lib/api";
 
@@ -463,6 +463,7 @@ export function ChatInterface() {
     sendUserRequest,
     sendPlanDecision,
     sendEscalationDecision,
+    sendPipelineResume,
     sendAbort,
     clearMessages,
     loadMessages,
@@ -471,6 +472,8 @@ export function ChatInterface() {
 
   // Session being inspected from the left panel (read-only transcript view).
   const [viewing, setViewing] = useState<SessionInfo | null>(null);
+  const [viewingCheckpoint, setViewingCheckpoint] = useState<PipelineCheckpoint | null>(null);
+  const [resumeCheckpoint, setResumeCheckpoint] = useState("coder");
   // Trace Browser modal target (UI_PRD I-12); null = closed.
   const [traceSession, setTraceSession] = useState<SessionInfo | null>(null);
 
@@ -480,10 +483,15 @@ export function ChatInterface() {
   // panel "Stop" / banner "Stop" can reach it).
   const handleSelectSession = useCallback(async (session: SessionInfo) => {
     setViewing(session);
+    setViewingCheckpoint(null);
+    setResumeCheckpoint("coder");
     try {
-      const res = await fetch(`${API_URL}/api/sessions/${session.id}/messages`);
-      if (res.ok) {
-        const data = await res.json();
+      const [messagesRes, stateRes] = await Promise.all([
+        fetch(`${API_URL}/api/sessions/${session.id}/messages`),
+        fetch(`${API_URL}/api/sessions/${session.id}/pipeline-state`),
+      ]);
+      if (messagesRes.ok) {
+        const data = await messagesRes.json();
         const converted: ChatMessage[] = (data.messages ?? []).map((m: { role: string; text: string }) => {
           const id = `hist_${Math.random().toString(36).slice(2, 10)}`;
           if (m.role === "user") {
@@ -497,11 +505,25 @@ export function ChatInterface() {
         });
         loadMessages(converted);
       }
+      if (stateRes.ok) {
+        const stateData = await stateRes.json() as { state?: PipelineCheckpoint };
+        if (stateData.state) setViewingCheckpoint(stateData.state);
+      }
     } catch {
       // network error — keep whatever we had; the banner still lets them return
     }
     if (session.thread_id) connectThread(session.thread_id);
   }, [loadMessages, connectThread]);
+
+  const handleResumeCheckpoint = useCallback(() => {
+    if (!viewing || !viewingCheckpoint || resumeCheckpoint !== "coder") return;
+    sendPipelineResume(
+      viewingCheckpoint.project_dir || viewing.project_path,
+      viewingCheckpoint.completed_phases,
+    );
+    setViewing(null);
+    setViewingCheckpoint(null);
+  }, [sendPipelineResume, viewing, viewingCheckpoint, resumeCheckpoint]);
 
   // Stop a running/suspended session from the panel or the viewing banner.
   // Goes through the backend abort endpoint (which closes the session's live
@@ -584,25 +606,20 @@ export function ChatInterface() {
     if (ok) flashNotice(`Copied session id: ses-${threadId.slice(0, 8)}`);
   }, [copyText, flashNotice, threadId]);
 
-  // Return from a session transcript view to a fresh live thread.
+  // Leave a historical session without executing it. This intentionally starts
+  // a fresh live thread; checkpoint execution belongs to Resume.
   const handleReturnToLive = useCallback(() => {
     setViewing(null);
+    setViewingCheckpoint(null);
     clearMessages();
   }, [clearMessages]);
 
-  // Cancel/dismiss a historic or suspended session view and clear the window.
-  // If the session is still running, abort it first; otherwise just refresh the
-  // panel so its status reflects reality. Lets the user recover from a stuck or
-  // rejected run (e.g. one that never started) without a leftover spinner.
+  // Stop is only meaningful while the inspected session is still running.
   const handleCancelView = useCallback(() => {
     if (viewing && viewing.status === "running") {
       void handleStopSession(viewing);
-    } else {
-      void refreshProjects();
     }
-    setViewing(null);
-    clearMessages();
-  }, [viewing, handleStopSession, refreshProjects, clearMessages]);
+  }, [viewing, handleStopSession]);
 
   // New Session: clear messages (rolls a fresh thread) and drop attachments.
   // Settings (platform/language/mode/useWorktree/project) intentionally persist.
@@ -955,6 +972,29 @@ export function ChatInterface() {
               </span>
             )}
             <span className="shrink-0 text-muted-foreground/60">{viewing.status}</span>
+            {viewingCheckpoint && (viewingCheckpoint.status === "paused" || viewingCheckpoint.status === "running") && (
+              <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-500/25 bg-amber-500/[0.08] px-2 py-1">
+                <span className="text-[10px] text-amber-200/80">Checkpoint</span>
+                <select
+                  value={resumeCheckpoint}
+                  onChange={(event) => setResumeCheckpoint(event.target.value)}
+                  className="max-w-44 bg-transparent text-[10px] text-amber-100 outline-none"
+                  aria-label="Resume checkpoint"
+                >
+                  <option value="coder" className="bg-background">
+                    Coder phase · {viewingCheckpoint.attempt}/{viewingCheckpoint.max_attempts} attempts
+                  </option>
+                </select>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleResumeCheckpoint}
+                  className="h-6 rounded-md px-2 text-[10px] text-amber-100 hover:bg-amber-500/15"
+                >
+                  Resume
+                </Button>
+              </div>
+            )}
             {viewing.status === "running" && (
               <Button
                 variant="ghost"
@@ -966,23 +1006,25 @@ export function ChatInterface() {
                 <StopCircle size={16} />
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCancelView}
-              className="shrink-0 rounded-lg hover:bg-white/10"
-              title="Cancel and clear this session view"
-            >
-              Cancel
-            </Button>
+            {viewing.status === "running" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCancelView}
+                className="shrink-0 rounded-lg hover:bg-white/10"
+                title="Stop the running session"
+              >
+                Stop run
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
               onClick={handleReturnToLive}
               className="shrink-0 rounded-lg hover:bg-white/10"
-              title="Return to live session"
+              title="Leave this session and start a new live chat"
             >
-              Return to live
+              New live chat
             </Button>
           </div>
         )}

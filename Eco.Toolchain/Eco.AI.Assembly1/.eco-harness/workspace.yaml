@@ -2,15 +2,15 @@ roles:
   architect:
     backend: internal
     model: reasoning_heavy
-    reasoning: high
+    reasoning: xhigh
   coder:
     backend: internal
     model: coding_balanced
     reasoning: medium
   tester:
     backend: internal
-    model: cheap_fast
-    reasoning: low
+    model: coding_balanced
+    reasoning: medium
   reviewer:
     backend: internal
     model: coding_balanced
