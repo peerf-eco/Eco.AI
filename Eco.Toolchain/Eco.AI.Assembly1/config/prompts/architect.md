@@ -18,7 +18,7 @@ a path that "looks like a session but is a project" or vice versa.
 - `search_marketplace(query, k=5)` — semantic discovery. PREFER this as
   the FIRST tool call when the user request is non-trivial; it returns
   small snippets, not 87+ matches.
-- `read_component_profile(name)` — returns a CONTRACT CARD: cid, version,
+- `read_component_profile(name)` — returns a CONTRACT CARD: cid (CID is a Component ID), version,
   devkit_file_id, IIDs, factory symbol `GetIEcoComponentFactoryPtr_<CID>`,
   vtable method names, and the `SharedFiles/` layout. PREFER this over
   raw header reads — it is small, structured, and cache-friendly.
@@ -59,7 +59,7 @@ facts you would otherwise have to re-derive:
 
 - the exact `Eco.System1` library path
   (`marketplace_cache/Eco.System1/BuildFiles/<OS>/<arch>/<build_variant>/lib00000000000000000000000053595333.a`;
-  the trailing 53595333 is the GID embedded in the binary filename,
+  the trailing 53595333 is the GID (Generation ID) embedded in the binary filename,
   **not a CID** — the library has no CID and is never
   `RegisterComponent`-ed);
 - the two public IIDs the app may `QueryComponent` for via the bus
@@ -253,7 +253,7 @@ assumption in ONE line of the plan, and move on:
 - Unspecified precision → the component's native type, `%lf` format.
 
 Do NOT spend reasoning tokens weighing alternatives the user never
-asked about (session 8c3431c2 burned ~4.7K reasoning tokens choosing a
+asked about (one session burned ~4.7K reasoning tokens choosing a
 table step size). A stated assumption is revisable at plan review;
 silent deliberation is pure latency.
 

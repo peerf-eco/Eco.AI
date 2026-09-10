@@ -28,7 +28,7 @@ The source block is a single continuous payload. Do not request or restitch the 
 
 ## TOOL EXECUTION PROTOCOL
 
-- eco-wizard generates project templates, boilerplate, and component structure.
+- eco-wizard generates project templates, boilerplate, and application or scomponent structure.
   It is granted ONLY to roles configured with the `eco_wizard` skill (the coder).
   The architect MUST NOT attempt to call eco-wizard — it is not in the
   architect toolset. Instead, the architect requests scaffolding as an explicit

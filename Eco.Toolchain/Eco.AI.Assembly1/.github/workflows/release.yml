@@ -5,11 +5,11 @@
 #   - multi-arch container image to ghcr.io (linux/amd64 + linux/arm64)
 #   - ALL consumer assets (manifest.json + install.sh/install.ps1 + wheel +
 #     per-platform binary zips + RAG index) as release assets of the public
-#     releases repo peerf-eco/eco-coder-releases on v* tag pushes only —
+#     releases repo peerf-eco/eco-harness-releases on v* tag pushes only —
 #     tagged releases are the ONLY install channel (GitHub-only installs,
 #     no S3 in the user-facing path), authenticated with the
 #     ECO_PUBLIC_RELEASE_TOKEN repo secret; end-users fetch from
-#     https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/
+#     https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/
 #
 # ── Triggers ────────────────────────────────────────────────────────────────
 #   push v* tag (must be on main branch)  →  image + public release publish
@@ -377,9 +377,9 @@ jobs:
           cache-to: type=gha,mode=max
 
   publish-manifest:
-    # GitHub-only publish: on v* tag pushes, the manifest + installers + wheel
-    # + per-platform zips + RAG index are uploaded as release assets of the
-    # public eco-coder-releases repo — the only install channel. Tagless main
+  # GitHub-only publish: on v* tag pushes, the manifest + installers + wheel
+  # + per-platform zips + RAG index are uploaded as release assets of the
+  # public eco-harness-releases repo — the only install channel. Tagless main
     # pushes and dispatch runs stop at the build job (no coherent version tag
     # to publish under; dev images still go to ghcr via publish-image).
     # Independent of publish-image: runs in parallel after build.
@@ -421,15 +421,15 @@ jobs:
         run: |
           python scripts/release/build_manifest.py \
             --staging release-staging/tag \
-            --base-url "https://github.com/peerf-eco/eco-coder-releases/releases/download/${{ steps.public-tag.outputs.tag }}" \
+            --base-url "https://github.com/peerf-eco/eco-harness-releases/releases/download/${{ steps.public-tag.outputs.tag }}" \
             --image "${{ steps.image-tag.outputs.image }}"
 
       # Pinned to a full commit SHA (the v2 tag target) — a mutable major-tag
       # reference would let a compromised upstream run code inside this job.
-      - name: Publish install scripts and assets to public eco-coder-releases repo
+      - name: Publish install scripts and assets to public eco-harness-releases repo
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          repository: peerf-eco/eco-coder-releases
+          repository: peerf-eco/eco-harness-releases
           tag_name: ${{ steps.public-tag.outputs.tag }}
           name: eco-harness ${{ steps.public-tag.outputs.tag }}
           body: Automated release of eco-harness ${{ steps.public-tag.outputs.tag }}
@@ -449,7 +449,7 @@ jobs:
       # e.g. when an overwrite re-upload was interrupted mid-step.
       - name: Verify public release resolvability
         run: |
-          BASE="https://github.com/peerf-eco/eco-coder-releases/releases/latest/download"
+          BASE="https://github.com/peerf-eco/eco-harness-releases/releases/latest/download"
           for ASSET in install.sh install.ps1 manifest.json; do
             curl -fsSLo /dev/null "${BASE}/${ASSET}" || {
               echo "::error::${ASSET} is not resolvable from ${BASE}/ — public install one-liners would fail."

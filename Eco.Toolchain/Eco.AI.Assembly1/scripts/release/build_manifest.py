@@ -70,7 +70,7 @@ def is_doc(path: Path) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--staging", default="release-staging", type=Path)
-    parser.add_argument("--base-url", default="https://github.com/peerf-eco/eco-coder-releases/releases/latest/download")
+    parser.add_argument("--base-url", default="https://github.com/peerf-eco/eco-harness-releases/releases/latest/download")
     parser.add_argument("--image", default="ghcr.io/peerf-eco/eco.ai:latest")
     parser.add_argument("--output", default=None, type=Path)
     parser.add_argument(

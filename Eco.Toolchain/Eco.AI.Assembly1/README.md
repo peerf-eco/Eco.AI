@@ -18,10 +18,10 @@ wizard (or later in the app-home `.env`).
 ### Linux
 
 ```bash
-curl -fsSL https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/install.sh | sh
 ```
 
-or download and inspect first: `curl -fsSLO https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.sh && sh install.sh`.
+or download and inspect first: `curl -fsSLO https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/install.sh && sh install.sh`.
 
 - Requires `curl` or `wget` (everything else — including Python 3.11 — is
   provided by `uv` automatically, per-user, no sudo).
@@ -32,7 +32,7 @@ or download and inspect first: `curl -fsSLO https://github.com/peerf-eco/eco-cod
 ### macOS
 
 ```bash
-curl -fsSL https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/install.sh | sh
 ```
 
 Same as Linux; downloaded binaries are Apple-Silicon/Intel native (arm64 /
@@ -46,13 +46,13 @@ System Settings → Privacy & Security → Allow.
 From PowerShell:
 
 ```powershell
-irm https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.ps1 | iex
+irm https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/install.ps1 | iex
 ```
 
 or from cmd.exe:
 
 ```bat
-powershell -Command "irm 'https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.ps1' | iex"
+powershell -Command "irm 'https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/install.ps1' | iex"
 ```
 
 or download and run: `powershell -ExecutionPolicy Bypass -File install.ps1`.
@@ -123,12 +123,12 @@ removal, delete `$ECO_HOME` only after confirming it contains no other data.
 
 ```bash
 # Linux / macOS (note `-s --` to pass flags through the pipe):
-curl -fsSL https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.sh | sh -s -- --docker
+curl -fsSL https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/install.sh | sh -s -- --docker
 ```
 
 ```powershell
 # Windows — irm | iex cannot take flags; download first, then run:
-curl.exe -fsSLO https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.ps1
+curl.exe -fsSLO https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/install.ps1
 powershell -ExecutionPolicy Bypass -File install.ps1 -Docker
 ```
 
@@ -1145,7 +1145,7 @@ The release workflow (`.github/workflows/release.yml`) publishes the
 multi-arch container image to ghcr.io, and on `v*` tag pushes uploads ALL
 consumer assets (manifest + installers + wheel + per-platform binary zips +
 RAG index) to the public releases repo
-[`peerf-eco/eco-coder-releases`](https://github.com/peerf-eco/eco-coder-releases)
+[`peerf-eco/eco-harness-releases`](https://github.com/peerf-eco/eco-harness-releases)
 — the only install channel. The install one-liners in `## Install` fetch
 everything from that repo's `releases/latest/download/` URLs; no S3 or other
 hosting is involved in installs. The prebuilt RAG bundle — **both**
@@ -1217,7 +1217,7 @@ a build.
 ### Automatic release (recommended)
 
 The canonical path — creates a versioned image and a sha256-checksummed
-manifest, published to `eco-coder-releases`:
+manifest, published to `eco-harness-releases`:
 
 ```bash
 git tag v0.1.0
@@ -1230,7 +1230,7 @@ downloads the RAG bundle from the public distribution URL (`RAG_INDEX_URL`),
 then publishes the image as
 `ghcr.io/<org>/Eco.AI:0.1.0` and `latest` and uploads every consumer asset
 (manifest + installers + wheel + zips + index) to the `v0.1.0` release of
-`eco-coder-releases`. From that moment `releases/latest/download/...` serves
+`eco-harness-releases`. From that moment `releases/latest/download/...` serves
 the new version to all users.
 
 ### Manual trigger (workflow_dispatch)
@@ -1260,7 +1260,7 @@ gh workflow run release.yml -f dry_run=false
 # same, pinning the bundled eco-cli version:
 gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0
 
-# a real release (publishes to eco-coder-releases):
+# a real release (publishes to eco-harness-releases):
 git tag v0.1.1 && git push origin v0.1.1
 ```
 

@@ -124,7 +124,7 @@ STEP 1 — Absorb the handoff (no tool calls)
 
 STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
 
-  The eco-wizard CLI scaffolds the entire C89 application template in one
+  The eco-wizard CLI scaffolds the entire C89 application (or component) template in one
   call. For an APP-type project (the common case for "I want an executable")
   the wizard writes into out_dir (pass out_dir="." for the project_dir
   root — it scaffolds INTO that dir, it does NOT create a nested
@@ -132,8 +132,7 @@ STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
 
     <out_dir>/
      ├── SourceFiles/<entry-file>.c  # ← the exact entry file named by the
-     │                                  tool result. Depending on the wizard
-     │                                  version it may be named after the
+     │                                  tool result. It may be named after the
      │                                  application or "EcoMain.c"; the
      │                                  `int16_t EcoMain(IEcoUnknown* pIUnk)`
      │                                  entry-point FUNCTION lives inside it.
@@ -160,8 +159,7 @@ STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
   the exact generated file tree, the entry-point file, and the
   `run_build project_subdir`. Use those values VERBATIM. Do NOT re-list
   the tree with list_dir/glob — re-deriving paths the tool result already
-  gave you is how runs waste 4-6 calls recovering from a wrong guess
-  (session 8c3431c2: doubled run_build path, 6 recovery calls).
+  gave you is how runs waste 4-6 calls recovering from a wrong guess.
 
   After the wizard call, your only job is to:
      1. write_file the final business logic INTO the entry-point file the
@@ -196,7 +194,7 @@ STEP 1.6 — VERIFY THE INCLUDE BLOCK BEFORE THE FIRST BUILD (zero calls)
   extern. The wizard template and the plan's include block do not
   always include every Id header your registrations need. A missing Id
   include fails at COMPILE time with `'CID_<X>' undeclared` (bug history:
-  ses-a6ddf3c8 — 3 failed build cycles and a 116 KB header read to
+  3 failed build cycles and a 116 KB header read to
   recover what one include line would have prevented).
 
   Check each registration in your final EcoMain against the plan's

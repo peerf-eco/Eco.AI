@@ -2,12 +2,12 @@
 # Eco.AI Harness — native installer (Windows PowerShell)
 #
 # One-command install, no source checkout:
-#   irm https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/install.ps1 | iex
+#   irm https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/install.ps1 | iex
 # or download and run:
 #   powershell -ExecutionPolicy Bypass -File install.ps1 [-Docker]
 #
 # GitHub-only install: the manifest, wheel, binaries, and RAG index all come
-# from public release assets of peerf-eco/eco-coder-releases (no auth).
+# from public release assets of peerf-eco/eco-harness-releases (no auth).
 #
 # Native flow: uv installs Python 3.11 if missing → venv at $ECO_HARNESS\venv →
 # wheel from the release manifest → native eco-cli.exe / eco-wizard.exe
@@ -54,7 +54,7 @@ $ECO_HOME          = if ($env:ECO_HOME) { $env:ECO_HOME } else { Join-Path $env:
 $ECO_TOOLCHAIN     = if ($env:ECO_TOOLCHAIN) { $env:ECO_TOOLCHAIN } else { Join-Path $ECO_HOME "toolchain" }
 $ECO_HARNESS       = if ($env:ECO_HARNESS) { $env:ECO_HARNESS } else { Join-Path $ECO_TOOLCHAIN "eco-harness" }
 $ECO_PROJECTS_DIR  = if ($env:ECO_PROJECTS_DIR) { $env:ECO_PROJECTS_DIR } else { Join-Path $ECO_HOME "workspace" }
-$MANIFEST_URL      = if ($env:ECO_MANIFEST_URL) { $env:ECO_MANIFEST_URL } else { "https://github.com/peerf-eco/eco-coder-releases/releases/latest/download/manifest.json" }
+$MANIFEST_URL      = if ($env:ECO_MANIFEST_URL) { $env:ECO_MANIFEST_URL } else { "https://github.com/peerf-eco/eco-harness-releases/releases/latest/download/manifest.json" }
 $IMAGE_REPO        = if ($env:ECO_HARNESS_IMAGE) { $env:ECO_HARNESS_IMAGE } else { "ghcr.io/peerf-eco/eco.ai" }
 $env:ECO_HOME = $ECO_HOME
 $env:ECO_TOOLCHAIN = $ECO_TOOLCHAIN

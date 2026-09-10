@@ -875,7 +875,7 @@ root — GitHub only loads root-level workflows; all steps run with
 `scripts/release/build_manifest.py` walks a staging dir and emits
 `manifest.json`. Every consumer (installers, `eco-harness update`) resolves
 everything through it. `<BASE>` is the GitHub Releases asset root
-(`https://github.com/peerf-eco/eco-coder-releases/releases/download/v<ver>`);
+(`https://github.com/peerf-eco/eco-harness-releases/releases/download/v<ver>`);
 GitHub addresses release assets by basename only, so every URL is FLAT:
 
 ```jsonc
@@ -937,7 +937,7 @@ a warning; a manifest whose `binaries`/`index` sections end up empty fails
   `publish-image` (needs only `build`): resolves the public tag + image
   tag, builds + validates the manifest, uploads manifest, installers,
   wheel, binary zips and RAG zip as release assets of the public
-  `peerf-eco/eco-coder-releases` repo (`softprops/action-gh-release`,
+  `peerf-eco/eco-harness-releases` repo (`softprops/action-gh-release`,
   pinned to a full commit SHA, `ECO_PUBLIC_RELEASE_TOKEN` secret), then
   verifies `install.sh` / `install.ps1` / `manifest.json` resolve from
   `releases/latest/download/` (guards the README one-liners).
@@ -950,7 +950,7 @@ defaults to `dry_run=true` (build only; `dry_run=false` also pushes the
 `dev-<sha>` image — no public release without a tag).
 
 Required repo configuration: secret `ECO_PUBLIC_RELEASE_TOKEN` (release
-write on `peerf-eco/eco-coder-releases`); variable `RAG_INDEX_URL` (public
+write on `peerf-eco/eco-harness-releases`); variable `RAG_INDEX_URL` (public
 URL of `marketplace_index.zip`); optional variables `ECO_CLI_RELEASE_REPO`,
 `ECO_WIZARD_RELEASE_REPO`, `ECO_CLI_VERSION`, `ECO_WIZARD_VERSION`
 (§19.7). NO AWS credentials exist anywhere in CI — the only S3 writer is
@@ -1031,7 +1031,7 @@ inside the app home fails loudly with a WorktreeError instead.
 `update` (`eco_harness/update.py`), manifest-driven, idempotent:
 
 1. fetch manifest (defaults: `$ECO_MANIFEST_URL` →
-   `eco-coder-releases/releases/latest/download/manifest.json`)
+   `eco-harness-releases/releases/latest/download/manifest.json`)
 2. wheel: if `manifest.wheel.version != installed`, download → sha256
    verify → `uv pip install --python <venv>` (pip fallback), report
    "restart to apply"
@@ -1085,7 +1085,7 @@ order = execution order.
 #### A. Shared — required for BOTH native and Docker installs
 
 - [ ] **A1. Provision artifact hosting.** Two pieces:
-      1. Create the public `peerf-eco/eco-coder-releases` repo — its tagged
+      1. Create the public `peerf-eco/eco-harness-releases` repo — its tagged
          releases are the ONLY install channel. Expected asset layout (flat,
          matches `build_manifest.py --base-url`): `manifest.json`,
          `eco_harness-<ver>-py3-none-any.whl`, `install.sh`, `install.ps1`,
@@ -1100,7 +1100,7 @@ order = execution order.
       dirs; the Assembly1 copy is an inert reference).
 - [ ] **A3. Configure GitHub repo variables/secrets** (Settings → Secrets
       and variables → Actions): secret `ECO_PUBLIC_RELEASE_TOKEN` (release
-      write on `peerf-eco/eco-coder-releases`); var `RAG_INDEX_URL`;
+      write on `peerf-eco/eco-harness-releases`); var `RAG_INDEX_URL`;
       optional vars `ECO_CLI_RELEASE_REPO`, `ECO_WIZARD_RELEASE_REPO`,
       `ECO_CLI_VERSION`, `ECO_WIZARD_VERSION` (§19.7). No AWS secrets in
       CI; no ghcr secret needed (`GITHUB_TOKEN` + `packages: write`).
@@ -1430,7 +1430,7 @@ without triggering any Docker build work.
 
 | Secret | When needed |
 |---|---|
-| `ECO_PUBLIC_RELEASE_TOKEN` | Always for tagged releases — a token with release-write access to the public `peerf-eco/eco-coder-releases` repo |
+| `ECO_PUBLIC_RELEASE_TOKEN` | Always for tagged releases — a token with release-write access to the public `peerf-eco/eco-harness-releases` repo |
 
 `GITHUB_TOKEN` is provided automatically by GitHub — no configuration needed.
 It is used for the ghcr.io image push (`packages: write`) and for resolving
