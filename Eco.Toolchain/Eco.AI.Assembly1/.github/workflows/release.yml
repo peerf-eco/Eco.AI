@@ -41,6 +41,19 @@
 #     Option B — always latest: just push a v* tag (ECO_CLI_VERSION unset)
 #     Option C — one-off: gh workflow run release.yml -f dry_run=false -f eco_cli_version=v2.1.0
 #
+# ── Binary install policy on the user machine (installers + eco-harness
+#    update; see scripts/install/install.* and eco_harness/update.py) ────────
+#   eco-cli / eco-wizard are downloaded ONLY when not already present: the
+#   installers check the standard env vars ECO_CLI / ECO_WIZARD and the
+#   standard default paths first; existing copies are referenced as-is
+#   (version-checked against the manifest — outdated ones get a replacement
+#   recommendation instead of a silent overwrite, avoiding version
+#   conflicts). Fresh downloads land in the standard toolchain locations
+#   $ECO_TOOLCHAIN/eco-cli|eco-wizard (ECO_HOME default ~/ecoos, i.e.
+#   ~/ecoos/toolchain/...), with the preserved app-home bin/ folder
+#   (~/.eco-harness/bin in the legacy layout; $ECO_HARNESS/bin generally) as
+#   the fallback when the higher-level filesystem dirs cannot be created.
+#
 # ── RAG artifacts (index + marketplace cache) ────────────────────────────────
 #   The installer ships BOTH artifacts prebuilt into ~/.eco-harness/data —
 #   marketplace_index.sqlite AND marketplace_cache/ — inside one zip; it never

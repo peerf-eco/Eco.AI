@@ -3,7 +3,26 @@
 Reads the release manifest (a single version source of truth for binaries,
 RAG index, wheel, and image tags), upgrades the eco-harness wheel in the
 running venv, refreshes any changed native binaries / prebuilt index under
-``ECO_HOME``, and prints a report.
+the harness app home, and prints a report.
+
+Binary install policy (Eco platform standard):
+
+  - eco-cli / eco-wizard already present on the machine are NEVER
+    re-downloaded over, with one exception: a copy in a managed location
+    (the standard toolchain dir or the app-home ``bin/`` fallback) that
+    carries the harness-written ``.<name>.version`` marker is the harness's
+    own prior download and is refreshed in place when the manifest moves
+    forward (that IS ``eco-harness update``).
+  - every other find — ``ECO_CLI`` / ``ECO_WIZARD`` env vars, custom
+    locations, ``PATH`` — is user-owned: kept to avoid version conflicts,
+    reported, and recommended for replacement when its version does not
+    match the manifest. Only env-var-provided binaries are probed with
+    ``--version`` (explicit user opt-in); ``PATH`` and unmarked
+    standard-location finds are never executed during detection.
+  - fresh downloads land in the standard toolchain dir
+    (``$ECO_TOOLCHAIN/eco-cli`` etc.). When those (higher-level) directories
+    cannot be created, the historical app-home ``bin/`` folder is used as a
+    fallback.
 
 Docker installs update differently (``docker compose pull``) and never call
 this module.
@@ -23,7 +42,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.request import urlopen
 
-from eco_harness.agent.internal.tools.paths import eco_home
+from dotenv import load_dotenv
+
+from eco_harness.agent.internal.tools import paths
+from eco_harness.agent.internal.tools.binaries import resolve_binary_with_source
 
 DEFAULT_MANIFEST_URL = os.getenv(
     "ECO_MANIFEST_URL",
@@ -33,6 +55,9 @@ DEFAULT_MANIFEST_URL = os.getenv(
 # Manifest keys become filesystem paths and install specs — constrain them to
 # a safe charset so a hostile manifest can never traverse or inject options.
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# `eco-cli --version`-style output: first dotted number (optionally v-prefixed).
+_VERSION_RE = re.compile(r"[vV]?(\d+(?:\.\d+)+)")
 
 
 @dataclass
@@ -91,9 +116,74 @@ def _download(url: str, destination: Path) -> None:
         tmp_path.unlink(missing_ok=True)
 
 
+def _normalized_version(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = _VERSION_RE.search(value)
+    return match.group(1) if match else None
+
+
+def _marker_version(target_dir: Path, name: str) -> str | None:
+    marker = target_dir / f".{name}.version"
+    if not marker.is_file():
+        return None
+    return marker.read_text(encoding="utf-8").strip() or None
+
+
+def _detect_existing_version(binary: Path) -> str | None:
+    """Best-effort version of a user-configured binary (no marker): run
+    ``--version`` once and parse the first dotted number.
+
+    Only ever called for ``ECO_CLI`` / ``ECO_WIZARD`` env-var finds — an
+    explicit user opt-in. PATH or unmarked filesystem finds are NEVER
+    executed during detection (a shadowed PATH binary must not run merely
+    because an update was requested).
+    """
+    try:
+        proc = subprocess.run(
+            [str(binary), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+    return _normalized_version(output)
+
+
+def _prepare_target_dir(name: str, preferred: Path | None = None) -> Path:
+    """Directory the tool's binaries are downloaded into.
+
+    Order: the existing managed location (when the tool was already found in
+    the standard toolchain dir or the legacy app-home ``bin/`` folder, so a
+    refresh stays in place), then the standard toolchain dir, then the
+    app-home ``bin/`` fallback — used when the toolchain (or its parents)
+    cannot be created (read-only $HOME, restricted layouts).
+    """
+    attempts = []
+    if preferred is not None:
+        attempts.append(preferred)
+    attempts.append(paths.tool_install_dir(name))
+    attempts.append(paths.tool_fallback_dir())
+    problems: list[str] = []
+    for candidate in attempts:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            if preferred is None and candidate != attempts[0]:
+                print(
+                    f"[update] WARNING: cannot create {attempts[0]} — "
+                    f"falling back to {candidate}"
+                )
+            return candidate
+        except OSError as error:
+            problems.append(f"{candidate}: {error}")
+    raise OSError("no writable binary install dir: " + "; ".join(problems))
+
+
 def _refresh_binaries(manifest: dict, report: UpdateReport) -> None:
     system, arch = _platform_key()
-    bin_dir = eco_home() / "bin"
     for name, platforms in (manifest.get("binaries") or {}).items():
         entry = (platforms.get(system) or {}).get(arch)
         if not entry:
@@ -102,19 +192,74 @@ def _refresh_binaries(manifest: dict, report: UpdateReport) -> None:
             report.errors.append(f"{name}: unsafe manifest key, skipped")
             continue
         try:
-            # Version-based skip: if the installed version marker matches the
-            # manifest version, all files from the previous zip are already
-            # in place — skip the download entirely.
             manifest_version = entry.get("version")
-            version_marker = bin_dir / f".{name}.version"
-            if (
-                manifest_version
-                and version_marker.is_file()
-                and version_marker.read_text(encoding="utf-8").strip() == manifest_version
-            ):
-                continue
+            standard_dir = paths.tool_install_dir(name)
+            legacy_dir = paths.tool_fallback_dir()
 
-            bin_dir.mkdir(parents=True, exist_ok=True)
+            # ── Existing install? Only managed copies are ever refreshed. ──
+            # resolve_binary_with_source covers ECO_CLI/ECO_WIZARD env vars,
+            # the standard toolchain location, the legacy app-home bin/
+            # folder and PATH — and tells us which one matched.
+            preferred_dir: Path | None = None
+            found = resolve_binary_with_source(name)
+            if found is not None:
+                existing, source = found
+                if existing.parent.resolve() == standard_dir.resolve():
+                    managed_dir: Path | None = existing.parent
+                elif existing.parent.resolve() == legacy_dir.resolve():
+                    managed_dir = existing.parent  # managed legacy bin/ copy
+                else:
+                    managed_dir = None
+
+                if managed_dir is not None:
+                    marker = _marker_version(managed_dir, name)
+                    if marker is None:
+                        # Present in a managed location but never installed
+                        # by the harness → user-owned: keep + recommend.
+                        report.binaries.append(
+                            f"{name} found at {existing} (no version marker) "
+                            f"— kept to avoid version conflicts; manifest "
+                            f"ships {manifest_version or 'unknown'} — "
+                            f"recommend replacing it or delete it to let "
+                            f"eco-harness manage it"
+                        )
+                        continue
+                    if manifest_version and marker == manifest_version:
+                        continue  # managed copy already at manifest version
+                    preferred_dir = managed_dir  # stale marker → refresh here
+                else:
+                    # User-owned install (env var, custom location, PATH) —
+                    # keep it, avoid version conflicts, recommend replacing
+                    # when it does not match the manifest. Only env-var
+                    # finds are probed with --version (explicit user
+                    # opt-in); PATH finds are never executed.
+                    found_version = (
+                        _detect_existing_version(existing)
+                        if source == "env"
+                        else None
+                    )
+                    if manifest_version and (
+                        _normalized_version(found_version) == _normalized_version(manifest_version)
+                    ):
+                        report.binaries.append(
+                            f"{name} {manifest_version} already installed at "
+                            f"{existing} — kept"
+                        )
+                    else:
+                        note = "" if found_version else (
+                            " (not probed)" if source == "path" else ""
+                        )
+                        report.binaries.append(
+                            f"{name} found at {existing}{note} "
+                            f"(version {found_version or 'unknown'}) — kept to "
+                            f"avoid version conflicts; manifest ships "
+                            f"{manifest_version or 'unknown'} — recommend "
+                            f"replacing it (update the binary or unset the "
+                            f"env var) to get the bundled build"
+                        )
+                    continue
+
+            bin_dir = _prepare_target_dir(name, preferred_dir)
 
             zip_url = entry.get("zip_url")
             zip_sha = entry.get("zip_sha256")
@@ -153,7 +298,7 @@ def _refresh_binaries(manifest: dict, report: UpdateReport) -> None:
                 suffix = ".exe" if system == "windows" else ""
                 target = bin_dir / f"{name}{suffix}"
                 if not target.resolve().is_relative_to(bin_dir.resolve()):
-                    raise RuntimeError("resolved target escapes ECO_HOME/bin")
+                    raise RuntimeError("resolved target escapes the binary install dir")
                 if target.is_file() and _sha256(target) == entry.get("sha256"):
                     continue
                 _download(entry["url"], target)
@@ -168,7 +313,9 @@ def _refresh_binaries(manifest: dict, report: UpdateReport) -> None:
                         )
 
             if manifest_version:
-                version_marker.write_text(manifest_version, encoding="utf-8")
+                (bin_dir / f".{name}.version").write_text(
+                    manifest_version, encoding="utf-8"
+                )
             report.binaries.append(f"{name} {manifest_version or '?'} → {bin_dir}")
         except Exception as error:  # noqa: BLE001
             report.errors.append(f"{name}: {error}")
@@ -190,7 +337,7 @@ def _refresh_index(manifest: dict, report: UpdateReport) -> None:
     index = manifest.get("index")
     if not index:
         return
-    data_dir = eco_home() / "data"
+    data_dir = paths.eco_home() / "data"
     marker = data_dir / ".index_sha256"
     if (
         marker.is_file()
@@ -214,6 +361,10 @@ def _refresh_index(manifest: dict, report: UpdateReport) -> None:
 
 def run_update(manifest_url: str | None = None) -> UpdateReport:
     report = UpdateReport()
+    # The installers persist user-selected ECO_CLI/ECO_WIZARD paths in the
+    # app-home .env. Load them before binary discovery so rerunning an
+    # installer cannot download a duplicate bundled tool.
+    load_dotenv(paths.eco_home() / ".env")
     try:
         manifest = fetch_manifest(manifest_url)
     except Exception as error:  # noqa: BLE001

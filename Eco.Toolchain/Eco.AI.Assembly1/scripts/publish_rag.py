@@ -71,6 +71,7 @@ ENV_KEYS = [
     # Passed through for the child scripts (fetch/build read the env).
     "ECO_API_TOKEN",
     "OPENAI_API_KEY",
+    "ECO_CLI",
     "ECO_CLI_PATH",
     "MARKETPLACE_CACHE",
 ]

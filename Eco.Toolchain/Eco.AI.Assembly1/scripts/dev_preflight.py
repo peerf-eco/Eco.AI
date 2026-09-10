@@ -91,8 +91,8 @@ def try_fix(root: Path, issues: list[Issue]) -> list[Issue]:
         print("[preflight] HINT: place the vendored binaries in <repo>/bin/:")
         print("    mkdir -p bin && cp /path/to/eco-cli bin/ && cp /path/to/eco-wizard bin/")
         print("  or point .env at them:")
-        print("    ECO_CLI_PATH=/absolute/path/eco-cli")
-        print("    ECO_WIZARD_PATH=/absolute/path/eco-wizard")
+        print("    ECO_CLI=/absolute/path/eco-cli")
+        print("    ECO_WIZARD=/absolute/path/eco-wizard")
     return remaining
 
 

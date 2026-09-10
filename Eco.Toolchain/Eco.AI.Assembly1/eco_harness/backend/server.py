@@ -47,7 +47,8 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
-# Installed mode: also load the app-home .env ($ECO_HOME/.env). Precedence is
+# Installed mode: also load the app-home .env ($ECO_HARNESS/.env, default
+# <ECO_HOME>/toolchain/eco-harness/.env). Precedence is
 # .env < process env — dotenv never overrides variables that are already set.
 load_dotenv(paths.eco_home() / ".env")
 
@@ -1901,7 +1902,7 @@ class RagTokenUpdate(BaseModel):
 
 
 def _env_file_path() -> Path:
-    """Dev checkout: <repo>/.env. Installed wheel: $ECO_HOME/.env."""
+    """Dev checkout: <repo>/.env. Installed wheel: app-home .env (ECO_HARNESS)."""
     if paths.is_dev_checkout():
         return paths.repo_root() / ".env"
     return paths.eco_home() / ".env"
@@ -1968,7 +1969,8 @@ async def set_rag_token(payload: RagTokenUpdate):
 # app launch (the harness degrades to preflight-style warnings instead). It
 # validates the OpenRouter key with a live minimal call, writes the chosen
 # values into the .env the server loads (repo .env on a dev checkout,
-# $ECO_HOME/.env installed), and mirrors them into the running process env.
+# app-home .env (ECO_HARNESS) installed), and mirrors them into the running
+# process env.
 # Precedence stays: .env < process env — existing env vars always win.
 
 class SetupConfigRequest(BaseModel):
@@ -2990,10 +2992,10 @@ async def chat_endpoint(websocket: WebSocket):
     # delta.reasoning is preserved end-to-end through to the UI thinking blocks.
 
     # Binary resolution now goes through the single shared policy
-    # (agent/internal/tools/binaries.py): explicit config → ECO_*_PATH env →
-    # <repo>/bin/<name> → /opt mount → legacy platform-suffixed siblings →
-    # PATH. The harness.yaml eco_*_path settings ride in as the explicit
-    # candidate.
+    # (agent/internal/tools/binaries.py): explicit config → ECO_CLI /
+    # ECO_WIZARD env (legacy ECO_*_PATH) → $ECO_TOOLCHAIN/<name> →
+    # <repo>/bin/<name> → PATH. The harness.yaml eco_*_path settings ride in
+    # as the explicit candidate.
     def resolve_executable_path(config_attr: str, default_name: str):
         """Resolve an external tool binary via binaries.resolve_binary."""
         configured = getattr(connection_config, config_attr, None)
@@ -3014,15 +3016,16 @@ async def chat_endpoint(websocket: WebSocket):
     # Resolve eco-wizard path
     wizard_path = resolve_executable_path("eco_wizard_path", "eco-wizard")
     
-    # Set environment variables for tool resolution
+    # Set environment variables for tool resolution (standard ECO_CLI /
+    # ECO_WIZARD spellings — binaries.resolve_binary reads them directly).
     if cli_path:
-        os.environ["ECO_CLI_PATH"] = str(cli_path)
+        os.environ["ECO_CLI"] = str(cli_path)
         # Set wine prefix for Windows executables
         if cli_path.suffix == ".exe":
             os.environ["ECO_CLI_PREFIX"] = "wine64"
-    
+
     if wizard_path:
-        os.environ["ECO_WIZARD_PATH"] = str(wizard_path)
+        os.environ["ECO_WIZARD"] = str(wizard_path)
         # Set wine prefix for Windows executables
         if wizard_path.suffix == ".exe":
             os.environ["ECO_WIZARD_PREFIX"] = "wine64"
@@ -3054,7 +3057,7 @@ async def chat_endpoint(websocket: WebSocket):
         #
         # Fix: anchor the default to the shared _output_root() policy —
         # HARNESS_OUTPUT_ROOT (CWD-relative values resolve against the dev
-        # repo root), <repo>/output on a dev checkout, <ECO_HOME>/output in
+        # repo root), <repo>/output on a dev checkout, app-home output/ in
         # installed mode. Always absolute, never CWD-dependent.
         return _output_root() / f"proj-{thread_id[:8]}"
 
@@ -3339,9 +3342,10 @@ async def chat_endpoint(websocket: WebSocket):
                 try:
                     worktree = create_worktree(
                         # Worktrees branch the USER's project, not the harness
-                        # install: in installed mode config.root is ECO_HOME
-                        # (not a git repo), so anchor on ECO_PROJECT_DIR — the
-                        # folder the UI picker registered for this session.
+                        # install: in installed mode config.root is the app
+                        # home (not a git repo), so anchor on ECO_PROJECT_DIR
+                        # — the folder the UI picker registered for this
+                        # session.
                         paths.project_dir(),
                         thread_id,
                         name=payload.get("worktree_name"),

@@ -29,7 +29,19 @@ from eco_harness.roles import make_role_agent
 # ── 1. Binary resolution order ────────────────────────────────────────────────
 
 
+def _isolate_binary_env(monkeypatch, tmp_path: Path) -> None:
+    """Hermetic env for resolution tests: no host toolchain / PATH hits."""
+    for var in (
+        "ECO_HOME", "ECO_HARNESS", "ECO_TOOLCHAIN", "ECO_CLI", "ECO_WIZARD",
+        "ECO_CLI_PATH", "ECO_WIZARD_PATH", "ECO_IDL", "ECO_IDL_PATH",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ECO_TOOLCHAIN", str(tmp_path / "toolchain"))
+    monkeypatch.setattr(binaries.shutil, "which", lambda name: None)
+
+
 def test_resolve_binary_explicit_wins(tmp_path: Path, monkeypatch):
+    _isolate_binary_env(monkeypatch, tmp_path)
     candidate = tmp_path / "custom" / "eco-cli"
     candidate.parent.mkdir(parents=True)
     candidate.touch()
@@ -37,7 +49,51 @@ def test_resolve_binary_explicit_wins(tmp_path: Path, monkeypatch):
     assert resolved == candidate
 
 
+def test_resolve_binary_standard_env_var(tmp_path: Path, monkeypatch):
+    """ECO_CLI (standard spelling) resolves like the legacy ECO_CLI_PATH."""
+    _isolate_binary_env(monkeypatch, tmp_path)
+    env_binary = tmp_path / "env" / "eco-cli"
+    env_binary.parent.mkdir(parents=True)
+    env_binary.touch()
+    monkeypatch.setenv("ECO_CLI", str(env_binary))
+    assert binaries.resolve_binary("eco-cli", repo=tmp_path) == env_binary
+
+
+def test_resolve_binary_eco_idl_standard_env_var(tmp_path: Path, monkeypatch):
+    """The reserved ECO_IDL spelling is ready before eco-idl ships."""
+    _isolate_binary_env(monkeypatch, tmp_path)
+    env_binary = tmp_path / "env" / "eco-idl"
+    env_binary.parent.mkdir(parents=True)
+    env_binary.touch()
+    monkeypatch.setenv("ECO_IDL", str(env_binary))
+    assert binaries.resolve_binary("eco-idl", repo=tmp_path) == env_binary
+
+
+def test_resolve_binary_env_dir_value(tmp_path: Path, monkeypatch):
+    """ECO_CLI may point at the tool's directory (standard platform layout):
+    the binary inside (<dir>/eco-cli) is probed."""
+    _isolate_binary_env(monkeypatch, tmp_path)
+    tool_dir = tmp_path / "user-tools" / "eco-cli"
+    tool_dir.mkdir(parents=True)
+    binary = tool_dir / "eco-cli"
+    binary.touch()
+    monkeypatch.setenv("ECO_CLI", str(tool_dir))
+    assert binaries.resolve_binary("eco-cli", repo=tmp_path) == binary
+
+
+def test_resolve_binary_standard_toolchain_location(tmp_path: Path, monkeypatch):
+    """$ECO_TOOLCHAIN/eco-cli (per-tool dir with the binary inside) is probed
+    without any env var pointing at the tool."""
+    _isolate_binary_env(monkeypatch, tmp_path)
+    tool_dir = tmp_path / "toolchain" / "eco-cli"
+    tool_dir.mkdir(parents=True)
+    binary = tool_dir / "eco-cli"
+    binary.touch()
+    assert binaries.resolve_binary("eco-cli", repo=tmp_path) == binary
+
+
 def test_resolve_binary_env_before_bin(tmp_path: Path, monkeypatch):
+    _isolate_binary_env(monkeypatch, tmp_path)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "eco-cli").touch()
@@ -50,7 +106,7 @@ def test_resolve_binary_env_before_bin(tmp_path: Path, monkeypatch):
 
 
 def test_resolve_binary_canonical_bin_home(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("ECO_CLI_PATH", raising=False)
+    _isolate_binary_env(monkeypatch, tmp_path)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     binary = bin_dir / "eco-cli"
@@ -60,7 +116,7 @@ def test_resolve_binary_canonical_bin_home(tmp_path: Path, monkeypatch):
 
 def test_resolve_binary_ignores_legacy_siblings(tmp_path: Path, monkeypatch):
     """Deprecated <repo>/<name>-{linux,windows}/ sibling dirs are not probed."""
-    monkeypatch.delenv("ECO_CLI_PATH", raising=False)
+    _isolate_binary_env(monkeypatch, tmp_path)
     sibling = tmp_path / "eco-cli-linux" / "eco-cli"
     sibling.parent.mkdir(parents=True)
     sibling.touch()
@@ -68,7 +124,7 @@ def test_resolve_binary_ignores_legacy_siblings(tmp_path: Path, monkeypatch):
 
 
 def test_resolve_binary_windows_exe_suffix(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("ECO_CLI_PATH", raising=False)
+    _isolate_binary_env(monkeypatch, tmp_path)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     binary = bin_dir / "eco-cli.exe"
@@ -79,7 +135,7 @@ def test_resolve_binary_windows_exe_suffix(tmp_path: Path, monkeypatch):
 
 def test_resolve_binary_windows_prefers_exe_over_elf(tmp_path: Path, monkeypatch):
     """Host Windows runs must not pick the container's extensionless ELF."""
-    monkeypatch.delenv("ECO_CLI_PATH", raising=False)
+    _isolate_binary_env(monkeypatch, tmp_path)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "eco-cli").touch()      # Linux ELF, e.g. for the container
@@ -89,8 +145,18 @@ def test_resolve_binary_windows_prefers_exe_over_elf(tmp_path: Path, monkeypatch
     assert binaries.resolve_binary("eco-cli", repo=tmp_path) == exe
 
 
+def test_resolve_binary_windows_ignores_extensionless_only(tmp_path: Path, monkeypatch):
+    """A Windows host must not resolve a Linux ELF without a .exe sibling."""
+    _isolate_binary_env(monkeypatch, tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "eco-cli").touch()
+    monkeypatch.setattr(binaries.sys, "platform", "win32")
+    assert binaries.resolve_binary("eco-cli", repo=tmp_path) is None
+
+
 def test_resolve_binary_none_when_missing(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("ECO_CLI_PATH", raising=False)
+    _isolate_binary_env(monkeypatch, tmp_path)
     assert binaries.resolve_binary("definitely-not-a-tool", repo=tmp_path) is None
 
 

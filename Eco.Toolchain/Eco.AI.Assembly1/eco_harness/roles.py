@@ -219,9 +219,9 @@ def make_role_agent(
     role_spec = config.roles.get(role, RoleSpec())
     backend_name = _backend_name(role_spec)
     if config.eco_wizard_path:
-        os.environ.setdefault("ECO_WIZARD_PATH", config.eco_wizard_path)
+        os.environ.setdefault("ECO_WIZARD", config.eco_wizard_path)
     if config.eco_cli_path:
-        os.environ.setdefault("ECO_CLI_PATH", config.eco_cli_path)
+        os.environ.setdefault("ECO_CLI", config.eco_cli_path)
     if backend_name not in {"internal", "builtin", "eco"}:
         backend = make_external_backend(
             backend_name,

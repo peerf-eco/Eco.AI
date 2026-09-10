@@ -13,7 +13,7 @@ The installer always downloads **native** eco-cli / eco-wizard builds for
 your OS (never wine), plus the prebuilt marketplace RAG index, verified
 against the release manifest's sha256 checksums. Missing API keys never
 block install or launch — finish configuration in the in-app `/setup`
-wizard (or later in `~/.eco-harness/.env`).
+wizard (or later in the app-home `.env`).
 
 ### Linux
 
@@ -57,8 +57,9 @@ powershell -Command "irm 'https://github.com/peerf-eco/eco-coder-releases/releas
 
 or download and run: `powershell -ExecutionPolicy Bypass -File install.ps1`.
 `uv` provides Python 3.11 if missing; the app installs to
-`%USERPROFILE%\.eco-harness` and `eco-harness.cmd` / `eco-harness-update.cmd`
-shims are added to your **user PATH** (available in new terminals).
+`%USERPROFILE%\ecoos\toolchain\eco-harness` and `eco-harness.cmd` /
+`eco-harness-update.cmd` shims are added to your **user PATH** (available in
+new terminals).
 
 ### After install (all native OSes)
 
@@ -72,21 +73,51 @@ Open http://localhost:8000 — the setup wizard at `/setup` walks you through
 the OpenRouter key (or **Skip — add later in `.env`**; the app runs degraded
 but starts regardless).
 
-Installed layout (`ECO_HOME`, default `~/.eco-harness`):
+Installed layout (Eco platform standard, see `env.example`):
+`ECO_HOME` (default `~/ecoos`) is the ecosystem root, `ECO_TOOLCHAIN` =
+`$ECO_HOME/toolchain`, and the app home `ECO_HARNESS` =
+`$ECO_TOOLCHAIN/eco-harness`:
 
 ```text
-~/.eco-harness/
-├── venv/                  # Python 3.11 venv (uv-managed)
-├── bin/                   # native eco-cli / eco-wizard builds (per-OS)
-├── data/                  # marketplace_index.sqlite + marketplace_cache/
-├── .env                   # OPENAI_API_KEY, ECO_API_TOKEN, … (chmod 600)
-├── workspace.yaml         # UI settings overrides
-├── output/                # generated projects + session registry
-└── traces/                # per-session LLM traces
+~/ecoos/                          # ECO_HOME — Eco OS ecosystem root
+├── toolchain/                    # ECO_TOOLCHAIN
+│   ├── eco-cli/                  # ECO_CLI      (native eco-cli + bundle)
+│   ├── eco-wizard/               # ECO_WIZARD
+│   ├── eco-idl/                  # ECO_IDL      (future)
+│   └── eco-harness/              # ECO_HARNESS — this app's home:
+│       ├── venv/                 #   Python 3.11 venv (uv-managed)
+│       ├── bin/                  #   fallback binary dir + Windows shims
+│       ├── data/                 #   marketplace_index.sqlite + marketplace_cache/
+│       ├── .env                  #   OPENAI_API_KEY, ECO_API_TOKEN, … (chmod 600)
+│       ├── workspace.yaml        #   UI settings overrides
+│       ├── output/               #   generated projects + session registry
+│       └── traces/               #   per-session LLM traces
+├── framework/devkit              # ECO_FRAMEWORK
+├── framework/runtime             # ECO_FRAMEWORK_RT
+└── workspace/                    # ECO_PROJECTS_DIR — your projects
 ```
 
-Uninstall: delete `~/.eco-harness` (Windows: `%USERPROFILE%\.eco-harness`)
-and the shim files / user-PATH entry.
+eco-cli / eco-wizard are downloaded ONLY when not already present: the
+installer checks `ECO_CLI` / `ECO_WIZARD` env vars and the standard locations
+first, keeps user-installed copies as-is (version-checked — outdated ones get
+a replacement recommendation instead of an overwrite; `PATH` finds are never
+probed/executed), and installs fresh downloads into
+`$ECO_TOOLCHAIN/<tool>`, falling back to the app-home `bin/` folder when
+those directories cannot be created. Harness-managed copies (carrying the
+`.<tool>.version` marker) are refreshed in place by `eco-harness update`.
+When `ECO_CLI` or `ECO_WIZARD` is supplied in the installer environment, the
+installer intentionally persists that value into the app-home `.env`; this
+keeps the explicitly selected user-owned binary winning on later launches
+and avoids silently switching versions.
+
+Uninstall: remove the app home (`~/ecoos/toolchain/eco-harness`, Windows:
+`%USERPROFILE%\ecoos\toolchain\eco-harness`; pre-standard installs:
+`~/.eco-harness`) and the shim files / user-PATH entry. The installer-managed
+tool directories are sibling paths (`$ECO_TOOLCHAIN/eco-cli` and
+`$ECO_TOOLCHAIN/eco-wizard`); remove those only when they are not shared with
+other Eco tools. Preserve `$ECO_HOME/framework` and `$ECO_HOME/workspace` if
+other Eco components or projects use them. For a complete Eco installation
+removal, delete `$ECO_HOME` only after confirming it contains no other data.
 
 ### Docker (any host with Docker)
 
@@ -101,33 +132,35 @@ curl.exe -fsSLO https://github.com/peerf-eco/eco-coder-releases/releases/latest/
 powershell -ExecutionPolicy Bypass -File install.ps1 -Docker
 ```
 
-Writes `~/.eco-harness/docker-compose.yml` with your absolute host paths,
+Writes the app home's `docker-compose.yml` with your absolute host paths,
 pulls the prebuilt multi-arch image (linux/amd64 + linux/arm64) from
 ghcr.io, starts it, then downloads the native binaries and RAG index from
 the same public GitHub release (sha256-verified, exactly like the native
-flow) into the mounted `~/.eco-harness` (visible to the container as
-`/data`). The in-container update uses the public release manifest by
-default — no S3 or extra configuration involved.
+flow) into the mounted ecosystem root (visible to the container as `/data`;
+tools use `/data/toolchain/<tool>` and the harness app home is
+`/data/toolchain/eco-harness`). The in-container update uses the public
+release manifest by default — no S3 or extra configuration involved.
 
 ```bash
 # update the image:
-docker compose -f ~/.eco-harness/docker-compose.yml pull && \
-docker compose -f ~/.eco-harness/docker-compose.yml up -d
+docker compose -f ~/ecoos/toolchain/eco-harness/docker-compose.yml pull && \
+docker compose -f ~/ecoos/toolchain/eco-harness/docker-compose.yml up -d
 # update the binaries + RAG index (re-runs the manifest-driven download):
-docker compose -f ~/.eco-harness/docker-compose.yml exec eco-harness python -m eco_harness update
+docker compose -f ~/ecoos/toolchain/eco-harness/docker-compose.yml exec eco-harness python -m eco_harness update
 # health:
-docker compose -f ~/.eco-harness/docker-compose.yml exec eco-harness python -m eco_harness doctor
+docker compose -f ~/ecoos/toolchain/eco-harness/docker-compose.yml exec eco-harness python -m eco_harness doctor
 ```
 
 ### Key paths / env vars in installed mode
 
 | What | Where |
 |---|---|
-| App home (`ECO_HOME`) | `~/.eco-harness` (`bin/`, `data/`, `.env`, `output/`, `traces/`) |
-| User project (`ECO_PROJECT_DIR`) | picked in the UI folder browser (or pre-set with `--project-dir`); worktrees and generated artifacts live under it |
-| Binary lookup order | explicit → `ECO_<NAME>_PATH` → `<repo>/bin` (in installed mode `<repo>` IS `$ECO_HOME/bin`; `.exe` probed on Windows) → `PATH` |
-| Prebuilt index | `~/.eco-harness/data/marketplace_index.sqlite` (refreshed by `eco-harness update`) |
-| Config file | `~/.eco-harness/.env` (or `~/.eco-harness/workspace.yaml` for UI settings) |
+| Ecosystem root (`ECO_HOME`) | `~/ecoos` (`toolchain/`, `framework/`, `workspace/`) |
+| App home (`ECO_HARNESS`) | `$ECO_HOME/toolchain/eco-harness` (`venv/`, `bin/`, `data/`, `.env`, `output/`, `traces/`) |
+| User project (`ECO_PROJECT_DIR`) | picked in the UI folder browser (or pre-set with `--project-dir`); defaults to `ECO_PROJECTS_DIR` (`$ECO_HOME/workspace`) when it exists |
+| Binary lookup order | explicit → `ECO_CLI` / `ECO_WIZARD` env (legacy `ECO_<NAME>_PATH` still read) → `$ECO_TOOLCHAIN/<name>` → app-home `bin/` (`.exe` probed on Windows) → `PATH` |
+| Prebuilt index | `$ECO_HARNESS/data/marketplace_index.sqlite` (refreshed by `eco-harness update`) |
+| Config file | `$ECO_HARNESS/.env` (or `$ECO_HARNESS/workspace.yaml` for UI settings) |
 
 For the packaging internals (wheel contents, manifest contract, hosted
 artifacts, CI pipeline) and the go-live checklist (§18.9) see
@@ -166,8 +199,10 @@ cp env.example .env
 # 2. Edit .env with your settings. At minimum set:
 #      OPENAI_API_KEY  - OpenRouter API key (used by build_marketplace_index.py embeddings)
 #      ECO_API_TOKEN   - Eco marketplace token (used by fetch_marketplace.py)
-#      ECO_CLI_PATH    - absolute path to the eco-cli binary (or put it in <repo>/bin/)
-#      ECO_WIZARD_PATH - absolute path to the eco-wizard binary (or put it in <repo>/bin/)
+#      ECO_CLI         - absolute path to the eco-cli binary (or put it in <repo>/bin/
+#                        or $ECO_TOOLCHAIN/eco-cli; legacy ECO_CLI_PATH still works)
+#      ECO_WIZARD      - absolute path to the eco-wizard binary (same options;
+#                        legacy ECO_WIZARD_PATH still works)
 #    OPENROUTER_URL defaults to https://openrouter.ai/api/v1 if unset.
 
 # 3. Prepare executables — canonical home is <repo>/bin/ (gitignored):
@@ -177,7 +212,7 @@ cp /path/to/eco-wizard bin/
 #    On a Windows host ALSO drop the Linux ELF builds (extensionless
 #    eco-cli / eco-wizard + libaws-crt-jni.so) into bin/ — the dev container
 #    consumes them through the monorepo bind-mount.
-#    Or skip this and set ECO_CLI_PATH / ECO_WIZARD_PATH in .env (see step 2).
+#    Or skip this and set ECO_CLI / ECO_WIZARD in .env (see step 2).
 
 # 4. Set up the host Python environment for the initialization scripts
 #    build_marketplace_index.py imports eco_harness.agent.rag.* (sqlite-vec,
@@ -187,11 +222,11 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r eco_harness/agent/requirements.txt
 
 # 5. Export the variables the host scripts read from the shell, then run them
-#    (fetch_marketplace.py reads ECO_API_TOKEN/ECO_CLI_PATH from the shell env;
-#     ECO_CLI_PATH is optional when bin/eco-cli(.exe) is in place,
+#    (fetch_marketplace.py reads ECO_API_TOKEN/ECO_CLI from the shell env;
+#     ECO_CLI is optional when bin/eco-cli(.exe) is in place,
 #     build_marketplace_index.py loads .env itself via dotenv)
 export ECO_API_TOKEN="token generated in ecoos.dev marketplace (component registry)"
-# export ECO_CLI_PATH="path to eco-cli on this PC"   # only outside <repo>/bin/
+# export ECO_CLI="path to eco-cli on this PC"   # only outside <repo>/bin/
 
 python scripts/fetch_marketplace.py
 python scripts/build_marketplace_index.py
@@ -224,7 +259,7 @@ cd ..
 cp env.example .env
 # Edit .env with your settings
 
-# 4. Prepare executables (place in PATH or set ECO_CLI_PATH/ECO_WIZARD_PATH)
+# 4. Prepare executables (place in PATH or set ECO_CLI/ECO_WIZARD)
 
 # 5. Run initialization scripts
 python scripts/fetch_marketplace.py
@@ -270,20 +305,21 @@ sub-agents) are resolved by one shared policy —
 `eco_harness/agent/internal/tools/binaries.py::resolve_binary`:
 
 1. explicit argument (harness.yaml `eco_*_path` settings, tool args)
-2. `ECO_CLI_PATH` / `ECO_WIZARD_PATH` / `ECO_<NAME>_PATH` environment variable
-3. `<repo>/bin/<name>` — the canonical, gitignored home (place binaries
-   here; the Windows `.exe` spelling is probed as well). In installed mode
-   `<repo>` IS `$ECO_HOME`, so builds the native installer deposits into
-   `$ECO_HOME/bin/` resolve through this same candidate
-4. System `PATH` (called as-is)
+2. `ECO_CLI` / `ECO_WIZARD` env (legacy `ECO_<NAME>_PATH` spellings still honoured)
+3. `$ECO_TOOLCHAIN/<name>` — the standard platform location (binary inside
+   the tool directory or the file itself)
+4. `<repo>/bin/<name>` — the canonical, gitignored dev home / installed-mode
+   app-home `bin/` fallback (the Windows `.exe` spelling is required)
+5. System `PATH` (called as-is)
 
 No other locations are probed. The dev container reads `<repo>/bin/` (the
 same canonical home) through the monorepo bind-mount at `/app`, so neither
-host nor container needs env vars; use `ECO_CLI_PATH` / `ECO_WIZARD_PATH`
+host nor container needs env vars; use `ECO_CLI` / `ECO_WIZARD`
 in `.env` only for custom locations.
 
-Native installs never need wine: the installer always downloads the
-target-OS build into `$ECO_HOME/bin`. `ECO_CLI_PREFIX` / `ECO_WIZARD_PREFIX`
+Native installs never need wine: the installer downloads the target-OS build
+into `$ECO_TOOLCHAIN/<name>` and falls back to the app-home `bin/` directory.
+`ECO_CLI_PREFIX` / `ECO_WIZARD_PREFIX`
 wine wrappers remain available only as a legacy override.
 
 **When to use the env vars:** custom executable locations or pinning a
@@ -291,8 +327,8 @@ specific version. Values must be **absolute** paths (no `~` expansion, no
 repo-root anchoring) and are interpreted by the resolving process — a host
 path for host runs, a container path (e.g. `/app/...`) inside the api
 container. For normal setups just drop the binaries into `<repo>/bin/`
-(dev) or let the installer fill `$ECO_HOME/bin/` (native) — no config
-needed.
+(dev), use the standard toolchain directories, or let the installer
+provision them — no config is needed.
 
 ## Setup Details
 
@@ -320,8 +356,9 @@ does not override already-set variables).
 | `OPENROUTER_URL` | providers | `https://openrouter.ai/api/v1` | OpenRouter endpoint |
 | `LLM_MODEL` | config loader | `tencent/hy3-preview` | Default model id (sets/overrides the `default` profile) |
 | `ECO_API_TOKEN` | fetch_marketplace.py, eco-cli | — | Eco marketplace token |
-| `ECO_CLI_PATH` | binary resolution | `<repo>/bin/eco-cli` → PATH | eco-cli binary location |
-| `ECO_WIZARD_PATH` | binary resolution | `<repo>/bin/eco-wizard` → PATH | eco-wizard binary location |
+| `ECO_CLI` | binary resolution | `$ECO_TOOLCHAIN/eco-cli` → `<repo>/bin/eco-cli` → PATH | eco-cli binary or tool dir (legacy `ECO_CLI_PATH` still read) |
+| `ECO_WIZARD` | binary resolution | `$ECO_TOOLCHAIN/eco-wizard` → `<repo>/bin/eco-wizard` → PATH | eco-wizard binary or tool dir (legacy `ECO_WIZARD_PATH` still read) |
+| `ECO_IDL` | binary resolution (reserved) | `$ECO_TOOLCHAIN/eco-idl` → `<repo>/bin/eco-idl` → PATH | future eco-idl binary or tool dir (legacy `ECO_IDL_PATH` also read) |
 | `ECO_CLI_PREFIX` | eco_cli tool | — | Wrapper command for Windows binaries under Linux (e.g. `wine64`) |
 | `ECO_WIZARD_PREFIX` | eco_wizard tool | — | Same, for eco-wizard |
 | `ECO_WIZARD_TIMEOUT_S` | eco_wizard tool | `180` | Scaffold generation timeout |
@@ -464,26 +501,29 @@ One shared resolver (`eco_harness/agent/internal/tools/binaries.py::resolve_bina
 handles every external binary, host and container alike:
 
 1. Explicit config (e.g. `harness.yaml` `eco_cli_path` / `eco_wizard_path`)
-2. `ECO_CLI_PATH` / `ECO_WIZARD_PATH` / `ECO_<NAME>_PATH` environment variable
-3. `<repo>/bin/<name>` (canonical, gitignored; `.exe` on Windows)
-4. System `PATH`
+2. `ECO_CLI` / `ECO_WIZARD` env (legacy `ECO_<NAME>_PATH` spellings still read)
+3. `$ECO_TOOLCHAIN/<name>` (standard platform location, e.g.
+   `~/ecoos/toolchain/eco-cli` — binary inside the dir or the file itself)
+4. `<repo>/bin/<name>` (canonical, gitignored dev home / installed-mode
+   app-home `bin/` fallback; `.exe` on Windows)
+5. System `PATH`
 
 **Environment Variable Examples:**
 ```bash
 # Canonical home (recommended):
-export ECO_CLI_PATH=$PWD/bin/eco-cli
-export ECO_WIZARD_PATH=$PWD/bin/eco-wizard
+export ECO_CLI=$PWD/bin/eco-cli
+export ECO_WIZARD=$PWD/bin/eco-wizard
 
 # Docker: no env vars needed — the container reads <repo>/bin/ (Linux ELF
 # builds) through the monorepo bind-mount (see docker-compose.yml).
 
 # Windows executable via wine:
-export ECO_CLI_PATH=/path/to/eco-cli.exe
+export ECO_CLI=/path/to/eco-cli.exe
 export ECO_CLI_PREFIX=wine64
 
 # Custom path (development)
-export ECO_CLI_PATH=/usr/local/bin/eco-cli
-export ECO_WIZARD_PATH=/home/user/tools/eco-wizard
+export ECO_CLI=/usr/local/bin/eco-cli
+export ECO_WIZARD=/home/user/tools/eco-wizard
 ```
 
 **Default `.env` configuration:**
@@ -491,8 +531,8 @@ export ECO_WIZARD_PATH=/home/user/tools/eco-wizard
 # Host and container: leave unset when the binaries are in <repo>/bin/ or on
 # PATH (the container reads <repo>/bin/ through the monorepo mount).
 # Override only for custom locations:
-# ECO_CLI_PATH=/usr/local/bin/eco-cli
-# ECO_WIZARD_PATH=/home/user/tools/eco-wizard
+# ECO_CLI=/usr/local/bin/eco-cli
+# ECO_WIZARD=/home/user/tools/eco-wizard
 ```
 
 | File | Purpose |
@@ -1246,7 +1286,7 @@ gh variable delete ECO_CLI_VERSION
    - Place the binary at `<repo>/bin/eco-cli` (canonical home; `eco-cli.exe`
      on Windows)
    - In Docker, verify the Linux ELF builds sit in `<repo>/bin/` (reached
-     via the monorepo bind-mount); `ECO_CLI_PATH` / `ECO_WIZARD_PATH` are
+     via the monorepo bind-mount); `ECO_CLI` / `ECO_WIZARD` are
      only for custom locations
    - Run `python scripts/dev_preflight.py --fix` for the full lookup order
 

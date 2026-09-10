@@ -7,7 +7,8 @@
 #   - marketplace_index.sqlite  (build: python scripts/build_marketplace_index.py)
 #   - marketplace_cache/        (python scripts/fetch_marketplace.py)
 # Binaries are consumed from <repo>/bin/ — the canonical gitignored home
-# resolve_binary probes after ECO_<NAME>_PATH — through the monorepo
+# resolve_binary probes (after ECO_CLI / ECO_WIZARD env vars and the standard
+# $ECO_TOOLCHAIN/<name> locations) — through the monorepo
 # bind-mount at /app (no dedicated binary mounts; see
 # agent/internal/tools/binaries.py). See docs/RAG_SETUP.md.
 #
@@ -68,7 +69,8 @@ services:
       - ${ECO_WORKTREE_HOST_DIR:-../../../Eco.AI.worktrees}:/repo-worktrees:rw
       # eco-cli / eco-wizard (and their sidecar JNI libraries) are consumed
       # straight from <repo>/bin/ — the canonical gitignored home that
-      # resolve_binary probes (ECO_<NAME>_PATH → <repo>/bin → PATH) — through
+      # resolve_binary probes (ECO_CLI / ECO_WIZARD env → $ECO_TOOLCHAIN/<name>
+      # → <repo>/bin → PATH) — through
       # the monorepo bind-mount above, so NO dedicated binary mounts exist.
       # Place the Linux ELF builds there for the container (next to the host
       # eco-cli.exe / aws-crt-jni.dll on Windows checkouts); JNI libraries

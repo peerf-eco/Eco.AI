@@ -15,8 +15,9 @@ Why raw instead of wrappers:
   - One tool to maintain across CLI releases instead of three.
 
 What we keep from the old wrappers:
-  - ECO_CLI_PATH env: absolute path to the binary (Linux ELF on Linux hosts,
-    Windows .exe on Windows hosts; selected once at container start).
+  - ECO_CLI env (standard; legacy ECO_CLI_PATH still read): absolute path to
+    the binary or its tool directory (Linux ELF on Linux hosts, Windows .exe
+    on Windows hosts; selected once at container start).
   - ECO_CLI_PREFIX env: optional wrapper command (e.g. "wine64" when running
     the .exe under Linux via wine).
   - Subcommand whitelist on the first arg — narrow blast radius if upstream
@@ -93,7 +94,8 @@ def _truncate(text: str, label: str) -> str:
 def _resolve_cli_path(cli_path: Optional[Path]) -> Optional[Path]:
     """Resolve a usable eco-cli binary via the shared binary-resolution policy.
 
-    Order: explicit arg → ECO_CLI_PATH env → <repo>/bin/eco-cli → PATH.
+    Order: explicit arg → ECO_CLI env (legacy ECO_CLI_PATH) →
+    $ECO_TOOLCHAIN/eco-cli → <repo>/bin/eco-cli → PATH.
     Returns None only if nothing is
     found, in which case the tool still returns an actionable error (the
     marketplace_cache already holds the DEVKITs read-only, so a pull is often
@@ -206,8 +208,9 @@ def make_eco_cli_tool(
     """Raw eco-cli passthrough. Binary path + wine prefix come from env.
 
     Args:
-        cli_path: ECO_CLI_PATH resolved to a concrete file. If None/unset,
-                  we still try repo-relative and PATH fallbacks; only if all
+        cli_path: ECO_CLI (legacy ECO_CLI_PATH) resolved to a concrete file.
+                  If None/unset, we still try repo-relative and PATH
+                  fallbacks; only if all
                   fail does every call return is_error (with an actionable
                   message pointing at the read-only marketplace_cache).
         project_dir: cwd for invocations that write artefacts (`pull` writes

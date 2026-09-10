@@ -5,8 +5,9 @@
 # reference for manual installs. Update flow:
 #   docker compose pull && docker compose up -d
 #
-# Prereqs: host dirs $HOME/.eco-harness (app home: .env, data, binaries) and
-# a project dir (the folder the UI will work in).
+# Prereqs: host ecosystem root $ECO_HOME (default ~/ecoos; contains the
+# toolchain, app home, framework, and workspace) and a project dir (the folder
+# the UI will work in).
 
 services:
   eco-harness:
@@ -16,6 +17,8 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       ECO_HOME: /data
+      ECO_TOOLCHAIN: /data/toolchain
+      ECO_HARNESS: /data/toolchain/eco-harness
       ECO_PROJECT_DIR: /project
       ECO_WORKTREE_ROOT: /data/worktrees
       # Worktree creation runs git against the host-owned mounted project;
@@ -24,11 +27,17 @@ services:
       GIT_CONFIG_KEY_0: safe.directory
       GIT_CONFIG_VALUE_0: /project
     env_file:
-      - ${ECO_HOME:-$HOME/.eco-harness}/.env
+      - ${ECO_HARNESS:-${ECO_HOME:-$HOME/ecoos}/toolchain/eco-harness}/.env
     volumes:
-      # App home: .env, prebuilt index + marketplace cache, downloaded
-      # native binaries, harness output/ and traces/.
-      - ${ECO_HOME:-$HOME/.eco-harness}:/data
-      # The user project (UI folder picker starts here).
-      - ${ECO_PROJECT_DIR:-$HOME/eco-projects/default}:/project
+      # Ecosystem root: toolchain/eco-cli + eco-wizard, app home, framework,
+      # and any other Eco platform data persist together on the host.
+      - ${ECO_HOME:-$HOME/ecoos}:/data
+      # Explicit nested mounts keep custom ECO_TOOLCHAIN/ECO_HARNESS values
+      # usable while preserving the same container-side standard paths.
+      - ${ECO_TOOLCHAIN:-${ECO_HOME:-$HOME/ecoos}/toolchain}:/data/toolchain
+      - ${ECO_HARNESS:-${ECO_TOOLCHAIN:-${ECO_HOME:-$HOME/ecoos}/toolchain}/eco-harness}:/data/toolchain/eco-harness
+      # The user project (UI folder picker starts here). Standard default:
+      # <ECO_PROJECTS_DIR>/default (ECO_PROJECTS_DIR → $ECO_HOME/workspace);
+      # ECO_PROJECT_DIR still wins when the install flow pre-set it.
+      - ${ECO_PROJECT_DIR:-${ECO_PROJECTS_DIR:-${ECO_HOME:-$HOME/ecoos}/workspace}/default}:/project
     restart: unless-stopped

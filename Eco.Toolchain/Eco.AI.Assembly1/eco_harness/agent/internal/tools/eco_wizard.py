@@ -135,7 +135,7 @@ def _run_wizard(args: _WizardArgs, project_dir: Path) -> ToolResult:
         return ToolResult(
             content=(
                 "eco_wizard executable was not found. Install eco-wizard or set "
-                "ECO_WIZARD_PATH; scaffold fallback is disabled by default."
+                "ECO_WIZARD; scaffold fallback is disabled by default."
             ),
             is_error=True,
         )

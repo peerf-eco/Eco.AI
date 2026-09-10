@@ -225,8 +225,10 @@ the KV-cache prefix intact.
 
 Artifact locations (cache, index) resolve via
 `eco_harness/agent/internal/tools/paths.py`:
-env var → repo-root artifact if present → `<ECO_HOME>/data` (installed
-layout) if present → `/app` mount if present → deterministic repo-root
+cache/index: env var → repo-root artifact if present → app-home `data/`
+(installed layout) if present → `/app` mount if present → deterministic
+repo-root fallback. `eco_framework` additionally checks the standard
+`<ECO_HOME>/framework/devkit` location before app-home data.
 fallback with a one-time warning. Host checkouts, containers and installed
 wheels therefore need no env vars (PRD_2 Phase 1 fixed the hard-coded
 `/app` defaults that broke host runs; the packaging work added the
@@ -234,16 +236,18 @@ installed-mode candidates).
 
 External tool binaries (eco-cli, eco-wizard, external sub-agents) resolve via
 `eco_harness/agent/internal/tools/binaries.py::resolve_binary` — the single policy since
-PRD_2 Phase 2, narrowed to three steps: explicit config → `ECO_<NAME>_PATH`
-env (`ECO_CLI_PATH` / `ECO_WIZARD_PATH`) → `<repo>/bin/<name>` (canonical,
-gitignored; the `<name>.exe` spelling is probed as well on Windows) → bare
-`PATH` call. In installed mode `repo_root()` IS `$ECO_HOME`, so the
-`$ECO_HOME/bin` builds deposited by the installer resolve through the same
-`<repo>/bin` candidate. The former fallbacks — `/opt` container mounts and
+PRD_2 Phase 2, narrowed to the platform-standard steps: explicit config →
+`ECO_CLI` / `ECO_WIZARD` env (legacy `ECO_<NAME>_PATH` spellings still read;
+a value may be the binary file or the tool directory) → `$ECO_TOOLCHAIN/<name>`
+(standard platform location, e.g. `~/ecoos/toolchain/eco-cli`) →
+`<repo>/bin/<name>` (canonical gitignored dev home, which in installed mode
+IS the app-home `bin/` fallback folder; the `<name>.exe` spelling is probed
+as well on Windows) → bare
+`PATH` call. The former fallbacks — `/opt` container mounts and
 the legacy platform-suffixed sibling dirs — are deprecated and no longer
 probed. The dev container reads `<repo>/bin/` (the canonical home) through
 the monorepo bind-mount at `/app`, so neither host nor container needs env
-vars; `ECO_<NAME>_PATH` is reserved for custom
+vars; the env vars are reserved for custom
 locations (see `env.example`). All former per-consumer resolvers
 (server, eco_cli, eco_wizard, factory, scripts) delegate to it.
 
@@ -451,7 +455,8 @@ invent those layouts.
 The generator tool exposes the generator with:
 
 - executable lookup via the shared `resolve_binary` policy
-  (`ECO_WIZARD_PATH` → `<repo>/bin/eco-wizard` → `PATH`)
+  (`ECO_WIZARD` → `$ECO_TOOLCHAIN/eco-wizard` → `<repo>/bin/eco-wizard` →
+  `PATH`)
 - `eco-wizard new`
 - language, type, output, environment, and option arguments
 - bounded output
@@ -459,7 +464,8 @@ The generator tool exposes the generator with:
 
 The marketplace CLI tool uses an
 allowlist, `shell=False`, bounded output, timeout control, and portable
-`ECO_CLI_PATH`/`ECO_CLI_PREFIX` overrides. When the standard ACOM
+`ECO_CLI`/`ECO_CLI_PREFIX` overrides (legacy `ECO_CLI_PATH` still read).
+When the standard ACOM
 `ECO_FRAMEWORK` variable is set, every `pull` is routed into that
 development-kit tree automatically (eco-cli's `-d` flag is appended unless
 the caller already passed one); read-only subcommands are untouched.
@@ -962,23 +968,34 @@ reachable.
 ```text
 NATIVE
  1. uv (installed per-OS if missing) → uv python install 3.11
- 2. uv venv $ECO_HOME/venv (default ~/.eco-harness)
- 3. uv pip install --python $ECO_HOME/venv/bin/python <wheel from manifest>
- 4. python -m eco_harness update      → native binaries → $ECO_HOME/bin
-                                      → prebuilt index  → $ECO_HOME/data
+ 2. uv venv $ECO_HARNESS/venv (app home; default
+    $ECO_HOME/toolchain/eco-harness with ECO_HOME default ~/ecoos)
+ 3. uv pip install --python $ECO_HARNESS/venv/bin/python <wheel from manifest>
+ 4. existing eco-cli/eco-wizard check: ECO_CLI / ECO_WIZARD env vars and the
+    standard locations ($ECO_TOOLCHAIN/<tool>, app-home bin/) are probed
+    FIRST — user-installed copies are kept as-is (version-checked,
+    replacement recommended); only harness-managed copies (with the
+    .<tool>.version marker) are refreshed in place; only missing tools are
+    downloaded
+    → native binaries → $ECO_TOOLCHAIN/<tool> (app-home bin/ fallback)
+    → prebuilt index  → $ECO_HARNESS/data
     (sha256-verified against the manifest; macOS quarantine xattr stripped)
- 5. seed $ECO_HOME/.env (chmod 600; keys optional — /setup completes it)
+ 5. seed $ECO_HARNESS/.env (chmod 600; keys optional — /setup completes it;
+    detected ECO_CLI / ECO_WIZARD are pinned into it)
     [--project-dir writes ECO_PROJECT_DIR into the seeded .env]
  6. PATH shims: ~/.local/bin/eco-harness{,-update} (POSIX);
-    $ECO_HOME/bin/eco-harness*.cmd + user-PATH (Windows)
+    $ECO_HARNESS/bin/eco-harness*.cmd + user-PATH (Windows)
 
 DOCKER
- 1. resolve image repo/tag from the manifest (fall back to the built-in
+    1. resolve image repo/tag from the manifest (fall back to the built-in
     default with a loud warning when the manifest is unreachable)
- 2. write $ECO_HOME/docker-compose.yml (absolute host paths baked in),
+    2. write $ECO_HARNESS/docker-compose.yml (absolute host paths baked in;
+       ecosystem root mounted at /data; container env ECO_HOME=/data,
+       ECO_TOOLCHAIN=/data/toolchain, ECO_HARNESS=/data/toolchain/eco-harness),
     seed .env (600), `docker compose up -d --wait`
- 3. `docker compose exec -T eco-harness python -m eco_harness update`
-    populates the mounted /data with binaries + index
+    3. `docker compose exec -T eco-harness python -m eco_harness update`
+       populates `/data/toolchain/<tool>` and the app-home data directory
+       (existing binaries kept)
 ```
 
 Missing API keys never block install or launch — the `/setup` wizard or a
@@ -990,21 +1007,24 @@ manual `.env` edit completes configuration (see the wizard endpoints in
 | Helper | Dev checkout | Installed wheel |
 | --- | --- | --- |
 | `is_dev_checkout()` | True (`pyproject.toml`/`config/` at `_CHECKOUT_ROOT`) — also True in the DEV container, where uvicorn runs with CWD = the mounted Assembly1 checkout | False |
-| `repo_root()` | checkout root | `$ECO_HOME` |
+| `repo_root()` | checkout root | app home (`$ECO_HARNESS`) |
 | `package_root()` | `<repo>/eco_harness` | `site-packages/eco_harness` (wheel data inside) |
 | `config_dir()` | `<repo>/config` | `site-packages/eco_harness/config` (package data) |
-| `eco_home()` | `~/.eco-harness` (or `$ECO_HOME`) | same |
-| `project_dir()` | checkout root (or `$ECO_PROJECT_DIR`) | `$ECO_PROJECT_DIR`, else `$ECO_HOME` |
-| `output_root()` | `<repo>/output` (`HARNESS_OUTPUT_ROOT` first) | `$ECO_HOME/output` |
-| `traces_root()` | `<repo>/traces` (`HARNESS_TRACES_DIR` first) | `$ECO_HOME/traces` |
-| workspace.yaml | `<repo>/.eco-harness/workspace.yaml` | `$ECO_HOME/workspace.yaml` |
+| `eco_os_root()` | `$ECO_HOME` or `~/ecoos` (ecosystem root) | same |
+| `toolchain_root()` | `$ECO_TOOLCHAIN` or `$ECO_HOME/toolchain` | same |
+| `eco_home()` | app home: `$ECO_HARNESS` or `$ECO_TOOLCHAIN/eco-harness` (legacy `$ECO_HOME` app homes + `~/.eco-harness` keep resolving) | same |
+| `project_dir()` | checkout root (or `$ECO_PROJECT_DIR`) | `$ECO_PROJECT_DIR`, else `$ECO_PROJECTS_DIR`/`$ECO_HOME/workspace` when it exists, else the app home |
+| `output_root()` | `<repo>/output` (`HARNESS_OUTPUT_ROOT` first) | app home `output/` |
+| `traces_root()` | `<repo>/traces` (`HARNESS_TRACES_DIR` first) | app home `traces/` |
+| workspace.yaml | `<repo>/.eco-harness/workspace.yaml` | app home `workspace.yaml` |
 
-Artifact resolution (`marketplace_index.sqlite`, `marketplace_cache`,
-`eco_framework`): env var → `<repo_root>/<artifact>` if present →
-`$ECO_HOME/data/<artifact>` if present → `/app/<artifact>` if present →
-deterministic fallback + one-time warning. Worktrees always branch the USER
+Artifact resolution for `marketplace_index.sqlite` and `marketplace_cache`:
+env var → `<repo_root>/<artifact>` if present → app home `data/<artifact>`
+if present → `/app/<artifact>` if present → deterministic fallback + one-time
+warning. `eco_framework` follows the same order and additionally checks the
+standard `$ECO_HOME/framework/devkit` location. Worktrees always branch the USER
 project (`paths.project_dir()`), never the harness install — `git rev-parse`
-inside `ECO_HOME` fails loudly with a WorktreeError instead.
+inside the app home fails loudly with a WorktreeError instead.
 
 ### 18.7 Self-update and health (`eco-harness update` / `doctor`)
 
@@ -1015,12 +1035,23 @@ inside `ECO_HOME` fails loudly with a WorktreeError instead.
 2. wheel: if `manifest.wheel.version != installed`, download → sha256
    verify → `uv pip install --python <venv>` (pip fallback), report
    "restart to apply"
-3. binaries: per-OS/arch target `$ECO_HOME/bin/<name>[.exe]` — safe-name
-   regex + `bin_dir` containment check, sha256 compare against the existing
-   file, chmod 0755, macOS `xattr -d com.apple.quarantine`
+3. binaries: per-OS/arch target `$ECO_TOOLCHAIN/<name>/<name>[.exe]`
+   (standard toolchain dir; app-home `bin/` fallback when the toolchain dirs
+   cannot be created). Ownership rules — `resolve_binary_with_source` tells
+   WHERE a found binary came from:
+     - managed locations (standard toolchain dir, app-home `bin/`) WITH a
+       harness `.<name>.version` marker → refreshed in place when the
+       manifest version moves (marker match → no-op skip)
+     - WITHOUT a marker → user-owned: kept, reported (version unknown), with
+       a replacement recommendation — never overwritten
+     - `ECO_CLI` / `ECO_WIZARD` env finds → user-owned, kept; probed with
+       `--version` (explicit user opt-in) to decide keep vs recommend
+     - `PATH` finds → kept and reported, NEVER executed during detection
+   — safe-name regex + `bin_dir` containment check, sha256 compare against
+   the existing file, chmod 0755, macOS `xattr -d com.apple.quarantine`
 4. index: tarball → sha256 → member-validated extraction
    (`_safe_extractall`: rejects absolute/`..`/link members on every 3.11.x)
-   into `$ECO_HOME/data/`, `.index_sha256` marker skips no-op refreshes
+   into the app home `data/`, `.index_sha256` marker skips no-op refreshes
 5. report printed; exit 1 when any step errored (never partial-silent)
 
 Docker installs update via `docker compose pull && up -d` (image carries
@@ -1084,7 +1115,7 @@ order = execution order.
 - [ ] **A5. Build and publish the RAG bundle** exactly the way
       `update._refresh_index` expects: zip root contains
       `marketplace_index.sqlite` + `marketplace_cache/` (extracting into
-      `$ECO_HOME/data/` must yield `data/marketplace_index.sqlite` and
+      the app home `data/` must yield `data/marketplace_index.sqlite` and
       `data/marketplace_cache/`). One command refreshes and uploads:
       `python scripts/publish_rag.py` (index-build tokens + AWS creds in
       `.env`, §19.3). Then set `RAG_INDEX_URL` to the public CloudFront
@@ -1117,7 +1148,8 @@ order = execution order.
       `uv venv` creation — no system-python PEP 668 dead ends).
 - [ ] **B2. Verify shims:** POSIX `~/.local/bin/eco-harness{,-update}` are
       executable and on PATH (or the installer's PATH note is shown);
-      Windows `eco-harness*.cmd` in `$ECO_HOME\bin` reachable from a NEW
+      Windows `eco-harness*.cmd` in the app home `bin\` (default
+      `%USERPROFILE%\ecoos\toolchain\eco-harness\bin`) reachable from a NEW
       terminal via the user-PATH update.
 - [ ] **B3. Verify macOS Gatekeeper path:** downloaded unsigned binaries
       run after the `xattr -d com.apple.quarantine` strip on both arches;
@@ -1125,24 +1157,27 @@ order = execution order.
       binaries) to remove the right-click→Open dance (optional but
       recommended).
 - [ ] **B4. Verify Windows specifics:** `update._refresh_binaries` downloads
-      `eco-cli.exe`/`eco-wizard.exe` into `$ECO_HOME/bin/` and
-      `resolve_binary` resolves them through its `<repo>/bin/<name>.exe`
-      candidate (`repo_root()` IS `$ECO_HOME` in installed mode); `.env`
+      `eco-cli.exe`/`eco-wizard.exe` into the standard toolchain dirs
+      (`$ECO_TOOLCHAIN/<name>/`, app-home `bin\` fallback) and
+      `resolve_binary` resolves them through its standard-location and
+      `<repo>/bin/<name>.exe` candidates (the app home IS `repo_root()`
+      in installed mode); `.env`
       ends up user-only (icacls); `--project-dir` seeds `ECO_PROJECT_DIR`.
 - [ ] **B5. Verify the verified-wheel install path on each OS:** the
       sha256-checked local wheel is installed via `uv pip install --python
       <venv>` (uv venvs have no pip; pip fallback only for non-uv venvs).
 - [ ] **B6. Verify dotenv pickup:** keys saved by `/setup` (written to
-      `$ECO_HOME/.env`) are visible to a RESTARTED server
+      the app-home `.env`) are visible to a RESTARTED server
       (`load_dotenv(paths.eco_home()/".env")`) and never override
       process env.
 - [ ] **B7. Verify worktrees on a user project:** point `ECO_PROJECT_DIR`
       at a real git repo (UI picker), enable Worktree mode —
       `create_worktree(paths.project_dir(), …)` must succeed and land under
-      the project/`ECO_WORKTREE_ROOT` (never `ECO_HOME`, which is not a
+      the project/`ECO_WORKTREE_ROOT` (never the app home, which is not a
       repo).
-- [ ] **B8. Document/test uninstall** (delete `$ECO_HOME` + shims + user-PATH
-      entry on Windows).
+- [ ] **B8. Document/test uninstall** (delete the app home `$ECO_HARNESS`,
+      optionally the installer-managed sibling tool dirs, plus shims and the
+      user-PATH entry on Windows; preserve shared framework/workspace data).
 
 #### C. Docker installs only
 
@@ -1158,21 +1193,27 @@ order = execution order.
 - [ ] **C3. Image smoke test:** pull on a clean amd64 and arm64 host;
       container starts non-root via `entrypoint.sh` (gosu), healthcheck
       passes, static UI served at `/`, `/setup` reachable, NO wine present
-      (native Linux binaries land in `/data/bin` via the update step).
+      (native Linux binaries land in `/data/toolchain/<tool>` —
+      `/data/toolchain/eco-harness/bin/` fallback — via the update step;
+      host-provided binaries kept).
 - [ ] **C4. Verify the `--docker` install path end-to-end:** generated
       compose has correct absolute host paths; `up -d --wait` becomes
       healthy; the `exec … python -m eco_harness update` bootstrap
-      populates `/data/bin` + `/data/data` and they PERSIST on the host
+      populates `/data/toolchain/<tool>` (or
+      `/data/toolchain/eco-harness/bin/` fallback) plus
+      `/data/toolchain/eco-harness/data`, and they PERSIST on the host
       across `down && up`.
 - [ ] **C5. Verify container git/worktree behavior:** `safe.directory=/project`,
       `ECO_WORKTREE_ROOT=/data/worktrees`, worktree creation against the
       host-owned mounted project succeeds; host `git worktree list`
       prunable-entry caveat documented as accepted.
-- [ ] **C6. Verify secrets flow:** container reads `/data/.env`
-      (`ECO_HOME=/data` + dotenv), `/setup` writes persist on the host
+- [ ] **C6. Verify secrets flow:** container reads the app-home `.env`
+      at `/data/toolchain/eco-harness/.env` (`ECO_HOME=/data` + dotenv),
+      `/setup` writes persist on the host
       mount and survive recreation.
 - [ ] **C7. Update path:** `docker compose pull && up -d` upgrades the
-      wheel (image) while `data/`, `bin/`, `.env` persist; verify the image
+      wheel (image) while app-home `data/`, `toolchain/<tool>` (or `bin/`
+      fallback), and `.env` persist; verify the image
       tag in the generated compose matches the manifest on each release.
 - [ ] **C8. Size/cost check:** final image is slim (`python:3.11-slim` +
       git/curl/gosu only) and the binaries/index stay OUT of the image
@@ -1317,10 +1358,11 @@ manifest binary entry:
 ```
 
 Update logic per tool (eco-cli, eco-wizard):
-1. Read `$ECO_HOME/bin/.<name>.version` marker
+1. Read the managed-location `.<name>.version` marker
+   (`$ECO_TOOLCHAIN/<name>/` or the app-home `bin/` fallback)
 2. If marker == `manifest.version` → **skip** (all files already in place)
 3. Otherwise: download zip, verify sha256, extract all files flat into
-   `$ECO_HOME/bin/`, chmod +x executables, strip macOS quarantine,
+   the managed location, chmod +x executables, strip macOS quarantine,
    write new version marker
 
 This means:
@@ -1332,7 +1374,7 @@ This means:
 
 **Docker:** images are rebuilt with the new wheel baked in (`docker compose
 pull` updates the Python harness). The binaries live in the mounted
-`$ECO_HOME/bin/` volume, not in the image. `python -m eco_harness update`
+the app-home `bin/` volume, not in the image. `python -m eco_harness update`
 runs inside the container at startup and applies the same version-skip logic
 — so if only the wheel changed, binaries are not re-downloaded in the
 container either.

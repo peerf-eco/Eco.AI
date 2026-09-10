@@ -3,7 +3,9 @@
 #
 # Difference from the dev Dockerfile at the repo root:
 #   - NO wine: native eco-cli / eco-wizard builds for Linux exist and are
-#     downloaded into $ECO_HOME/bin by the installer / `eco-harness update`
+#     downloaded into the standard toolchain dirs ($ECO_TOOLCHAIN/eco-cli etc.,
+#     app-home bin/ fallback) by the installer / `eco-harness update` — never
+#     over binaries the user already provides via ECO_CLI / ECO_WIZARD
 #   - installs the WHEEL built by CI (docker/release context), not the source
 #     tree — no monorepo bind-mounts, no build tooling
 #   - static UI (Next.js export) ships inside the wheel as eco_harness/web_static
@@ -22,9 +24,12 @@ FROM python:3.11-slim-bookworm
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive \
-    # Installed-mode defaults inside the container: the app home is the
-    # mounted volume, the project dir the user picked is mounted at /project.
+    # Installed-mode defaults inside the container: the mounted volume is the
+    # ecosystem root (ECO_HOME), with the standard toolchain/app-home tree
+    # beneath it; the project dir the user picked is mounted at /project.
     ECO_HOME=/data \
+    ECO_TOOLCHAIN=/data/toolchain \
+    ECO_HARNESS=/data/toolchain/eco-harness \
     ECO_PROJECT_DIR=/project
 
 # git: worktree creation against the user's mounted project.

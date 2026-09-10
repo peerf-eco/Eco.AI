@@ -85,7 +85,7 @@ def main() -> int:
         sys.exit(f"index not found: {INDEX}")
     if ECO_CLI is None:
         sys.exit(
-            "eco-cli binary not found — set ECO_CLI_PATH, place it in "
+            "eco-cli binary not found — set ECO_CLI, place it in "
             "<repo>/bin/, or install it on PATH (see README: Executable Resolution)."
         )
     if not os.getenv("ECO_API_TOKEN"):

@@ -481,11 +481,18 @@ def load_config(root: Path | None = None) -> HarnessConfig:
             "default_platform",
             {"os": "Linux", "arch": "x86_64"},
         ),
-        eco_wizard_path=os.getenv(
-            "ECO_WIZARD_PATH",
-            merged_harness.get("eco_wizard_path"),
+        # Standard env spellings ECO_CLI / ECO_WIZARD win; legacy
+        # ECO_CLI_PATH / ECO_WIZARD_PATH still honoured for old setups.
+        eco_wizard_path=(
+            os.getenv("ECO_WIZARD")
+            or os.getenv("ECO_WIZARD_PATH")
+            or merged_harness.get("eco_wizard_path")
         ),
-        eco_cli_path=os.getenv("ECO_CLI_PATH", merged_harness.get("eco_cli_path")),
+        eco_cli_path=(
+            os.getenv("ECO_CLI")
+            or os.getenv("ECO_CLI_PATH")
+            or merged_harness.get("eco_cli_path")
+        ),
         workspace_override=workspace_path,
     )
 
