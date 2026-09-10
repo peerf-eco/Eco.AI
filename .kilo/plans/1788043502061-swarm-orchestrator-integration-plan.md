@@ -171,44 +171,47 @@ sequenceDiagram
     participant G as SwarmGateway (harness)
     participant O as SwarmOrchestrator (external)
     participant W as WorktreeMgr
-    participant C as Coder#k (worker agent, worktree_k)
+    participant C as Coder_k (worker agent, worktree_k)
     participant T as Integrator (tester loop)
-
+    
     U->>S: user_request (mode=auto)
     S->>A: planner.run(seed)
-    A-->>S: stop_tool to_coder (plan_md)
+    A-->>S: stop_tool to_coder plan_md
     S-->>U: plan_review_required
-    U->>S: plan_decision approved (+modified_plan_md)
+    U->>S: plan_decision approved +modified_plan_md
     S->>G: dispatch(SwarmJob, ev_queue, cancel)
-    G->>W: git preconditions (D2): repo? → branch swarm/run8/base from HEAD (auto-commit dirty state incl. scaffold)
-    Note over G,W: non-git project_dir → actionable error, swarm refused (no auto git-init)
-    G->>O: brain.decompose(job)  [plan + specs + manifest]
-    O-->>G: DecompositionPlan (disjoint write_scopes, waves)
-    G-->>U: swarm_decomposed + worker sessions registered (D4)
-    loop each wave (depends_on satisfied, ≤ max_workers parallel)
-        G->>W: create_worker_worktree(swarm/run8/worker_k ← swarm/run8/base) — own worktree
-        W-->>G: WorktreeInfo(path, branch)
-        G->>C: make_role_agent("coder", project_dir=worktree_k) + OwnershipGate
-        G-->>U: swarm_worker_started (session card under project)
-        C->>C: implements subtask (writes blocked outside write_scope; run_build sanity in worktree_k — D3)
-        C-->>G: WorkerReport(done, files_touched) via stop_tool done/to_tester
-        G-->>U: swarm_worker_done (+node_event stream during run)
+    G->>W: git preconditions D2: repo? - branch swarm/run8/base from HEAD - auto-commit dirty state incl. scaffold
+    Note over G,W: non-git project_dir -> actionable error, swarm refused - no auto git-init
+    G->>O: brain.decompose(job) - plan + specs + manifest
+    O-->>G: DecompositionPlan - disjoint write_scopes, waves
+    G-->>U: swarm_decomposed + worker sessions registered D4
+    
+    loop each wave - depends_on satisfied, <= max_workers parallel
+        G->>W: create_worker_worktree - swarm/run8/worker_k from swarm/run8/base - own worktree
+        W-->>G: WorktreeInfo - path, branch
+        G->>C: make_role_agent coder, project_dir=worktree_k + OwnershipGate
+        G-->>U: swarm_worker_started - session card under project
+        C->>C: implements subtask - writes blocked outside write_scope - run_build sanity in worktree_k - D3
+        C-->>G: WorkerReport done, files_touched via stop_tool done/to_tester
+        G-->>U: swarm_worker_done +node_event stream during run
         G->>O: brain.on_worker_report(report)
         O-->>G: proceed | retry | replan | abort
-        G->>W: merge(worker branch → swarm/run8/integration worktree, never main tree)
+        G->>W: merge worker branch -> swarm/run8/integration worktree, never main tree
         W-->>G: MergeResult
         G->>O: brain.on_merge_result(MergeResult)
         O-->>G: continue | fix_worker | escalate
         G-->>U: swarm_merge_result
     end
-    G->>T: run_integrator (build + coder/tester EXECUTION_EDGES in integration worktree)
-    T-->>G: OrchestratorResult(terminal "done" | fail)
-    G-->>U: test_fail / build_fail cards (replayed from hops)
-    G->>W: on success: git merge --no-ff swarm/run8/integration → user branch in project_dir (only main-tree write)
-    G-->>S: SwarmRunResult (OrchestratorResult-shaped)
-    S->>S: success check, artifact sweep (unchanged code)
-    S-->>U: pipeline_done(success|failed)
-    G->>W: cleanup(run_id) [drop worker/integration worktrees on success; keep per keep_worktrees_on_fail]
+    
+    G->>T: run_integrator - build + coder/tester EXECUTION_EDGES in integration worktree
+    T-->>G: OrchestratorResult - terminal done | fail
+    G-->>U: test_fail / build_fail cards - replayed from hops
+    G->>W: on success: git merge --no-ff swarm/run8/integration -> user branch in project_dir - only main-tree write
+    G-->>S: SwarmRunResult - OrchestratorResult-shaped
+    S->>S: success check, artifact sweep - unchanged code
+    S-->>U: pipeline_done - success|failed
+    G->>W: cleanup run_id - drop worker and integration worktrees on success or conditionally keep on failure
+
 ```
 
 Escalation path: any `abort` → cancel token set → workers finish current iteration → gateway returns `status="agent_failed"` → existing `escalation_required` gate at `server.py:3552` handles the HITL decision unchanged.
