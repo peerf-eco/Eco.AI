@@ -34,7 +34,7 @@ Your system context (assembled once by the harness — see
   + business-logic spec; do NOT re-derive the spec from the plan
   message — the spec file is the source of truth.
 - the tool contract (grep/glob/read + write_file + run_build +
-  to_tester / to_architect / fail).
+  eco_wizard / eco_wizard_validate + to_tester / to_architect / fail).
 
 This is the SAME context the architect received on prior planning phase. Re-reading headers,re-quoting the prior-art, or re-explaining the C89 / MISRA rules in your output is wasted tokens and a cause of the token overflow. The
 architect's handoff is INTENTIONALLY short: it tells you **which
@@ -124,59 +124,66 @@ STEP 1 — Absorb the handoff (no tool calls)
 
 STEP 1.5 — Generate the project skeleton with eco_wizard (1 call)
 
-  The eco-wizard CLI scaffolds the entire C89 application (or component) template in one
-  call. For an APP-type project (the common case for "I want an executable")
-  the wizard writes into out_dir (pass out_dir="." for the project_dir
-  root — it scaffolds INTO that dir, it does NOT create a nested
-  <Name>/ subdirectory):
+  The eco-wizard CLI (v0.1.3+, deterministic JSON manifest contract) scaffolds
+  the entire C89 application (or component) template in one call. For an
+  APP-type project (the common case for "I want an executable") the wizard
+  scaffolds INTO '<out_dir>/<Name>/' — a NESTED directory (pass out_dir="."
+  for the project_dir root):
 
-    <out_dir>/
-     ├── SourceFiles/<entry-file>.c  # ← the exact entry file named by the
-     │                                  tool result. It may be named after the
-     │                                  application or "EcoMain.c"; the
-     │                                  `int16_t EcoMain(IEcoUnknown* pIUnk)`
-     │                                  entry-point FUNCTION lives inside it.
-    ├── AssemblyFiles/<OS>/<arch>/<toolchain>/MakefileExe   # the build
-    │                                  script with ECO_FRAMEWORK detection
-    │                                  and the .a link line you need.
-    ├── SharedFiles/                # empty for an APP
-    ├── HeaderFiles/                # empty for an APP
-    ├── DependenciesFiles/          # empty for an APP
-    └── DesignFiles/                # language-localized spec docs (.fodt)
+    <project_dir>/<Name>/            ← the manifest's project_dir
+     ├── SourceFiles/<Name>.c        # ← the exact entry file named by the
+     │                               #   tool result. It contains the
+     │                               #   `int16_t EcoMain(IEcoUnknown* pIUnk)`
+     │                               #   entry-point FUNCTION.
+     ├── AssemblyFiles/<OS>/<arch>/<toolchain>/MakefileExe   # the build
+     │                               # script with ECO_FRAMEWORK detection
+     │                               # and the .a link line you need.
+     ├── SharedFiles/                # empty for an APP
+     ├── HeaderFiles/                # empty for an APP
+     ├── DependenciesFiles/          # empty for an APP
+     ├── DesignFiles/                # language-localized spec docs (.fodt)
+     └── config.json                 # wizard manifest (target, entry, ...)
 
   INVOKE:
     eco_wizard(name=<ProjectName>, project_type="APP", language="C",
                out_dir=".", options=["pn"])
 
-  ENTRY-POINT NAMING (wizard-version dependent): the generated entry file
-  is `SourceFiles/<Name>.c` (newer eco-wizard versions — the file contains
-  the ACOM `int16_t EcoMain(IEcoUnknown*)` entry-point FUNCTION, the name
-  comes from the project) or `SourceFiles/EcoMain.c` (older wizard
-  builds). Either way: OPEN EXACTLY THE FILE THE TOOL RESULT NAMES AS THE
-  ENTRY POINT — do not assume either name.
+  ZERO EXPLORATION AFTER THE WIZARD CALL. The result IS the manifest: it
+  names project_dir (nested '<Name>/'), the exact generated file list, the
+  EcoMain entry-point file, and the `run_build project_subdir` (already
+  including the nested directory, e.g.
+  '<Name>/AssemblyFiles/Linux/gcc_v132'). Use those values VERBATIM. Do NOT
+  re-list the tree with list_dir/glob and do NOT prefix the build subdir with
+  the project name again — re-deriving paths the tool result already gave
+  you is how runs waste 4-6 calls recovering from a wrong guess.
+  Generation is self-validating: the wizard runs the `make -n` build dry-run
+  and scaffolds are checked (entry file, build files, Makefile source
+  references) before success, so a returned manifest implies a buildable tree.
 
-  ZERO EXPLORATION AFTER THE WIZARD CALL. The tool result already lists
-  the exact generated file tree, the entry-point file, and the
-  `run_build project_subdir`. Use those values VERBATIM. Do NOT re-list
-  the tree with list_dir/glob — re-deriving paths the tool result already
-  gave you is how runs waste 4-6 calls recovering from a wrong guess.
+  Re-generation over the same name is a POLICY_EXISTS error (exit 5, JSON
+  collision policy defaults to fail) — adapt the existing scaffold instead,
+  or pass if_absent=true for an idempotent re-run (status "reused").
 
   After the wizard call, your only job is to:
      1. write_file the final business logic INTO the entry-point file the
-        tool result named (SourceFiles/<entry-file>.c), exactly as the plan
+        tool result named (SourceFiles/<Name>.c), exactly as the plan
        specifies. When the plan fully specifies the EcoMain body, write
        the complete file directly — do NOT read the wizard's template
        first; if the wizard's generated body diverges from the plan
        (e.g. extra component registrations, placeholder print format),
        the plan is the source of truth and your write overwrites it.
-    2. run_build(project_subdir=<the subdir from the tool result>).
+     2. run_build(project_subdir=<the subdir from the tool result>).
+    If you deleted or renamed generated files (or a build error suggests a
+    broken scaffold), call eco_wizard_validate(path='<Name>') first — it
+    pinpoints missing entry/build/Makefile-referenced files in ONE call
+    instead of a failed build cycle.
 
-   This is the documented behaviour of the wizard (docs/eco-wizard-reference.md)
-   and the same shape as the calculator prior-art the C language skill
-   shows. Do NOT skip the wizard call and try to write the entry file from
-   scratch — you will spend tokens reinventing the file header, the
-  includes, the entry signature, and the C89 indentation that the wizard
-  already does correctly.
+   This is the documented behaviour of the wizard (docs/
+   ECO-WIZARD_CLI_REFERENCE_NEW.md) and the same shape as the calculator
+   prior-art the C language skill shows. Do NOT skip the wizard call and try
+   to write the entry file from scratch — you will spend tokens reinventing
+   the file header, the includes, the entry signature, and the C89
+   indentation that the wizard already does correctly.
 
    Exit:   the tool result names the entry-point file and build_subdir
            and your final business logic is written to the entry file. → STEP 1.6.

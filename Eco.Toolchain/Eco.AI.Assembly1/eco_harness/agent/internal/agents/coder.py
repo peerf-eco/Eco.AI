@@ -11,7 +11,10 @@ from eco_harness.agent.internal.tools.handoff import make_handoff_tool, make_fai
 from eco_harness.agent.internal.tools.io import make_read_tools, make_write_tools
 from eco_harness.agent.internal.tools.build import make_build_tools
 from eco_harness.agent.internal.tools.rag import make_search_marketplace_tool
-from eco_harness.agent.internal.tools.eco_wizard import make_eco_wizard_tool
+from eco_harness.agent.internal.tools.eco_wizard import (
+    make_eco_wizard_tool,
+    make_eco_wizard_validate_tool,
+)
 # Fallback only. The editable source of truth is config/prompts/coder.md;
 # eco_harness.roles._role_prompt resolves workspace > config/prompts > this.
 CODER_SYSTEM_PROMPT = """\
@@ -314,6 +317,7 @@ def make_coder(
         *make_write_tools(project_dir=project_dir),
         *make_build_tools(project_dir=project_dir, make_exe=make_exe),
         make_eco_wizard_tool(project_dir),
+        make_eco_wizard_validate_tool(project_dir),
         make_handoff_tool(
             "to_tester",
             "Hand off the built artifact to the tester. Call only after a "

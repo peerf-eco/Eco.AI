@@ -44,7 +44,7 @@ TOOL_GROUPS: dict[str, frozenset[str]] = {
     "execute": frozenset({"run_artifact"}),
     "rag_search": frozenset({"search_marketplace"}),
     "skills": frozenset({"read_skill"}),
-    "network": frozenset({"eco_cli", "eco_wizard"}),
+    "network": frozenset({"eco_cli", "eco_wizard", "eco_wizard_validate"}),
 }
 
 # Tools whose execution token is checked against the ``commands`` allowlist.
